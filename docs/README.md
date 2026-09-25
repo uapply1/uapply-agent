@@ -23,7 +23,7 @@ names refer to the current `uapply-backend` unless marked *new*.
 
 | Document | Contents |
 |---|---|
-| [architecture/local-llm-task-queue.md](architecture/local-llm-task-queue.md) | The core mechanism: `LocalAgentLLM` provider, `AgentTask` queue, Temporal async completion, result validation |
+| [architecture/local-llm-task-queue.md](architecture/local-llm-task-queue.md) | The core mechanism: prepare/continue stages on Celery, `AgentTask` queue, API-driven continuation, result validation |
 | [architecture/case-workflow.md](architecture/case-workflow.md) | End-to-end stages — intake, upload, classify, extract, resolve, auto-fill — with the RCIC gates |
 | [architecture/working-folder.md](architecture/working-folder.md) | Layout of the client folder, `.uapply/` manifest and case state, idempotent sync |
 | [architecture/runtime-modes.md](architecture/runtime-modes.md) | Interactive (MCP inside Claude Code / Codex) vs batch (headless `claude -p` / `codex exec`) |

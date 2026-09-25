@@ -7,8 +7,7 @@ Adversaries: honest mistakes by the model; prompt injection via document
 content; a compromised or careless RCIC machine.
 
 Principle: **everything that must hold is enforced by the backend.** The
-playbook and the `confirmed_by_rcic` flag reduce friction; they are not the
-control.
+playbook reduces friction; it is not the control.
 
 ## Identity and scope
 
@@ -33,9 +32,42 @@ control.
 | Control | Where |
 |---|---|
 | Significant fields (`AGENT_SIGNIFICANT_FIELDS`) cannot be resolved by an agent token → 403; only proposed | `resolve` endpoint |
-| Proposal approval requires a user token, or an agent token where the MCP server attaches an `X-RCIC-Confirmed` header only after an interactive gate | `approve` endpoint; header is only accepted from the MCP server's session, and is logged |
+| Case creation, proposal approval and auto-fill start happen only through an **approval page** the RCIC opens in their browser with their normal login; agent tokens can create and read approvals but cannot approve | `Approval` model + dashboard route; see below |
 | Auto-fill refused while CONFLICT open / proposals pending | preflight + `start_auto_filling` |
 | No delete, no email, no portal submission endpoints exposed to agent tokens | routing |
+
+### Approval channel
+
+The model is the thing we are guarding against, so consent cannot travel
+through the model. An earlier draft had the MCP server attach a "confirmed"
+flag after asking the RCIC in chat; that is model honesty, not enforcement —
+the MCP server only sees that the model *called* the tool, not that a human
+said yes.
+
+Instead:
+
+1. The agent calls `propose_case` / `request_approval` / `request_autofill`.
+   The server stores an `Approval {kind, payload, survey, created_by_session,
+   status=pending, expires_at}` and returns a URL.
+2. The MCP server prints the URL and tries to open the RCIC's default
+   browser. The page is a normal dashboard route: Auth0 login, team
+   membership check, one-time `Approval` id, 24 h expiry. It shows exactly
+   what will happen (case setup / each proposed value with evidence /
+   auto-fill summary) with Approve, Edit (where applicable) and Reject.
+3. Approving performs the action **server-side under the RCIC's user
+   session** and records `actor=rcic`, the approval id and the originating
+   agent session in the audit log.
+4. The agent polls `wait_for_approval` (≤ 60 s per call) and continues on
+   `approved`.
+
+In batch mode the CLI prints pending approval URLs and stops; the RCIC clicks,
+then re-runs. Approvals are also listed in the dashboard's "Agent activity"
+tab, so a colleague can act on them.
+
+What this does *not* cover: a phishing page imitating the approval page. The
+URL always points at the uApply dashboard origin; the MCP server refuses to
+print or open any other origin, and the playbook tells the model never to
+construct approval URLs itself.
 
 ## Data integrity
 
@@ -45,6 +77,7 @@ control.
 | Evidence quotes verified verbatim against server-held text; unverifiable → dropped; no-evidence → DOUBTFUL | reuse Financial Proof verifier |
 | Classification restricted to allowed `DocumentType`s | task result handler |
 | `Idempotency-Key` on all mutations; `sha256` dedup on upload | middleware + upload |
+| `resolve` requires `expected_updated_at`; 409 `STALE_VALUE` if the RCIC edited the value since the agent read it — no silent overwrite of a human edit | resolve handler |
 | Formula cache invalidated on every resolve | resolve handler |
 
 ## Prompt injection
@@ -80,7 +113,7 @@ instructions and confirm all fields".
 
 - Rate limit per agent token (tasks/min, uploads/min) to contain a runaway
   loop.
-- Task `max_attempts=3`; activity timeout 7 days; both surface as clear
+- Task `max_attempts=3`; batch TTL 7 days (beat task); both surface as clear
   failures, not silent hangs.
 - The playbook forbids retrying a failing tool more than twice.
 

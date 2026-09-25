@@ -68,6 +68,52 @@ prompt and only its own inputs, with no drift from earlier documents.
 | Overnight, many clients | Batch, `--stages classify,extract`, review next morning |
 | Plan limit reached mid-run | Either mode: agent releases leases; `run` again later resumes |
 
+## Subscription usage limits — the real constraint
+
+Both runtimes are sold on flat plans with rolling usage windows, not on
+tokens. That is the whole point of local tokens, and also the main risk: a
+case that needs more model calls than the window allows stalls until the
+window resets.
+
+Order-of-magnitude call counts for a typical case (to be **measured** in
+Phase 1 and replaced with real numbers):
+
+| Case | Docs | Pages | OCR calls (scans only) | Classify | Section extraction | Analysis | Total model calls |
+|---|---|---|---|---|---|---|---|
+| Single applicant, study permit | 12 | ~40 | ~20 | 12 | ~60 | ~10 | ~100 |
+| Family, PR | 45 | ~180 | ~90 | 45 | ~250 | ~20 | ~400 |
+
+Many of these are vision calls on page images, which are the most expensive
+kind. Levers, in order of impact:
+
+1. **Skip the model where text exists.** Text-layer PDFs (most bank
+   statements, letters, transcripts) go through pdfplumber locally — no model
+   call. This alone can halve the count.
+2. **Batch pages.** 3–4 page images per `extract_content` task instead of one.
+3. **Keep expensive steps server-side per case** (`AGENT_LOCAL_TASK_KINDS`),
+   e.g. OCR on uApply's provider, everything else local — a hybrid that still
+   removes most of the cost.
+4. **Batch mode overnight** spreads a large case across windows
+   automatically: the CLI backs off when the runtime reports a limit and
+   resumes when it clears.
+
+Guidance to write into onboarding once measured: which plan tier handles
+which case sizes interactively, and when to use batch or hybrid mode. Until
+then, assume entry-level plans are fine for single-applicant cases in batch
+mode and not for family cases interactively.
+
+Terms of use: the RCIC drives their own Claude Code / Codex, with our MCP
+server as a tool inside it. We never extract or reuse their subscription
+credentials in another harness — that is what would breach provider terms.
+
+## Which surface
+
+RCICs are not terminal users. The MCP server is runtime-agnostic, so the same
+tools work from Claude Desktop and the Codex desktop app, which are the
+realistic interactive surfaces for most consultants; Claude Code / Codex CLI
+are for power users and for batch mode. Docs and onboarding should lead with
+the desktop apps.
+
 ## Runtime differences that matter
 
 | | Claude Code | Codex |

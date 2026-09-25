@@ -31,14 +31,16 @@ Every stage is re-runnable on the same folder; see
    `ApplicationType` (program / `visa_type` / `visa_location`), family members
    and relationships.
 4. `list_application_types()` to map the proposal to real ids.
-5. 🧑 **Gate:** present the proposal — application type, principal, dependents
-   with relationship — and wait for confirmation or corrections. Never create a
-   case on a guess.
-6. `create_case(...)`, `add_dependent(...)` for each family member; write
-   `case.json`.
+5. 🧑 **Gate:** `propose_case(...)` — the server stores the proposal and
+   returns an approval URL; the agent shows the summary in chat, the RCIC
+   opens the page and approves, edits or rejects. Never create a case on a
+   guess; the agent cannot — only the approval page can.
+6. `wait_for_approval(id)` → on `approved` the case exists; the tool writes
+   `case.json`. Later family members go through `add_dependent` the same way.
 
-**Backend** — `POST /survey/surveys/` (with `llm_mode=local_agent`),
-`POST /survey/surveys/{id}/add_dependent/`.
+**Backend** — *(new)* `POST /agent/approvals/` (`kind=create_case`); on the
+RCIC's decision the server itself calls the existing `POST /survey/surveys/`
+(with `llm_mode=local_agent`) and `add_dependent/`.
 
 ---
 
@@ -135,14 +137,16 @@ This is where the agent adds most value and where policy matters most.
 | `DOUBTFUL`, evidence in the review-queue payload is unambiguous (e.g. passport MRZ agrees) | `resolve_value(id, value, rationale, evidence_refs)` → `CONFIRMED` | 🤖 |
 | `DOUBTFUL`, evidence weak | open the source document locally, re-read the relevant page, then resolve or leave DOUBTFUL with a note | 🤖 |
 | `CONFLICT`, **not** legally significant (e.g. address formatting, employer name spelling) | pick the better-evidenced candidate, resolve with rationale | 🤖 |
-| `CONFLICT`, **legally significant** (DOB, passport number/expiry, names, marital status, dates that create travel/employment/education gaps, refusal history, criminality) | `propose_resolution(id, value, rationale, evidence_refs)` → status stays CONFLICT with a pending proposal | 🧑 batch approval via `approve_proposals(ids)` |
+| `CONFLICT`, **legally significant** (DOB, passport number/expiry, names, marital status, dates that create travel/employment/education gaps, refusal history, criminality) | `propose_resolution(id, value, rationale, evidence_refs)` → status stays CONFLICT with a pending proposal | 🧑 `request_approval(ids)` → one approval page listing every proposal → `wait_for_approval` |
 | `MISSING` | append a client question to `review.md` (what, why it's needed, which document would satisfy it) | never sent; RCIC forwards |
 
 3. `wait_for_stage("formulas")` if formulas depend on resolved values (server
    recomputes `SurveyFieldFormula`s and invalidates their cache on resolve).
 
 **Backend** — *(new)* `GET /agent/surveys/{id}/review-queue/`,
-*(new)* `POST /agent/values/{id}/resolve/`, `.../propose/`, `.../approve/`.
+*(new)* `POST /agent/values/{id}/resolve/`, `.../propose/`, `.../withdraw/`,
+`POST /agent/approvals/` (`kind=approve_proposals`) — approval itself is a
+user-session action on the dashboard page.
 Each write records actor, session, rationale, evidence refs in an append-only
 `ReviewAction`-style log and invalidates the formula cache for the survey.
 
@@ -158,9 +162,11 @@ so Claude and Codex apply the same rule.
 1. `autofill_preflight()` → server checks: no open `CONFLICT`, no pending
    proposals, required `MISSING` fields listed, `automation_status` not stuck
    in `STARTED`. Returns blockers.
-2. 🧑 **Gate:** show the summary (fields filled / missing / assumed) and ask for
-   approval. Never start auto-fill unprompted.
-3. `start_autofill()` → `start_auto_filling`. Then either:
+2. 🧑 **Gate:** `request_autofill()` — returns an approval URL whose page
+   shows the preflight summary (fields filled / missing / assumed). The RCIC
+   approves there; the server starts auto-fill itself. Never start auto-fill
+   from the agent; it cannot.
+3. `wait_for_approval(id)` → `approved`. Then either:
    - `download_l3(path)` — fetch the L3 JSON and IMM PDFs into
      `.uapply/output/` for the existing desktop filler, or
    - if the desktop app is installed and configured, hand off to it (out of
@@ -194,4 +200,4 @@ Case: https://app.uapply.io/surveys/<id>
 ```
 
 and printing the same summary in the chat. The RCIC approves proposals either
-in chat (`approve_proposals`) or in the dashboard — both hit the same endpoint.
+on the approval page the agent links (`request_approval`) or in the dashboard — both are the same server-side action under the RCIC's login.

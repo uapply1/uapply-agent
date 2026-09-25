@@ -41,7 +41,7 @@ for.
 ```
 RCIC machine                                                uApply cloud
 ┌─────────────────────────────────────────────┐            ┌─────────────────────────────────┐
-│ Claude Code / Codex  (the LLM)              │            │ Django API + Temporal workflows  │
+│ Claude Code / Codex  (the LLM)              │            │ Django API + Celery workers      │
 │   ├─ uApply playbook (skills / AGENTS.md)   │            │                                  │
 │   └─ uapply-agent  (stdio MCP server + CLI) │            │  Survey · Document · SurveyValue │
 │        ├─ folder scan / hash / manifest     │── HTTPS ──▶│  PromptTemplate · Section routing│
@@ -84,9 +84,10 @@ Detailed stage contracts: [case-workflow.md](architecture/case-workflow.md).
 
 ## Key properties
 
-- **The server never waits on a worker slot for the agent.** Temporal activities
-  complete asynchronously; a case can pause for hours (plan limits, RCIC away)
-  and resume where it left off.
+- **The server never waits on a worker slot for the agent.** A Celery stage
+  creates the agent's tasks and exits; the API resumes the pipeline when the
+  answers arrive. A case can pause for hours (plan limits, RCIC away) and
+  resume where it left off.
 - **Everything is idempotent.** Re-running `/uapply:run` on the same folder
   uploads nothing twice, re-creates nothing, and returns current state for
   already-resolved values.

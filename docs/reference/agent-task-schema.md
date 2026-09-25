@@ -73,9 +73,9 @@ Kinds not listed (web-search assisted steps, embeddings) stay server-side;
 | `LEASE_LOST` | another worker completed it | drop |
 | `TASK_CANCELLED` | processing stopped or mode switched | drop |
 
-After `max_attempts` (3) the server marks the task `failed`, completes the
-Temporal activity with failure, and the document/analysis job reports the
-reason. The RCIC can re-run the stage, optionally with `llm_mode=server` for
+After `max_attempts` (3) the server marks the task `failed`, ends its batch
+with `failed=True`, and the continuation marks the document/analysis job
+`FAILED` with the reason. The RCIC can re-run the stage, optionally with `llm_mode=server` for
 that case.
 
 ## Local pre-processing (no model) the agent does before a task

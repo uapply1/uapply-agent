@@ -9,7 +9,8 @@ Must land before anything else; most are needed regardless of the agent.
 
 | Item | Size | Why first |
 |---|---|---|
-| Temporal migration complete for `process_document` and analysis workflows | L (in progress) | D2 depends on async activity completion |
+| Prepare/continue refactor of the LLM-calling steps in `process_document` and analysis (`run_llm_stage` helper; server mode behaviour-identical) | L | D2; must land and be verified in server mode before any local-mode work |
+| `AgentTaskBatch` / `AgentTask` models, `expire_agent_tasks` beat task, `waiting_on_agent` flag honoured by the stale sweep | M | the wait mechanism |
 | Fix the [known issues](known-issues.md): auto-fill `STARTED` stuck, `force` on re-analysis, stale-job auto-fail interplay | S | an agent will loop on them |
 | `Document.sha256` + dedup in `bulk_upload`; `Idempotency-Key` middleware | S | idempotency everywhere |
 | Device-code login + scoped agent tokens | M | everything else needs auth |
@@ -30,7 +31,9 @@ Goal: prove the round trip end-to-end with the simplest kind.
 
 Exit criterion: a folder of 10 mixed documents is uploaded and classified with
 zero server-side LLM calls, from both Claude Code and Codex, with results
-visible in the dashboard.
+visible in the dashboard — **and** a measured table of model calls and
+(where reported) tokens per document per runtime, replacing the estimates in
+[runtime-modes.md](../architecture/runtime-modes.md).
 
 ## Phase 2 — Full pipeline on local tokens
 
@@ -51,8 +54,9 @@ cleanly at plan limits and resumes.
 
 | Item | Size |
 |---|---|
-| Intake tools (`list_application_types`, `create_case`, `add_dependent`) + gate | S |
-| Review-queue endpoint with evidence; `resolve` / `propose` / `approve` / `reject`; `ValueProposal` model; significant-field list; audit log | M |
+| Intake tools (`list_application_types`, `propose_case`, `add_dependent`) via the approval flow | S |
+| Review-queue endpoint with evidence; `resolve` (with `expected_updated_at`) / `propose` / `withdraw`; `ValueProposal` model; significant-field list; audit log | M |
+| `Approval` model + endpoints + dashboard approval pages (case setup, proposal batch, auto-fill); `wait_for_approval` tool; browser-open from the MCP server | M |
 | `missing_documents`, `reclassify_document`, client questions | S |
 | Playbook: `/uapply:intake`, `/uapply:review`, resolution policy, context hygiene | M |
 | Dashboard: proposals inbox, agent-activity tab, agent-resolved value styling | M |
@@ -65,7 +69,7 @@ changes are proposals.
 
 | Item | Size |
 |---|---|
-| `autofill_preflight`, `start_autofill`, `download_output`; gate | S |
+| `autofill_preflight`, `request_autofill` (approval flow), `download_output` | S |
 | `write_review_report`; `/uapply:run` end-to-end; `/uapply:autofill` | S |
 | `uapply-agent clean`; multi-machine `init --survey` | S |
 | Rate limits, error `hint`s pass, docs for RCIC onboarding | S |

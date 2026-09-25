@@ -10,10 +10,12 @@ rules for every tool:
 - **Folder-relative paths.** All paths are relative to the working folder; the
   server refuses anything outside it.
 - **No side effects the RCIC hasn't sanctioned.** Tools that create a case,
-  resolve legally significant values, or start auto-fill require the caller to
-  pass `confirmed_by_rcic: true`; the playbook only sets it after asking. The
-  server-side guardrails do not rely on this flag (see
-  [guardrails.md](../design/guardrails.md)) — it is a second line.
+  approve legally significant values, or start auto-fill do not act directly.
+  They create a **pending approval** on the server and return an
+  `approval_url`; the RCIC opens it (already logged in to uApply) and clicks
+  Approve or Reject; the agent then calls `wait_for_approval`. A model cannot
+  fake the click, so nothing the model passes as an argument is treated as
+  consent (see [guardrails.md § Approval channel](../design/guardrails.md#approval-channel)).
 
 All tools return `{ok, data?, error?: {code, message, hint}}`. `hint` is
 written for the model ("run `wait_for_stage` before calling this again").
@@ -31,8 +33,20 @@ written for the model ("run `wait_for_stage` before calling this again").
 |---|---|---|
 | `scan_folder` | `include_manifested?: bool` | files: path, size, sha256, kind, applicant hint (from subfolder), manifested (bool) |
 | `list_application_types` | `query?: string` | id, program, visa_type, visa_location, label |
-| `create_case` | `application_type_id`, `principal: {name, …}`, `dependents: [{name, relationship, folder?}]`, `confirmed_by_rcic: true` | survey ids; writes `case.json` |
-| `add_dependent` | `name`, `relationship`, `folder?`, `confirmed_by_rcic: true` | survey id |
+| `propose_case` | `application_type_id`, `principal: {name, …}`, `dependents: [{name, relationship, folder?}]` | `approval_id`, `approval_url` — the page shows the proposed setup with Approve / Edit / Reject |
+| `wait_for_approval` | `approval_id`, `timeout_s?` (≤ 60) | `status: pending \| approved \| rejected \| edited`, plus the (possibly edited) payload; on `approved` the server has already created the case and the tool writes `case.json` |
+| `add_dependent` | `name`, `relationship`, `folder?` | same approval flow as `propose_case` |
+
+## Approvals
+
+| Tool | Input | Output |
+|---|---|---|
+| `wait_for_approval` | `approval_id`, `timeout_s?` | see above; used for case creation, proposal batches and auto-fill |
+| `list_approvals` | `status?` | pending approvals for this case with their URLs — so a resumed session can re-surface them |
+
+The MCP server prints the URL in the tool result **and** attempts to open it
+in the RCIC's default browser. Approval pages are ordinary dashboard routes
+that require the RCIC's normal login.
 
 ## Upload
 
@@ -49,11 +63,13 @@ written for the model ("run `wait_for_stage` before calling this again").
 |---|---|---|
 | `start_processing` | `document_ids?: string[]` | job ids; count of agent tasks expected |
 | `run_analysis` | `force?: bool` (default **true**) | analysis job id |
-| `wait_for_stage` | `stage: processing \| analysis \| formulas`, `timeout_s?` (≤ 300) | done: bool, progress: {completed, failed, pending, open_agent_tasks}, failures: [{document_id, reason}] |
+| `wait_for_stage` | `stage: processing \| analysis \| formulas`, `timeout_s?` (default 45, ≤ 60) | done: bool, progress: {completed, failed, pending, open_agent_tasks}, failures: [{document_id, reason}] |
 | `stop_processing` / `stop_analysis` | — | ack |
 
 `wait_for_stage` is a server long-poll: it returns early on completion, else at
-`timeout_s`. The playbook calls it in a loop with a task-loop in between.
+`timeout_s`. It is capped at 60 s because MCP tool calls have runtime-imposed
+timeouts (Claude Code and Codex differ, and the defaults are well under five
+minutes). The playbook calls it in a loop with a task-loop in between.
 
 ## Task loop (local tokens)
 
@@ -79,10 +95,10 @@ the validation error to the model without a network round-trip.
 | Tool | Input | Output |
 |---|---|---|
 | `get_review_queue` | `status?: doubtful \| conflict \| missing`, `applicant?`, `significant_only?` | items: [{value_id, field, description, applicant, status, significant, candidates: [{value, document_id, path, page, quote, status}], proposal?}] |
-| `resolve_value` | `value_id`, `value`, `rationale`, `evidence: [{document_id, page, quote}]` | new status; **rejected with `SIGNIFICANT_FIELD`** if the field is on the allow-list — use `propose_resolution` |
+| `resolve_value` | `value_id`, `value`, `rationale`, `evidence: [{document_id, page, quote}]`, `expected_updated_at` (from the review-queue item) | new status; **rejected with `SIGNIFICANT_FIELD`** if the field is on the allow-list — use `propose_resolution`; **rejected with `STALE_VALUE`** if the RCIC edited it since the queue was read — re-fetch and reconsider |
 | `propose_resolution` | same as above | proposal id; status stays CONFLICT/DOUBTFUL |
-| `approve_proposals` | `proposal_ids: string[]`, `confirmed_by_rcic: true` | resolved count |
-| `reject_proposal` | `proposal_id`, `reason` | ack |
+| `request_approval` | `proposal_ids: string[]` | `approval_id`, `approval_url` — one page listing every proposal with value, rationale, evidence and per-row Approve / Reject; then `wait_for_approval` |
+| `withdraw_proposal` | `proposal_id`, `reason` | ack (the agent changed its mind; RCIC rejection happens on the approval page) |
 | `add_client_question` | `field`, `question`, `why`, `satisfying_documents?` | appended to `review.md`; also stored server-side *(new)* so the dashboard shows it |
 
 ## Auto-fill
@@ -90,7 +106,7 @@ the validation error to the model without a network round-trip.
 | Tool | Input | Output |
 |---|---|---|
 | `autofill_preflight` | — | ok: bool, blockers: [{code, detail}], summary: {filled, missing, assumed} |
-| `start_autofill` | `confirmed_by_rcic: true` | ack; fails if preflight blockers exist |
+| `request_autofill` | — | `approval_id`, `approval_url` — page shows the preflight summary; on approval the server starts auto-fill itself; fails if preflight blockers exist |
 | `autofill_status` | — | automation_status, imm pdf statuses |
 | `download_output` | `what: l3 \| imm_pdfs \| all` | paths under `.uapply/output/` |
 

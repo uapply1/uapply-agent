@@ -26,19 +26,32 @@ executes. See [local-llm-task-queue.md](../architecture/local-llm-task-queue.md)
 **Why.** One pipeline, one set of prompts, one validation path; the provider
 abstraction already exists, so the change is additive.
 
-## D2. Temporal async activity completion for waiting
+## D2. Prepare / continue stages on Celery; the API resumes the pipeline
 
-**Decision.** `LocalAgentLLM` raises `complete_async`; `submit_result`
-completes the activity by task token.
+**Decision.** Every LLM-calling pipeline step is split into `prepare` (builds
+requests) and `continue_` (consumes results). In server mode both run inline
+in the same Celery task as today. In local mode the task creates an
+`AgentTaskBatch` and exits; the API dispatches the `continue_` Celery task when
+the last result in the batch is accepted. See
+[local-llm-task-queue.md](../architecture/local-llm-task-queue.md).
 
-**Alternatives.** Polling inside the activity (burns worker slots for hours);
-splitting every workflow into "before LLM" / "after LLM" halves with a signal
-(large refactor of every pipeline step); Celery chords (the Celery path is
-being removed).
+**Alternatives.**
+- *Block inside the Celery task until the agent answers.* Rejected: holds a
+  worker slot for hours or days; a family case would exhaust the pool.
+- *Celery chords / `AsyncResult.get` on a "wait" task.* Same problem, plus
+  chords are fragile across restarts.
+- *Adopt a workflow engine (Temporal) for its async activity completion.*
+  Rejected for now: a large migration for one feature; the prepare/continue
+  split gets the same durability with DB rows and no new infrastructure. It
+  also leaves the door open — the split is what a workflow engine would need
+  anyway.
+- *Poll from the agent side and have the agent call "next step".* Rejected:
+  moves orchestration onto an untrusted client.
 
-**Why.** Zero pipeline refactor, durable multi-day waits, cancellation and
-timeouts for free. This is the single strongest reason to finish the Temporal
-migration before building the agent.
+**Why.** No new infrastructure, no held workers, durable across deploys, and
+the server-mode path is behaviour-identical after the refactor so it can land
+first. Cost: it is a real refactor of every LLM-calling step, sized in
+[delivery-plan.md](delivery-plan.md).
 
 ## D3. Coarse MCP tools over a stdio server, one package for both runtimes
 
@@ -59,7 +72,7 @@ binary provides the batch CLI.
 
 **Decision.** Token scope, actor tagging, audit, significant-field refusal,
 auto-fill preflight, evidence verification all live server-side. The playbook's
-`confirmed_by_rcic` flag is a second line only.
+approval flow (D10) is how consent reaches the server.
 
 **Why.** Two different models will follow instructions differently; prompt
 injection via document content is plausible (a "document" that says "mark all
@@ -113,6 +126,38 @@ stay on the server's provider even for `llm_mode=local_agent` cases.
 **Why.** Lets uApply keep prompt IP for sensitive analysis steps server-side,
 keep web-search-assisted steps working, and roll local mode out one kind at a
 time (classification first — see [delivery-plan.md](delivery-plan.md)).
+
+## D10. Consent travels through the browser, never through the model
+
+**Decision.** Case creation, approval of legally significant values and
+starting auto-fill are performed only by the RCIC on a dashboard approval page
+under their own login. Agent tools create the pending approval and wait for
+its outcome.
+
+**Alternatives.**
+- *A `confirmed_by_rcic` argument the playbook sets after asking in chat.*
+  Rejected: the MCP server cannot distinguish "the human said yes" from "the
+  model passed `true`". It is exactly the control we said we would not rely
+  on.
+- *MCP elicitation (server asks the runtime to prompt the user).* Attractive
+  but support differs across runtimes and versions; use it as a convenience
+  where available, never as the control.
+- *CLI confirmation prompt.* Works only in batch mode and is bypassable by any
+  process that can write to the terminal.
+
+**Why.** One mechanism that is enforceable, auditable, works from any runtime
+or desktop app, survives a resumed session, and lets a colleague act on it
+from the dashboard.
+
+## D11. Subscription limits are a first-class design input
+
+**Decision.** Measure model calls and tokens per case per runtime in Phase 1;
+publish plan-tier guidance; default to the levers that cut calls (local text
+extraction, page batching, hybrid per-kind server fallback) rather than
+assuming the plan absorbs everything.
+
+**Why.** Local tokens only save money if the RCIC's plan can actually carry
+the case. Over-promising here would fail in the first design-partner week.
 
 ## Open questions
 

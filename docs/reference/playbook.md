@@ -56,6 +56,14 @@ full text.
 - Give a rationale and evidence (document, page, quote) for every resolution.
 - Write questions for the client into the review report; never contact anyone.
 
+**Gates — these tools return an approval link, not a result**
+
+`propose_case`, `add_dependent`, `request_approval`, `request_autofill` never
+act directly. Show the RCIC the summary in chat, give them the link the tool
+returned (never construct one yourself), then call `wait_for_approval`. If it
+is still pending after a few calls, say so and stop; do not retry the action
+another way.
+
 **Gates — stop and ask the RCIC before**
 
 - Creating a case or adding a dependent.
