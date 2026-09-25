@@ -8,6 +8,12 @@ full existing inventory is in
 All requests carry `Authorization: Bearer <agent token>` (see
 [Auth](#auth)) and, for mutations, `Idempotency-Key: <uuid>`.
 
+Implemented (Phase 1): the agent routes are mounted at
+`/api/ai-parse/agent/` — `tasks/pull`, `tasks/{id}/result`,
+`tasks/{id}/release`, `tasks/stats`, `surveys/{id}/status`,
+`surveys/{id}/wait`, `surveys/{id}/llm_mode`. Auth is the RCIC's normal
+Auth0 JWT; the agent-scope permission class is not built yet.
+
 ## Auth
 
 | | |

@@ -10,8 +10,15 @@ The uApply backend keeps the pipeline logic, prompts, validation and the data
 model. It hands each model call to the local agent as a task and validates
 what comes back.
 
-Status: **proposed** (2026-09). Nothing in this folder is built yet; endpoint
-names refer to the current `uapply-backend` unless marked *new*.
+Status (2026-09-25): **Phase 1 vertical slice implemented** — backend task
+queue (`ai_parse/agent/`, migrations `survey.0058` / `ai_parse.0008`) and the
+`uapply-agent` package (`src/uapply_agent/`). The stage wired to local tokens
+is the passport/visa/permit **sub-type classifier**
+(`DocumentProcessor._classify_document_subtype`), which is the only
+classification LLM call the pipeline has today — documents are uploaded with
+a document type already chosen. Agent endpoints live under
+`/api/ai-parse/agent/` (the docs' `/api/agent/` prefix reads as that).
+Everything from Phase 2 on is still a plan.
 
 ## Start here
 

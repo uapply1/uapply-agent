@@ -1,0 +1,159 @@
+"""uapply-agent CLI: login | init | status | run | mcp | clean."""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import sys
+from pathlib import Path
+
+from . import __version__
+from .api import ApiError, UApplyApi
+from .auth import LoginError, device_login, token_login
+from .config import Credentials, Settings
+from .folder import WorkingFolder
+from .runners import RunnerError, detect_runtimes
+
+
+def _folder(args) -> WorkingFolder:
+    return WorkingFolder(Path(args.folder or os.environ.get("UAPPLY_FOLDER") or os.getcwd()))
+
+
+def cmd_login(args, settings):
+    try:
+        if args.token:
+            token_login(args.token)
+        elif args.token_stdin:
+            token_login(sys.stdin.read())
+        else:
+            device_login(settings)
+    except LoginError as e:
+        print(f"login failed: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def cmd_logout(args, settings):
+    Credentials.clear()
+    print("credentials removed")
+    return 0
+
+
+def cmd_init(args, settings):
+    api = UApplyApi(settings)
+    f = _folder(args)
+    s = api.survey(args.survey)
+    api.set_llm_mode(args.survey, args.llm_mode)
+    deps = [{"survey_id": d.get("id"), "name": d.get("name"), "relationship": d.get("relationship")}
+            for d in (s.get("dependents") or []) if isinstance(d, dict)]
+    case = f.init_case(args.survey, settings.backend_url, args.llm_mode, name=s.get("name", ""), dependents=deps)
+    print(json.dumps(case, indent=2))
+    rt = detect_runtimes()
+    print(f"runtimes detected: {rt or 'none — install Claude Code or Codex'}", file=sys.stderr)
+    return 0
+
+
+def cmd_status(args, settings):
+    f = _folder(args)
+    if not f.survey_id:
+        print("folder has no case; run `uapply-agent init --survey <id>`", file=sys.stderr)
+        return 2
+    print(json.dumps(UApplyApi(settings).agent_status(f.survey_id), indent=2))
+    return 0
+
+
+def cmd_run(args, settings):
+    from .executor import Executor
+    f = _folder(args)
+    api = UApplyApi(settings)
+    ex = Executor(api, f, runtime=args.runtime or settings.runtime, model=args.model or settings.model)
+    print(f"executor: {ex.runner.name} session {ex.session_id}", file=sys.stderr)
+    total = None
+    while True:
+        stats = ex.run(max_tasks=args.max_tasks, workers=args.workers or settings.workers, kinds=args.kinds)
+        print(json.dumps(stats.as_dict()), file=sys.stderr)
+        if stats.plan_limited:
+            print("plan limit reached; run again later", file=sys.stderr)
+            return 3
+        if not args.follow:
+            break
+        st = api.agent_wait(f.survey_id, "processing", 45)
+        if st.get("done") and stats.remaining == 0:
+            break
+    print(json.dumps(api.agent_status(f.survey_id), indent=2))
+    return 0
+
+
+def cmd_mcp(args, settings):
+    if args.folder:
+        os.environ["UAPPLY_FOLDER"] = str(Path(args.folder).resolve())
+    from .mcp_server import main as mcp_main
+    mcp_main()
+    return 0
+
+
+def cmd_clean(args, settings):
+    print(f"removed {_folder(args).clean()} cached files")
+    return 0
+
+
+def cmd_config(args, settings):
+    if args.set:
+        for kv in args.set:
+            k, _, v = kv.partition("=")
+            if not hasattr(settings, k):
+                print(f"unknown setting {k}", file=sys.stderr)
+                return 2
+            setattr(settings, k, type(getattr(settings, k))(v) if not isinstance(getattr(settings, k), dict) else json.loads(v))
+        settings.save()
+    print(json.dumps(settings.__dict__, indent=2))
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="uapply-agent", description="Run uApply cases from Claude Code / Codex")
+    p.add_argument("--version", action="version", version=__version__)
+    p.add_argument("-v", "--verbose", action="store_true")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("login", help="Auth0 device login, or --token to paste a JWT")
+    s.add_argument("--token"); s.add_argument("--token-stdin", action="store_true")
+    s.set_defaults(fn=cmd_login)
+    sub.add_parser("logout").set_defaults(fn=cmd_logout)
+
+    s = sub.add_parser("init", help="bind this folder to a survey")
+    s.add_argument("--survey", required=True); s.add_argument("--folder")
+    s.add_argument("--llm-mode", default="local_agent", choices=["local_agent", "server"])
+    s.set_defaults(fn=cmd_init)
+
+    s = sub.add_parser("status"); s.add_argument("--folder"); s.set_defaults(fn=cmd_status)
+
+    s = sub.add_parser("run", help="execute queued agent tasks headlessly")
+    s.add_argument("--folder"); s.add_argument("--runtime", choices=["auto", "claude-code", "codex"])
+    s.add_argument("--model"); s.add_argument("--workers", type=int); s.add_argument("--max-tasks", type=int)
+    s.add_argument("--kinds", nargs="*"); s.add_argument("--follow", action="store_true", help="keep going until processing is done")
+    s.set_defaults(fn=cmd_run)
+
+    s = sub.add_parser("mcp", help="serve the MCP tools over stdio"); s.add_argument("--folder"); s.set_defaults(fn=cmd_mcp)
+    s = sub.add_parser("clean"); s.add_argument("--folder"); s.set_defaults(fn=cmd_clean)
+    s = sub.add_parser("config"); s.add_argument("--set", nargs="*", metavar="KEY=VALUE"); s.set_defaults(fn=cmd_config)
+    return p
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    settings = Settings.load()
+    try:
+        return args.fn(args, settings) or 0
+    except ApiError as e:
+        print(f"error: {e}" + (f" — {e.hint}" if e.hint else ""), file=sys.stderr)
+        return 2
+    except RunnerError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

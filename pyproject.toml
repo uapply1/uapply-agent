@@ -1,0 +1,30 @@
+[project]
+name = "uapply-agent"
+version = "0.1.0"
+description = "Run a uApply case from Claude Code / Codex on the RCIC's own subscription"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=2,<3",
+    "httpx>=0.27",
+    "pydantic>=2",
+    "pymupdf>=1.24",
+    "pdfplumber>=0.11",
+    "pillow-heif>=0.16",
+    "keyring>=25",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+uapply-agent = "uapply_agent.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/uapply_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
