@@ -26,7 +26,7 @@ names refer to the current `uapply-backend` unless marked *new*.
 | [architecture/local-llm-task-queue.md](architecture/local-llm-task-queue.md) | The core mechanism: prepare/continue stages on Celery, `AgentTask` queue, API-driven continuation, result validation |
 | [architecture/case-workflow.md](architecture/case-workflow.md) | End-to-end stages — intake, upload, classify, extract, resolve, auto-fill — with the RCIC gates |
 | [architecture/working-folder.md](architecture/working-folder.md) | Layout of the client folder, `.uapply/` manifest and case state, idempotent sync |
-| [architecture/runtime-modes.md](architecture/runtime-modes.md) | Interactive (MCP inside Claude Code / Codex) vs batch (headless `claude -p` / `codex exec`) |
+| [architecture/runtime-modes.md](architecture/runtime-modes.md) | One headless executor per task; interactive (chat orchestrates) vs batch (CLI orchestrates); subscription usage limits |
 
 ## Reference
 
@@ -35,7 +35,7 @@ names refer to the current `uapply-backend` unless marked *new*.
 | [reference/mcp-tools.md](reference/mcp-tools.md) | MCP tool inventory exposed by `uapply-agent` to the coding agent |
 | [reference/backend-api.md](reference/backend-api.md) | Backend endpoints the agent uses — existing ones, and the new ones this project adds |
 | [reference/agent-task-schema.md](reference/agent-task-schema.md) | `AgentTask` kinds, payload and result JSON contracts |
-| [reference/playbook.md](reference/playbook.md) | Claude Code plugin (skills, `/uapply:*` commands) and Codex `AGENTS.md` — the operator instructions |
+| [reference/playbook.md](reference/playbook.md) | The operator instructions, shipped as MCP prompts + server instructions (`/uapply:*` on every runtime); optional plugin / `AGENTS.md` wrappers |
 
 ## Design
 
@@ -53,15 +53,15 @@ uapply-agent/
 ├── docs/                    # this documentation
 ├── src/uapply_agent/
 │   ├── cli.py               # `uapply-agent login | init | run | status`
-│   ├── mcp_server.py        # stdio MCP server (tools in reference/mcp-tools.md)
+│   ├── mcp_server.py        # stdio MCP server: tools, prompts, instructions
 │   ├── api/                 # typed client for the uApply backend
 │   ├── folder/              # scan, hash, manifest, case.json
 │   ├── local_ops/           # page rendering, pdfplumber/docx text, HEIC → JPEG (no LLM)
-│   ├── tasks/               # AgentTask pull / execute / submit loop
-│   └── runners/             # headless drivers: claude_code.py, codex.py
+│   ├── executor/            # pull task → spawn headless runtime → validate → submit
+│   └── runners/             # per-runtime spawn/flags/limit detection: claude_code.py, codex.py
 ├── playbook/
-│   ├── claude-code/         # plugin: skills + commands
-│   └── codex/               # AGENTS.md + skills
+│   ├── SOURCE.md            # instructions, prompts, resolution policy (single source)
+│   └── wrappers/            # optional plugin / AGENTS.md, generated
 └── evals/                   # golden client folders + scoring
 ```
 

@@ -34,14 +34,13 @@ written for the model ("run `wait_for_stage` before calling this again").
 | `scan_folder` | `include_manifested?: bool` | files: path, size, sha256, kind, applicant hint (from subfolder), manifested (bool) |
 | `list_application_types` | `query?: string` | id, program, visa_type, visa_location, label |
 | `propose_case` | `application_type_id`, `principal: {name, …}`, `dependents: [{name, relationship, folder?}]` | `approval_id`, `approval_url` — the page shows the proposed setup with Approve / Edit / Reject |
-| `wait_for_approval` | `approval_id`, `timeout_s?` (≤ 60) | `status: pending \| approved \| rejected \| edited`, plus the (possibly edited) payload; on `approved` the server has already created the case and the tool writes `case.json` |
 | `add_dependent` | `name`, `relationship`, `folder?` | same approval flow as `propose_case` |
 
 ## Approvals
 
 | Tool | Input | Output |
 |---|---|---|
-| `wait_for_approval` | `approval_id`, `timeout_s?` | see above; used for case creation, proposal batches and auto-fill |
+| `wait_for_approval` | `approval_id`, `timeout_s?` (≤ 60) | `status: pending \| approved \| rejected \| edited`, plus the (possibly edited) payload; used for case creation, proposal batches and auto-fill. On an approved `propose_case` the server has already created the case and the tool writes `case.json` |
 | `list_approvals` | `status?` | pending approvals for this case with their URLs — so a resumed session can re-surface them |
 
 The MCP server prints the URL in the tool result **and** attempts to open it
@@ -71,17 +70,23 @@ that require the RCIC's normal login.
 timeouts (Claude Code and Codex differ, and the defaults are well under five
 minutes). The playbook calls it in a loop with a task-loop in between.
 
-## Task loop (local tokens)
+## Task execution (local tokens)
 
 | Tool | Input | Output |
 |---|---|---|
-| `pull_tasks` | `n?` (default 5), `kinds?: string[]`, `lease_s?` | tasks: [{id, kind, payload}] — payload shape in [agent-task-schema.md](agent-task-schema.md); input file refs are resolved to local paths (downloaded from S3 to `cache/` if missing) |
-| `submit_result` | `task_id`, `result: object`, `model?: string`, `usage?: {input_tokens, output_tokens}` | accepted: bool, rejection?: {code, message} |
-| `release_task` | `task_id`, `reason` | ack |
+| `run_tasks` | `kinds?: string[]`, `max_tasks?` (default: all queued), `workers?` (default 2, ≤ 4) | counts: {accepted, rejected, released, remaining}, `plan_limited: bool`, failures: [{task_id, kind, reason}] |
 | `task_stats` | — | queued / leased / submitted / failed counts for the case |
 
-The MCP server performs local schema validation before submitting and returns
-the validation error to the model without a network round-trip.
+`run_tasks` is the **only** way tasks are executed. The MCP server pulls each
+task, resolves inputs to local files, spawns the RCIC's runtime headless with
+the task's prompt as a real system prompt, validates the JSON locally, and
+submits — see [runtime-modes.md](../architecture/runtime-modes.md). The chat
+model never receives a task payload. Pull / submit / release exist as backend
+endpoints for the executor, not as MCP tools.
+
+`run_tasks` returns within the MCP timeout by processing tasks in slices; the
+playbook calls it in a loop with `wait_for_stage` until `remaining == 0` and
+the stage is done.
 
 ## Classification review
 

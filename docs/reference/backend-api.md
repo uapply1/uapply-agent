@@ -12,13 +12,10 @@ All requests carry `Authorization: Bearer <agent token>` (see
 
 | | |
 |---|---|
-| **(new)** `POST /api/auth/device/start/` | Begin Auth0 device-code flow; returns `user_code`, `verification_uri`, `device_code`, interval |
-| **(new)** `POST /api/auth/device/poll/` | Exchange `device_code` for an **agent token** once the RCIC approves in the browser |
-| **(new)** `POST /api/auth/agent-token/refresh/` | Refresh; refresh token lives in the OS keychain on the RCIC machine |
+| Auth0 Device Authorization Grant (no new backend endpoints) | `uapply-agent login` talks to Auth0 directly: a new "uApply Agent" native client, `device_code` flow, refresh token in the OS keychain. The API already accepts Auth0 JWTs |
+| **(change)** DRF permission class | JWTs issued to the agent client carry `scope=agent:cases`; the permission class limits them to case endpoints for the RCIC's team and denies team-admin, billing, delete and `approvals/{id}/decide/` |
 
-Agent tokens carry scope `agent:cases` limited to the RCIC's team and cannot
-call team-admin, billing or delete endpoints. Every write made with an agent
-token is tagged `actor=agent`.
+Every write made with an agent-scoped token is tagged `actor=agent`.
 
 ## Surveys (cases)
 
@@ -30,7 +27,7 @@ token is tagged `actor=agent`.
 | `GET  /api/survey/application-types/` | intake | |
 | `GET  /api/survey/document-types/` | classification, missing-docs | |
 | **(new)** `GET /api/agent/surveys/{id}/status/` | one-call status for `case_status` tool | aggregates documents, review counts, open tasks, blockers |
-| **(new)** `GET /api/agent/surveys/{id}/wait/?stage=&timeout=` | long-poll | returns on stage completion or timeout ≤ 300 s |
+| **(new)** `GET /api/agent/surveys/{id}/wait/?stage=&timeout=` | long-poll | returns on stage completion or timeout ≤ 60 s (MCP tool-call limits) |
 
 ## Documents
 
@@ -68,7 +65,7 @@ Validation performed on `result/` is specified in
 
 | Endpoint | Body / params | Notes |
 |---|---|---|
-| `GET  /api/agent/surveys/{id}/review-queue/?status=&applicant=&significant_only=` | | each item includes candidates with `document_id, page, quote` (from `SurveyValue.source_documents` + `SectionMemo` evidence) and `significant: bool` |
+| `GET  /api/agent/surveys/{id}/review-queue/?status=&applicant=&significant_only=` | | each item includes candidates with `document_id, page, quote` from `SurveyValueEvidence` **(new model — today `SurveyValue` has only `source_documents`)** and `significant: bool` |
 | `POST /api/agent/values/{id}/resolve/` | `{value, rationale, evidence[], expected_updated_at}` | 403 `SIGNIFICANT_FIELD` for allow-listed fields when actor=agent; 409 `STALE_VALUE` if `updated_at` moved; sets `CONFIRMED`; writes audit; invalidates formula cache for the survey |
 | `POST /api/agent/values/{id}/propose/` | same | creates `ValueProposal` **(new model)**; dashboard shows it |
 | `POST /api/agent/proposals/{id}/withdraw/` | `{reason}` | agent retracts its own proposal |
@@ -82,8 +79,9 @@ Validation performed on `result/` is specified in
 | `GET  /api/agent/approvals/?survey=&status=` | | list, for resumed sessions and the dashboard tab |
 | `POST /api/approvals/{id}/decide/` | `{decision: approve \| reject, edited_payload?}` | **user session only** (Auth0 login, team member); performs the action server-side (creates the survey / applies proposals / starts auto-fill); audit `actor=rcic`, links the agent session; one-time, 24 h expiry |
 
+| `POST /api/agent/surveys/{id}/client-questions/` | `{field, question, why, satisfying_documents?}` | stored (`ClientQuestion`, new); shown in dashboard; never emailed |
+
 Agent tokens receive 403 on `decide/` regardless of any header or flag.
-| `POST /api/agent/surveys/{id}/client-questions/` | `{field, question, why, satisfying_documents?}` | stored; shown in dashboard; never emailed |
 
 Significance allow-list: `settings.AGENT_SIGNIFICANT_FIELDS` (field names /
 regexes) — DOB, given/family names, passport number & expiry, marital status,

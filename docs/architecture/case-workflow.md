@@ -74,8 +74,9 @@ of the run.
 
 1. `start_processing(document_ids?)` → backend starts `process_document`
    workflows in local mode.
-2. Task loop (`pull_tasks` → execute → `submit_result`), see
-   [local-llm-task-queue.md](local-llm-task-queue.md). Task kinds here:
+2. `run_tasks()` — the executor pulls each task, runs it in a fresh headless
+   runtime and submits (see [runtime-modes.md](runtime-modes.md)). Task kinds
+   here:
    - `extract_content` — render pages locally, run the OCR/vision prompt, return
      page-marked text (`## 第N页` markers preserved so downstream page
      resolution keeps working). PDFs with a real text layer skip the model:
@@ -107,7 +108,7 @@ Gate: 🧑 only if the agent cannot decide the type of a document that is
 
 1. `run_analysis(force=true)` — always `force`; the incremental path can strand
    a case at `CONFIRMED_DOCUMENTS` (see [known-issues.md](../design/known-issues.md)).
-2. Task loop. Kinds: `extract_section` (per document × section),
+2. `run_tasks()` in a loop with `wait_for_stage`. Kinds: `extract_section` (per document × section),
    `analyze_section` (per case × section), `extract_values` (labels → machine
    keys), plus any analysis-stage kinds configured local.
 3. `wait_for_stage("analysis")`.
@@ -129,7 +130,11 @@ This is where the agent adds most value and where policy matters most.
 1. `get_review_queue()` → items grouped by status, each with: field name and
    description, applicant, current candidates (value, source document, page,
    verbatim quote, status), and a `significance` flag computed server-side from
-   a field allow-list (see below).
+   a field allow-list (see below). Page and quote come from
+   `SurveyValueEvidence` *(new)* — today a `SurveyValue` records only
+   `source_documents`, so the extraction schemas must start emitting
+   `{value, quote, page}` per field (Phase 2) for this stage to work as
+   described.
 2. Work each item:
 
 | Item | Agent action | Gate |
@@ -167,7 +172,7 @@ so Claude and Codex apply the same rule.
    approves there; the server starts auto-fill itself. Never start auto-fill
    from the agent; it cannot.
 3. `wait_for_approval(id)` → `approved`. Then either:
-   - `download_l3(path)` — fetch the L3 JSON and IMM PDFs into
+   - `download_output("all")` — fetch the L3 JSON and IMM PDFs into
      `.uapply/output/` for the existing desktop filler, or
    - if the desktop app is installed and configured, hand off to it (out of
      scope for v1; document the manual step).

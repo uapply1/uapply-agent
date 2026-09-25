@@ -1,7 +1,7 @@
 # AgentTask Schema
 
-The JSON contract between the backend's `LocalAgentLLM` provider and the
-agent. One task = one LLM call the server would otherwise have made.
+The JSON contract between the backend's task queue and the executor in
+`uapply-agent`. One task = one LLM call the server would otherwise have made.
 
 ## Envelope
 
@@ -28,10 +28,10 @@ Common payload fields:
 | `evidence_required` | If true, quoted spans in the result are verified verbatim server-side |
 | `language_hint` | e.g. `zh`, `en` — mirrors what the pipeline passes today |
 
-The agent must treat `system_prompt`/`user_prompt` as **the prompt to run**,
-not as instructions to itself about the case; the playbook is explicit that
-the model executes the task exactly as a hosted model would, and returns only
-the JSON.
+The executor passes `system_prompt` as the spawned runtime's actual system
+prompt and `user_prompt` (plus inputs) as the user turn, so the local model
+sees exactly what the hosted model would. Payloads never reach the RCIC's
+chat model.
 
 ## Kinds
 

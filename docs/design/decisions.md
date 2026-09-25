@@ -6,9 +6,9 @@ don't rewrite.
 ## D1. Local tokens via a server-side task queue, not a local pipeline
 
 **Decision.** The backend keeps orchestrating (`process_document`,
-`start_analysis`, section routing, `SurveyValue` writing). A `LocalAgentLLM`
-provider turns each LLM call into an `AgentTask` that the RCIC-side agent
-executes. See [local-llm-task-queue.md](../architecture/local-llm-task-queue.md).
+`start_analysis`, section routing, `SurveyValue` writing). Each LLM-calling
+step is split so that, in local mode, it emits `AgentTask`s the RCIC-side
+executor runs (D2, D6). See [local-llm-task-queue.md](../architecture/local-llm-task-queue.md).
 
 **Alternatives.**
 - *Port the pipeline into `uapply-agent`* (agent runs OCR → classify → extract
@@ -91,15 +91,25 @@ dashboard); approve nothing (unacceptable liability for an RCIC).
 **Why.** Puts human time where the regulatory risk is. The list is settings,
 not code, so it can be tightened per deployment.
 
-## D6. Fresh context per task in batch mode
+## D6. One executor: a fresh headless runtime per task, in every mode
 
-**Decision.** Headless runs spawn the runtime once per `AgentTask`.
+**Decision.** `AgentTask`s are executed only by the MCP server / CLI spawning
+the RCIC's runtime headless (`claude -p`, `codex exec`), one process per
+task, with the task's prompt as a real system prompt. The interactive chat
+never executes tasks; it calls `run_tasks` and gets counts back.
 
-**Alternatives.** One long session streaming tasks. Rejected: context growth,
-drift between documents, cost of re-reading, and poor recovery on failure.
+**Alternatives.**
+- *Execute tasks inline in the chat model* (first draft). Rejected: the
+  system prompt arrives as data the model is asked to "run", quality is worse
+  and unmeasurable against the hosted path, task payloads fill the RCIC's
+  context, and subagent semantics differ per runtime.
+- *One long headless session streaming tasks.* Rejected: context growth,
+  drift between documents, poor recovery on failure.
 
-**Why.** Each task is self-contained by construction (prompt + inputs +
-schema). Process spawn overhead is negligible next to model latency.
+**Why.** Identical results in interactive and batch mode, a single eval path,
+prompts kept out of the chat, and process spawn overhead that is negligible
+next to model latency. Cost: the runtime CLI must be installed even for
+desktop-app users; `init` checks and explains.
 
 ## D7. The agent doesn't submit to IRCC, doesn't email, doesn't delete
 

@@ -7,26 +7,29 @@ each runtime.
 
 ## Packaging
 
+The playbook ships **inside the MCP server**, which every runtime already
+loads:
+
+- **Server `instructions`** — the behavioural rules below, sent to the runtime
+  on connect. Claude Code, Claude Desktop and Codex all surface them to the
+  model.
+- **MCP prompts** — `uapply/run`, `uapply/intake`, `uapply/review`,
+  `uapply/autofill`, `uapply/status`. Runtimes expose these as slash commands
+  (`/uapply:run` in Claude Code; the prompt picker in Claude Desktop; Codex's
+  prompt list). One definition, every surface, no build step.
+- **Resource** `uapply://playbook/resolution-policy` — the long-form policy
+  the model can read when it reaches stage 5.
+
 ```
 playbook/
-├── SOURCE.md                       # single source; sections tagged for each command
-├── claude-code/                    # Claude Code plugin
-│   ├── .claude-plugin/plugin.json
-│   ├── skills/uapply/SKILL.md      # auto-triggers on uApply context; links to reference
-│   ├── skills/uapply/reference/    # workflow.md, resolution-policy.md, task-loop.md
-│   └── commands/
-│       ├── run.md                  # /uapply:run
-│       ├── intake.md               # /uapply:intake
-│       ├── review.md               # /uapply:review
-│       └── autofill.md             # /uapply:autofill
-└── codex/
-    ├── AGENTS.md                   # same content, Codex conventions
-    └── skills/uapply/…
+├── SOURCE.md                # single source: instructions, prompts, policy
+└── wrappers/                # optional, thin, generated from SOURCE.md
+    ├── claude-code-plugin/  # only adds /uapply:* to the command palette
+    └── codex/AGENTS.md      # only for RCICs who prefer file-based config
 ```
 
-A build step renders both from `SOURCE.md` so they cannot drift. `uapply-agent
-init` installs the right one (plugin registration for Claude Code; `AGENTS.md`
-into the client folder or `~/.codex/` for Codex) and registers the MCP server.
+`uapply-agent init` registers the MCP server with whichever runtimes it
+detects; the wrappers are opt-in.
 
 ## Commands
 
@@ -50,9 +53,8 @@ full text.
 - Prefer tools over reasoning about files: use `get_document_text` /
   `render_pages` rather than guessing from filenames, but only when a decision
   needs it — every look costs the RCIC's plan.
-- When executing an `AgentTask`, run the task's own prompt on the task's own
-  inputs and return only JSON matching `output_schema`. Do not add case
-  knowledge from other documents; do not "improve" the prompt.
+- Execute pipeline work only through `run_tasks`. Never ask for a task's
+  prompt or inputs; you orchestrate, the executor runs the model.
 - Give a rationale and evidence (document, page, quote) for every resolution.
 - Write questions for the client into the review report; never contact anyone.
 
@@ -95,14 +97,14 @@ another way.
 
 ## Context hygiene
 
-- Task loops run in subagents / fresh contexts (Claude Code `Agent` tool; Codex
-  sub-tasks), ≤ 5 tasks per subagent, reporting only counts and rejections.
-- For > ~15 documents, suggest batch mode to the RCIC before starting
-  classification (`uapply-agent run --stages classify,extract`).
+- `run_tasks` returns counts only; loop it with `wait_for_stage` and report
+  progress in one line per iteration.
+- For overnight or multi-client work, suggest batch mode
+  (`uapply-agent run --stages classify,extract`) — same executor, no chat.
 - Do not paste document text into the chat unless the RCIC asks.
 
 ## Eval hooks
 
 The playbook contains no runtime-specific flags and no backend URLs; those
-come from the MCP server. This keeps one playbook testable against both
-runtimes in `evals/`.
+live in the MCP server and `runners/`. This keeps one playbook testable
+against every runtime in `evals/`.

@@ -42,11 +42,11 @@ for.
 RCIC machine                                                uApply cloud
 ┌─────────────────────────────────────────────┐            ┌─────────────────────────────────┐
 │ Claude Code / Codex  (the LLM)              │            │ Django API + Celery workers      │
-│   ├─ uApply playbook (skills / AGENTS.md)   │            │                                  │
+│   ├─ uApply playbook (MCP prompts+instr.)  │            │                                  │
 │   └─ uapply-agent  (stdio MCP server + CLI) │            │  Survey · Document · SurveyValue │
 │        ├─ folder scan / hash / manifest     │── HTTPS ──▶│  PromptTemplate · Section routing│
 │        ├─ local ops: render pages, text     │            │  AgentTask queue (new)           │
-│        ├─ task loop: pull → run → submit    │◀───────────│  LocalAgentLLM provider (new)    │
+│        ├─ executor: pull → spawn CLI → submit│◀───────────│  prepare/continue stages (new)   │
 │        └─ device-code auth (keychain)       │            │  validation · audit · auto-fill  │
 │                                             │            └─────────────────────────────────┘
 │ ~/Clients/Zhang_Wei/                        │
@@ -60,9 +60,9 @@ Three parts:
 
 | Part | Where | Responsibility |
 |---|---|---|
-| **Backend changes** | `uapply-backend` | `LocalAgentLLM` provider that turns each LLM call into an `AgentTask`; task pull/submit endpoints; result validation; review-queue and resolve endpoints with actor + audit; auto-fill preflight. See [local-llm-task-queue.md](architecture/local-llm-task-queue.md). |
-| **`uapply-agent`** | new package, RCIC machine | CLI + stdio MCP server. Owns the working folder, does the non-LLM local work, pulls tasks and submits results, exposes coarse tools to the coding agent. See [mcp-tools.md](reference/mcp-tools.md). |
-| **Playbook** | new, ships with the package | The operator instructions: when to call which tool, where the gates are, how to reason about conflicts. Delivered as a Claude Code plugin and a Codex `AGENTS.md`. See [playbook.md](reference/playbook.md). |
+| **Backend changes** | `uapply-backend` | Prepare/continue split of every LLM-calling step so local-mode cases emit `AgentTask`s; task pull/submit endpoints; result validation; per-value evidence; review-queue, resolve and approval endpoints with actor + audit; auto-fill preflight. See [local-llm-task-queue.md](architecture/local-llm-task-queue.md). |
+| **`uapply-agent`** | new package, RCIC machine | CLI + stdio MCP server. Owns the working folder, does the non-LLM local work, and is the **task executor**: it pulls tasks and runs each in a fresh headless Claude Code / Codex process. Exposes coarse orchestration tools to the chat model. See [mcp-tools.md](reference/mcp-tools.md). |
+| **Playbook** | new, ships with the package | The operator instructions: when to call which tool, where the gates are, how to reason about conflicts. Delivered as MCP prompts and server instructions, so it works in Claude Code, Claude Desktop and Codex from one source. See [playbook.md](reference/playbook.md). |
 
 ## How a case flows
 
@@ -72,7 +72,7 @@ RCIC: "/uapply:run"
   2. upload     hash files → bulk_upload new ones → manifest
   3. classify   start_document_processing(llm_mode=local_agent)
                   server creates AgentTasks (content extraction, classification)
-                  agent pulls, reads local pages, runs prompt, submits → server validates
+                  executor runs each task in a fresh headless Claude Code / Codex → server validates
                   low-confidence types → agent double-checks against the file → reclassify
   4. extract    start_analysis(force=true) → AgentTasks per section → SurveyValues (CONFIRMED/DOUBTFUL/CONFLICT/MISSING)
   5. resolve    review queue → agent resolves with evidence (tiered) → 🧑 approve legally significant ones
@@ -106,8 +106,8 @@ Discussed fully in [decisions.md](design/decisions.md):
   set per runtime is mandatory before release.
 - Prompt templates become visible on the RCIC's machine; keep the most
   sensitive steps server-side if needed (`llm_mode` is per task kind).
-- Local execution is more sequential than the server's parallel sections; batch
-  mode with a few headless workers recovers most of it.
+- Local execution is more sequential than the server's parallel sections; the
+  executor's 2–4 concurrent workers recover most of it, within plan limits.
 - Client documents are processed under the RCIC's own Anthropic / OpenAI
   account and terms — a feature for some firms, a compliance question for
   others. Surface it in onboarding.

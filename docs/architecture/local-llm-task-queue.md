@@ -93,8 +93,8 @@ Celery document_queue                          API (Django)                     
 ──────────────────────                         ────────────                       ────────────
 process_document(doc)
   ├─ run_llm_stage("extract_content")
-  │     └─ AgentTaskBatch(A) + 3 tasks ──────▶ (rows in DB)          ◀── pull_tasks ── agent
-  └─ returns                                                          ── result ─────▶ agent
+  │     └─ AgentTaskBatch(A) + 3 tasks ──────▶ (rows in DB)          ◀── pull ─── executor
+  └─ returns                                                          ── result ──▶ executor
                                                POST tasks/1/result ✓
                                                POST tasks/2/result ✓
                                                POST tasks/3/result ✓  (last)
@@ -112,6 +112,19 @@ if `accepted == total` dispatches the continuation Celery task **once**. A
 second submission for an already-accepted task returns the stored verdict and
 does not re-dispatch (idempotent).
 
+Two obligations on every `continue_` task:
+
+- **Idempotent.** The beat task may re-dispatch a continuation that the
+  original dispatch also delivered (Celery at-least-once, or a
+  `completed_pending_dispatch` retry). `continue_` must upsert `SectionMemo`
+  / `SurveyValue` rows keyed by (document, section) / (survey, field, row)
+  and check `batch.status` before doing work.
+- **Same job bookkeeping as today.** `DocumentProcessor` currently checks the
+  Redis cancel flag and updates `DocumentProcessingJob.progress` between
+  stages inside one task. After the split each `continue_` does the same at
+  its start, so cancellation and progress reporting behave identically in
+  both modes.
+
 Properties this buys:
 
 - **No worker is held while waiting.** Plan limit hit, laptop closed, RCIC on
@@ -125,8 +138,8 @@ Properties this buys:
   `failed=True` so the document / analysis job ends in `FAILED` with a clear
   reason.
 - **Cancellation** reuses the existing Redis cancel flag: `stop_document_processing`
-  / `stop_analysis` also mark open tasks and batches `cancelled`; the agent's
-  next `pull_tasks` no longer sees them.
+  / `stop_analysis` also mark open tasks and batches `cancelled`; the executor's
+  next pull no longer sees them.
 
 ### Status while waiting
 
