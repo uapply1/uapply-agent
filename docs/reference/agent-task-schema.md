@@ -37,7 +37,7 @@ chat model.
 
 | Kind | Stage | Inputs | Result (validated by `output_schema`) | Evidence |
 |---|---|---|---|---|
-| `extract_content` | classify | page images (rendered locally) | `{pages: [{n, text}]}` → server joins with `## 第N页` markers into `RawMemo` | — |
+| `extract_content` | classify | the **whole PDF / image** (D12); text-layer PDFs never reach the model | `{pages: [{n, text}]}` → server joins with `## 第N页` markers into the parent document's `RawMemo` | — |
 | `classify_document` | classify | first N page images or text | `{document_type: <file_name>, confidence: 0–1, reasoning}`; type must be in the survey's allowed set | — |
 | `extract_section` | extract | `text_inputs` (document text) | section-specific schema (as today) | yes — each field carries `{value, quote, page}` |
 | `analyze_section` | extract | multiple `text_inputs` across documents | analysis schema | yes |
@@ -83,7 +83,7 @@ that case.
 | Task | Local step |
 |---|---|
 | `extract_content` on a PDF with a text layer (pdfplumber yields > N chars/page) | submit pdfplumber text directly; no model call |
-| `extract_content` on scanned PDF / image | render pages at 150 dpi to `cache/`, auto-rotate, hand to model |
+| `extract_content` on scanned PDF / image | Claude Code: hand the PDF path to the runtime, which reads it in ≤ 20-page chunks (API limit 100 pages / 32 MB — split above that); Codex: render pages to images |
 | Any task on HEIC | convert to JPEG first (uploaded file is the JPEG) |
 | DOCX / XLSX | python-docx / openpyxl text; no model call for content extraction |
 

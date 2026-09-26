@@ -169,6 +169,32 @@ assuming the plan absorbs everything.
 **Why.** Local tokens only save money if the RCIC's plan can actually carry
 the case. Over-promising here would fail in the first design-partner week.
 
+## D12. Documents are the unit, and OCR comes first
+
+**Decision.** In local-agent mode a PDF is processed as **one document**, not
+as one Document per page: one `extract_content` task returns page-marked text
+for the whole file (pdfplumber locally when the PDF has a text layer — zero
+model calls; otherwise the runtime reads the PDF in ≤ 20-page chunks), then
+classification runs once and section extraction runs once, on text. Page
+Documents are still created for the dashboard (thumbnails, reorder, edit) but
+are not processed individually.
+
+**Alternatives.**
+- *Per-page processing (today).* Rejected: with N sections a 30-page
+  statement is ~30 × (2 + N) LLM calls, each re-sending the prompts, and
+  cross-page context (tables, running balances) is lost.
+- *Direct JSON from the PDF, skipping text.* Costs ≈ one PDF read per
+  document if all sections are bundled into one call, which is the floor —
+  but it gives up verbatim-evidence verification (no text to check quotes
+  against), makes every re-run and every schema retry a full PDF read, and
+  degrades on long documents. Kept as a possible later optimisation for
+  short scans only.
+
+**Why.** Cost = P + N·T (one document read plus N cheap text calls) instead
+of pages × (P + N·T); evidence stays verifiable; prompt-template edits and
+retries re-run on text. Text-layer PDFs — most bank, school and employer
+documents — need no model at all for OCR.
+
 ## Open questions
 
 - **Billing model.** Local-token cases cost uApply almost nothing in LLM spend;

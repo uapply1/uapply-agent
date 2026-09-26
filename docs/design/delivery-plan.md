@@ -43,7 +43,8 @@ Scanned documents still use server OCR in this phase.
 
 | Item | Size |
 |---|---|
-| `extract_content` kind (vision OCR local; text-layer PDFs skip the model) | M |
+| Parent PDF as the processing unit in local mode (page Documents kept for the UI only); `extract_content` kind for the whole file; continuation writes the parent `RawMemo` and proceeds to classify → sections (D12) | M |
+| Same parent-as-unit change for server mode (per-page OCR merged, sections once) — independent token saving, decide separately | M |
 | `extract_section`, `analyze_section`, `extract_values`, family inference kinds; evidence verification wired to the shared verifier | M |
 | Per-value evidence: extraction schemas emit `{value, quote, page}`; `SurveyValueEvidence` model written by the continuation for both server and local mode; conflict candidates keep their evidence | M |
 | Financial Proof Tier-1 extraction as a kind | S |
