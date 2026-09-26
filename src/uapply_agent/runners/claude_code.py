@@ -15,13 +15,16 @@ from .base import Runner, RunnerError, RunResult, extract_json
 class ClaudeCodeRunner(Runner):
     name = "claude-code"
     binary = "claude"
+    supports_pdf = True    # the Read tool reads PDFs, ≤ 20 pages per call
+    pages_per_call = 20
 
     def run(self, *, system_prompt, user_prompt, schema, images, cwd, timeout_s=300) -> RunResult:
         prompt = user_prompt
         if images:
             listing = "\n".join(f"- {p.name}" for p in images)
-            prompt = (f"{user_prompt}\n\nThe document image(s) to look at are in the current directory:\n{listing}\n"
-                      f"Read each image with the Read tool, then answer with JSON only.")
+            prompt = (f"{user_prompt}\n\nThe document file(s) to look at are in the current directory:\n{listing}\n"
+                      f"Read each one with the Read tool (for a PDF, use its `pages` parameter for the page range "
+                      f"named in the task), then answer with JSON only.")
         cmd = [
             self.binary, "-p", prompt,
             "--bare", "--no-session-persistence",

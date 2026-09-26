@@ -16,6 +16,8 @@ from .base import Runner, RunnerError, RunResult, extract_json
 class CodexRunner(Runner):
     name = "codex"
     binary = "codex"
+    supports_pdf = False   # images only; the executor renders PDF pages
+    pages_per_call = 10
 
     def run(self, *, system_prompt, user_prompt, schema, images, cwd, timeout_s=300) -> RunResult:
         prompt = f"## Instructions\n{system_prompt}\n\n## Task\n{user_prompt}\n\nAnswer with JSON only."

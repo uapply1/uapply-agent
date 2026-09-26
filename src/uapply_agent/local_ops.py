@@ -35,6 +35,22 @@ def pdf_text(pdf: Path, min_chars_per_page: int = 40) -> Optional[str]:
     return "\n\n".join(f"Page {i}:\n{t}" for i, t in enumerate(pages, start=1))
 
 
+def pdf_pages_text(pdf: Path, min_chars_per_page: int = 40) -> Optional[list[str]]:
+    """One string per page from the text layer, or None when the PDF is a scan."""
+    import pdfplumber
+    pages = []
+    with pdfplumber.open(pdf) as doc:
+        for page in doc.pages:
+            pages.append(page.extract_text() or "")
+    if not pages or sum(len(t.strip()) for t in pages) < min_chars_per_page * len(pages):
+        return None
+    return pages
+
+
+def render_pdf_pages(pdf: Path, out_dir: Path, first: int, last: int, dpi: int = 150) -> list[Path]:
+    return [render_pdf_page(pdf, n, out_dir, dpi) for n in range(first, last + 1)]
+
+
 def heic_to_jpeg(src: Path, out_dir: Path, quality: int = 92) -> Path:
     import pillow_heif
     from PIL import Image
