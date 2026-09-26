@@ -139,3 +139,51 @@ def test_classification_passes_pdf_to_pdf_capable_runtime(folder, tmp_path):
     assert stats.accepted == 1
     assert runner.calls[0]["images"][0].suffix == ".pdf"
     assert "first pages" in runner.calls[0]["user_prompt"]
+
+
+def test_text_layer_sanity_check_rejects_mojibake():
+    from uapply_agent.local_ops import looks_like_real_text
+    assert looks_like_real_text("Bank statement 2025-03. Balance 12,345.67 CAD. 张伟 护照号 E12345678")
+    assert not looks_like_real_text(" " * 5)
+    assert not looks_like_real_text("   ")
+
+
+def test_force_ocr_skips_text_layer(folder, tmp_path):
+    src = make_pdf(tmp_path / "text.pdf", pages=2, text=True)
+    api = FakeApi(src, [task()])
+    runner = ChunkRunner(supports_pdf=True, pages_per_call=20)
+    stats = Executor(api, folder, runner=runner, force_ocr=True).run()
+    assert stats.accepted == 1 and stats.model_calls == 1 and stats.text_layer_docs == 0
+
+
+def test_missing_pages_are_retried_individually(folder, tmp_path):
+    src = make_pdf(tmp_path / "scan.pdf", pages=4, text=False)
+
+    class FlakyRunner(ChunkRunner):
+        def run(self, *, system_prompt, user_prompt, schema, images, cwd, timeout_s=300):
+            rr = super().run(system_prompt=system_prompt, user_prompt=user_prompt, schema=schema, images=images, cwd=cwd)
+            if "pages 1 to 4" in user_prompt:  # first pass drops page 3
+                rr.output["pages"] = [p for p in rr.output["pages"] if p["n"] != 3]
+            return rr
+
+    api = FakeApi(src, [task()])
+    runner = FlakyRunner(supports_pdf=True, pages_per_call=20)
+    stats = Executor(api, folder, runner=runner).run()
+    assert stats.accepted == 1 and stats.model_calls == 2
+    assert "pages 3 to 3" in runner.calls[1]["prompt"]
+    assert [p["n"] for p in api.submitted[0]["result"]["pages"]] == [1, 2, 3, 4]
+
+
+def test_classification_prompt_names_a_page_range(folder, tmp_path):
+    src = make_pdf(tmp_path / "passport.pdf", pages=30, text=False)
+    t = task(file_name="passport.pdf", kind="classify_document")
+    t["payload"]["output_schema"] = {"type": "object", "required": ["file_types"]}
+
+    class ClassifyRunner(ChunkRunner):
+        def run(self, **kw):
+            self.calls.append(kw)
+            return RunResult(output={"file_types": ["Passport"]}, model="m", usage={})
+
+    runner = ClassifyRunner(supports_pdf=True, pages_per_call=20)
+    Executor(FakeApi(src, [t]), folder, runner=runner).run()
+    assert 'pages="1-3"' in runner.calls[0]["user_prompt"]

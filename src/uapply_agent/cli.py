@@ -67,7 +67,8 @@ def cmd_run(args, settings):
     from .executor import Executor
     f = _folder(args)
     api = UApplyApi(settings)
-    ex = Executor(api, f, runtime=args.runtime or settings.runtime, model=args.model or settings.model)
+    ex = Executor(api, f, runtime=args.runtime or settings.runtime, model=args.model or settings.model,
+                  force_ocr=args.force_ocr or settings.force_ocr)
     print(f"executor: {ex.runner.name} session {ex.session_id}", file=sys.stderr)
     total = None
     while True:
@@ -133,6 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--folder"); s.add_argument("--runtime", choices=["auto", "claude-code", "codex"])
     s.add_argument("--model"); s.add_argument("--workers", type=int); s.add_argument("--max-tasks", type=int)
     s.add_argument("--kinds", nargs="*"); s.add_argument("--follow", action="store_true", help="keep going until processing is done")
+    s.add_argument("--force-ocr", action="store_true", help="ignore PDF text layers; always OCR with the model")
     s.set_defaults(fn=cmd_run)
 
     s = sub.add_parser("mcp", help="serve the MCP tools over stdio"); s.add_argument("--folder"); s.set_defaults(fn=cmd_mcp)

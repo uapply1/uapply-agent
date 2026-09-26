@@ -34,8 +34,33 @@ class UApplyApi:
     def logged_in(self) -> bool:
         return bool(self.token)
 
-    def _req(self, method: str, path: str, **kw) -> Any:
+    def _refresh_token(self) -> bool:
+        """Exchange the stored refresh token once; False when there is nothing to refresh with."""
+        s = self.settings
+        try:
+            import keyring
+            refresh = keyring.get_password("uapply-agent", "refresh_token")
+        except Exception:
+            refresh = None
+        if not (refresh and s.auth0_domain and s.auth0_client_id):
+            return False
+        try:
+            r = httpx.post(f"https://{s.auth0_domain}/oauth/token", timeout=30, data={
+                "grant_type": "refresh_token", "client_id": s.auth0_client_id, "refresh_token": refresh})
+            if r.status_code != 200:
+                return False
+            body = r.json()
+            Credentials.set_token(body["access_token"], body.get("refresh_token") or refresh)
+            self.token = body["access_token"]
+            self._client.headers.update(self._headers())
+            return True
+        except Exception:
+            return False
+
+    def _req(self, method: str, path: str, _retry: bool = True, **kw) -> Any:
         r = self._client.request(method, path, **kw)
+        if r.status_code == 401 and _retry and self._refresh_token():
+            return self._req(method, path, _retry=False, **kw)
         if r.status_code >= 400:
             try:
                 body = r.json()
@@ -56,7 +81,14 @@ class UApplyApi:
 
     def documents(self, survey_id: str) -> list:
         data = self._req("GET", "/api/survey/documents/", params={"survey": survey_id})
-        return data.get("results", data) if isinstance(data, dict) else data
+        rows = data.get("results", data) if isinstance(data, dict) else data
+        # The backend filters by ?survey=; keep the client-side guard so an older backend
+        # can never leak another case's documents into the chat.
+        return [d for d in rows if str(d.get("survey", survey_id)) == str(survey_id)]
+
+    def survey_document_types(self, survey_id: str) -> list:
+        """The types attached to this case (the only ones bulk_upload accepts), with category."""
+        return self.survey(survey_id).get("document_types") or []
 
     def bulk_upload(self, survey_id: str, document_category: str, document_type_id: str,
                     paths: Iterable[Path], archive_name: str = "") -> list:

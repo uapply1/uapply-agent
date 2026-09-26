@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -28,10 +29,20 @@ class RunStats:
     plan_limited: bool = False
     remaining: int = 0
     model_calls: int = 0
+    text_layer_docs: int = 0      # documents extracted with pdfplumber, no model look
     failures: list = field(default_factory=list)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def bump(self, name: str, n: int = 1) -> None:
+        with self._lock:
+            setattr(self, name, getattr(self, name) + n)
+
+    def note_failure(self, item: dict) -> None:
+        with self._lock:
+            self.failures.append(item)
 
     def as_dict(self) -> dict:
-        return self.__dict__.copy()
+        return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
 
 
 def _schema_check(schema: dict, output: dict) -> Optional[str]:
@@ -53,11 +64,13 @@ def _merge_usage(total: dict, part: dict) -> dict:
 
 class Executor:
     def __init__(self, api: UApplyApi, folder: WorkingFolder, runner: Optional[Runner] = None,
-                 runtime: str = "auto", model: str = "", session_id: Optional[str] = None):
+                 runtime: str = "auto", model: str = "", session_id: Optional[str] = None,
+                 force_ocr: bool = False):
         self.api = api
         self.folder = folder
         self.runner = runner or get_runner(runtime, model)
         self.session_id = session_id or f"{self.runner.name}-{uuid.uuid4().hex[:8]}"
+        self.force_ocr = force_ocr
 
     # ---- inputs ----
 
@@ -91,14 +104,15 @@ class Executor:
         images = [self._for_model(p, cwd) for p in files]
         user_prompt = payload.get("user_prompt", "")
         if any(p.suffix.lower() == ".pdf" for p in images):
-            user_prompt += "\n\nFor a PDF, look at its first pages (up to the first 3)."
+            user_prompt += ("\n\nFor a PDF, read only its first pages: call Read with pages=\"1-3\" "
+                            "(never without a page range) and classify from those.")
         for t in payload.get("text_inputs", []):
             user_prompt += f"\n\n--- document {t.get('document_id')} ---\n{t.get('text', '')}"
         note = ""
         for attempt in range(2):
             rr = self.runner.run(system_prompt=payload["system_prompt"], user_prompt=user_prompt + note,
                                  schema=schema, images=images, cwd=cwd)
-            stats.model_calls += 1
+            stats.bump('model_calls')
             local_err = _schema_check(schema, rr.output)
             if local_err:
                 note = f"\n\nYour previous answer was invalid ({local_err}). Return JSON matching the schema exactly."
@@ -107,7 +121,7 @@ class Executor:
                 return
             note = note_out[0]
         self.api.release_task(task["id"], "executor: could not produce a valid result in this run")
-        stats.released += 1
+        stats.bump('released')
 
     # ---- extract_content: OCR the whole document once ----
 
@@ -119,11 +133,12 @@ class Executor:
         ext = src.suffix.lower()
 
         if ext == ".pdf":
-            text_pages = pdf_pages_text(src)
+            text_pages = pdf_pages_text(src, force_ocr=self.force_ocr)
             if text_pages is not None:
-                # Text layer present: no model call at all.
+                # Text layer present and sane: no model call at all.
                 pages = [{"n": i, "text": t} for i, t in enumerate(text_pages, start=1)]
                 logger.info(f"task {task['id']}: {len(pages)} pages from text layer, no model call")
+                stats.bump('text_layer_docs')
                 self._submit(task, {"pages": pages}, "pdfplumber", {}, stats, [], runtime="local")
                 return
             pages, usage, model = self._ocr_pdf(src, payload, schema, cwd, stats)
@@ -132,7 +147,7 @@ class Executor:
             rr = self.runner.run(system_prompt=payload["system_prompt"],
                                  user_prompt=payload["user_prompt"] + "\n\nThis is a single-page document: return pages=[{n: 1, text}].",
                                  schema=schema, images=[img], cwd=cwd)
-            stats.model_calls += 1
+            stats.bump('model_calls')
             pages = [{"n": 1, "text": (rr.output.get("pages") or [{}])[0].get("text", "")}]
             usage, model = rr.usage, rr.model
         else:
@@ -142,7 +157,7 @@ class Executor:
             raise RunnerError("extract_content: the runtime returned no pages")
         if not self._submit(task, {"pages": pages}, model, usage, stats, []):
             self.api.release_task(task["id"], "executor: OCR result rejected")
-            stats.released += 1
+            stats.bump('released')
 
     def _ocr_pdf(self, src: Path, payload: dict, schema: dict, cwd: Path, stats: RunStats):
         """Chunk a scanned PDF by the runtime's page budget; one headless call per chunk."""
@@ -151,31 +166,48 @@ class Executor:
         pages, usage, model = [], {}, ""
         for first in range(1, n + 1, per):
             last = min(first + per - 1, n)
-            if self.runner.supports_pdf:
-                images = [src]
-                prompt = (f"{payload['user_prompt']}\n\nTranscribe pages {first} to {last} of {src.name} "
-                          f"(read it with pages=\"{first}-{last}\"). Return exactly {last - first + 1} entries, "
-                          f"numbered n={first} to n={last}.")
-            else:
-                images = render_pdf_pages(src, cwd, first, last)
-                prompt = (f"{payload['user_prompt']}\n\nThe images are pages {first} to {last} of the document, in order. "
-                          f"Return exactly {last - first + 1} entries, numbered n={first} to n={last}.")
-            rr = self.runner.run(system_prompt=payload["system_prompt"], user_prompt=prompt,
-                                 schema=schema, images=images, cwd=cwd)
-            stats.model_calls += 1
-            got = [p for p in (rr.output.get("pages") or []) if isinstance(p, dict)]
-            # Tolerate a model that numbers the chunk from 1.
-            if got and all(1 <= int(p.get("n", 0)) <= (last - first + 1) for p in got) and first != 1:
-                for p in got:
-                    p["n"] = int(p["n"]) + first - 1
-            pages.extend({"n": int(p.get("n", 0)), "text": str(p.get("text", ""))} for p in got)
-            usage = _merge_usage(usage, rr.usage or {})
-            model = rr.model or model
+            got, u, m = self._ocr_range(src, payload, schema, cwd, stats, first, last)
+            pages.extend(got)
+            usage = _merge_usage(usage, u)
+            model = m or model
         seen = {}
         for p in pages:
-            if first_ok := (1 <= p["n"] <= n):
+            if 1 <= p["n"] <= n:
                 seen.setdefault(p["n"], p)
+        missing = [k for k in range(1, n + 1) if k not in seen]
+        if missing:
+            # One retry, page by page, for whatever the chunked pass skipped.
+            logger.warning(f"OCR missed pages {missing[:10]}; retrying them individually")
+            for k in missing:
+                got, u, m = self._ocr_range(src, payload, schema, cwd, stats, k, k)
+                usage = _merge_usage(usage, u)
+                model = m or model
+                for p in got:
+                    if p["n"] == k:
+                        seen[k] = p
+        still = [k for k in range(1, n + 1) if k not in seen]
+        if still:
+            raise RunnerError(f"OCR could not read pages {still[:10]} of {src.name}")
         return [seen[k] for k in sorted(seen)], usage, model
+
+    def _ocr_range(self, src, payload, schema, cwd, stats, first, last):
+        if self.runner.supports_pdf:
+            images = [src]
+            prompt = (f"{payload['user_prompt']}\n\nTranscribe pages {first} to {last} of {src.name} "
+                      f"(read it with pages=\"{first}-{last}\"). Return exactly {last - first + 1} entries, "
+                      f"numbered n={first} to n={last}.")
+        else:
+            images = render_pdf_pages(src, cwd, first, last)
+            prompt = (f"{payload['user_prompt']}\n\nThe images are pages {first} to {last} of the document, in order. "
+                      f"Return exactly {last - first + 1} entries, numbered n={first} to n={last}.")
+        rr = self.runner.run(system_prompt=payload["system_prompt"], user_prompt=prompt,
+                             schema=schema, images=images, cwd=cwd)
+        stats.bump('model_calls')
+        got = [p for p in (rr.output.get("pages") or []) if isinstance(p, dict)]
+        if got and all(1 <= int(p.get("n", 0)) <= (last - first + 1) for p in got) and first != 1:
+            for p in got:
+                p["n"] = int(p["n"]) + first - 1
+        return [{"n": int(p.get("n", 0)), "text": str(p.get("text", ""))} for p in got], rr.usage or {}, rr.model
 
     # ---- submit ----
 
@@ -183,13 +215,13 @@ class Executor:
                 note_out: list, runtime: Optional[str] = None) -> bool:
         out = self.api.submit_result(task["id"], output, model, runtime or self.runner.name, usage, self.session_id)
         if out.get("accepted"):
-            stats.accepted += 1
+            stats.bump('accepted')
             logger.info(f"task {task['id']} ({task['kind']}) accepted: {json.dumps(output)[:120]}")
             return True
         rej = out.get("rejection") or {}
-        stats.rejected += 1
+        stats.bump('rejected')
         if out.get("task_status") in ("failed", "cancelled", "expired"):
-            stats.failures.append({"task_id": task["id"], "kind": task["kind"], "reason": rej.get("message", out.get("task_status"))})
+            stats.note_failure({"task_id": task["id"], "kind": task["kind"], "reason": rej.get("message", out.get("task_status"))})
             note_out.append("")
             return True  # nothing more to do for this task
         note_out.append(f"\n\nYour previous answer was rejected: {rej.get('code')}: {rej.get('message')}. Fix it and return JSON only.")
@@ -206,12 +238,12 @@ class Executor:
         except PlanLimited as e:
             stats.plan_limited = True
             self._release_quietly(task, f"plan limit: {e}")
-            stats.released += 1
+            stats.bump('released')
             raise
         except (RunnerError, ApiError, OSError, ValueError) as e:
             logger.error(f"task {task['id']} failed: {e}")
-            stats.failed += 1
-            stats.failures.append({"task_id": task["id"], "kind": task["kind"], "reason": str(e)[:300]})
+            stats.bump('failed')
+            stats.note_failure({"task_id": task["id"], "kind": task["kind"], "reason": str(e)[:300]})
             self._release_quietly(task, str(e))
 
     def _release_quietly(self, task: dict, reason: str) -> None:

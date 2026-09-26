@@ -23,26 +23,39 @@ def pdf_page_count(pdf: Path) -> int:
         return doc.page_count
 
 
-def pdf_text(pdf: Path, min_chars_per_page: int = 40) -> Optional[str]:
-    """Text-layer content with `Page N:` markers, or None when the PDF is a scan."""
-    import pdfplumber
-    pages = []
-    with pdfplumber.open(pdf) as doc:
-        for i, page in enumerate(doc.pages, start=1):
-            pages.append(page.extract_text() or "")
-    if not pages or sum(len(t.strip()) for t in pages) < min_chars_per_page * len(pages):
+def looks_like_real_text(text: str, min_ratio: float = 0.85) -> bool:
+    """Guard against a text layer that is mojibake or symbol soup: most non-space
+    characters must be letters, digits, CJK or common punctuation."""
+    import unicodedata
+    chars = [c for c in text if not c.isspace()]
+    if not chars:
+        return False
+    ok = 0
+    for c in chars:
+        cat = unicodedata.category(c)
+        if c.isalnum() or cat.startswith("P") or cat in ("Sc", "Sm") or c in "()[]{}<>/\\|-_+=*&%$#@!?.,;:'\"":
+            ok += 1
+        elif cat.startswith("C") or cat in ("So",):  # control chars, private use, symbols other
+            pass
+        else:
+            ok += 1
+    return ok / len(chars) >= min_ratio
+
+
+def pdf_pages_text(pdf: Path, min_chars_per_page: int = 40, force_ocr: bool = False) -> Optional[list[str]]:
+    """One string per page from the text layer, or None when the PDF is a scan
+    (or its text layer does not look like real text, or OCR is forced)."""
+    if force_ocr:
         return None
-    return "\n\n".join(f"Page {i}:\n{t}" for i, t in enumerate(pages, start=1))
-
-
-def pdf_pages_text(pdf: Path, min_chars_per_page: int = 40) -> Optional[list[str]]:
-    """One string per page from the text layer, or None when the PDF is a scan."""
     import pdfplumber
     pages = []
     with pdfplumber.open(pdf) as doc:
         for page in doc.pages:
             pages.append(page.extract_text() or "")
+    joined = "".join(pages)
     if not pages or sum(len(t.strip()) for t in pages) < min_chars_per_page * len(pages):
+        return None
+    if not looks_like_real_text(joined):
         return None
     return pages
 

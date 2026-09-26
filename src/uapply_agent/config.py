@@ -26,6 +26,7 @@ class Settings:
     runtime: str = "auto"          # auto | claude-code | codex
     model: str = ""                # runtime default when empty
     workers: int = 2
+    force_ocr: bool = False        # ignore PDF text layers and always OCR with the model
     extra: dict = field(default_factory=dict)
 
     @classmethod
@@ -41,6 +42,8 @@ class Settings:
         for k, env in (("backend_url", "UAPPLY_BACKEND_URL"), ("runtime", "UAPPLY_RUNTIME"), ("model", "UAPPLY_MODEL")):
             if os.environ.get(env):
                 setattr(s, k, os.environ[env])
+        if os.environ.get("UAPPLY_FORCE_OCR"):
+            s.force_ocr = os.environ["UAPPLY_FORCE_OCR"].lower() in ("1", "true", "yes")
         s.backend_url = s.backend_url.rstrip("/")
         return s
 

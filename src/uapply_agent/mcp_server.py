@@ -17,6 +17,7 @@ from .api import ApiError, UApplyApi
 from .config import Settings
 from .executor import Executor
 from .folder import WorkingFolder
+from .local_ops import heic_to_jpeg
 from .runners import detect_runtimes
 
 logging.basicConfig(level=os.environ.get("UAPPLY_LOG", "WARNING"), format="%(levelname)s %(name)s: %(message)s")
@@ -27,6 +28,8 @@ server = MCPServer("uapply", instructions=playbook.instructions())
 _settings = Settings.load()
 _folder = WorkingFolder(os.environ.get("UAPPLY_FOLDER") or os.getcwd())
 _api: Optional[UApplyApi] = None
+DOCUMENT_CATEGORIES = ("identity", "school", "financial", "spouse", "parent", "child", "language",
+                       "employment", "proof_of_capability", "immigration", "inviter", "education", "other")
 
 
 def api() -> UApplyApi:
@@ -71,6 +74,17 @@ def whoami() -> dict:
 
 
 @server.tool()
+def set_folder(path: str) -> dict:
+    """Point the server at a different client folder (absolute path). Use when the RCIC switches cases."""
+    global _folder
+    p = Path(path).expanduser().resolve()
+    if not p.is_dir():
+        return _err("NO_FOLDER", f"{p} is not a directory")
+    _folder = WorkingFolder(p)
+    return _ok(folder=str(_folder.root), case=_folder.case or None)
+
+
+@server.tool()
 def case_status() -> dict:
     """Server-truth status of this folder's case: documents by status, tasks, failures. Call first."""
     if e := _need_case():
@@ -101,43 +115,58 @@ def scan_folder(include_manifested: bool = False) -> dict:
 
 @server.tool()
 def list_document_types(query: str = "") -> dict:
-    """Document types available to this RCIC (id, name, file_name). Filter by substring."""
+    """Document types attached to this case (the only ones uploads accept), with their category."""
+    if e := _need_case():
+        return e
+
     def go():
-        types = api().document_types()
         q = query.lower()
-        rows = [{"id": t["id"], "name": t["name"], "file_name": t.get("file_name"), "can_process": t.get("can_process")}
-                for t in types if not q or q in (t["name"] + " " + str(t.get("file_name"))).lower()]
+        rows = [{"id": t["id"], "name": t["name"], "file_name": t.get("file_name"), "category": t.get("category"),
+                 "requirement": t.get("requirement"), "can_process": t.get("can_process")}
+                for t in api().survey_document_types(_folder.survey_id)
+                if not q or q in (str(t.get("name")) + " " + str(t.get("file_name"))).lower()]
         return _ok(document_types=rows)
     return _wrap(go)
 
 
 @server.tool()
-def sync_documents(document_type_id: str, document_category: str, paths: Optional[list[str]] = None,
+def sync_documents(document_type_id: str, document_category: str = "", paths: Optional[list[str]] = None,
                    applicant: str = "principal") -> dict:
-    """Upload folder files under one document type/category. Skips files already in the manifest.
-    document_category is one of: identity, school, financial, spouse, parent, child, language,
-    employment, proof_of_capability, immigration, inviter, education, other."""
+    """Upload folder files under one document type. Skips files already in the manifest.
+    document_category defaults to the type's category from list_document_types; otherwise one of
+    identity, school, financial, spouse, parent, child, language, employment, proof_of_capability,
+    immigration, inviter, education, other."""
     if e := _need_case():
         return e
 
     def go():
+        category = document_category
+        if not category:
+            match = [t for t in api().survey_document_types(_folder.survey_id) if str(t.get("id")) == document_type_id]
+            category = (match[0].get("category") if match else "") or "other"
+        if category not in DOCUMENT_CATEGORIES:
+            return _err("BAD_CATEGORY", f"document_category must be one of {DOCUMENT_CATEGORIES}")
         scanned = _folder.scan(include_manifested=True)
         chosen = [f for f in scanned if (not paths or f.path in paths)]
         todo = [f for f in chosen if not f.manifested]
         skipped = [f.path for f in chosen if f.manifested]
-        if not todo:
-            return _ok(uploaded=0, skipped=skipped, failed=[])
-        files = [_folder.resolve(f.path) for f in todo]
-        docs = api().bulk_upload(_folder.survey_id, document_category, document_type_id, files)
-        by_name = {d.get("file_name"): d for d in docs if isinstance(d, dict)}
         uploaded, failed = [], []
+        # One request per file: the response maps to the file with no name matching,
+        # so HEIC conversions and duplicate basenames in subfolders cannot mix up ids.
         for f in todo:
-            d = by_name.get(Path(f.path).name)
-            if d:
-                _folder.record_upload(f.sha256, f.path, d["id"], applicant)
-                uploaded.append({"path": f.path, "document_id": d["id"]})
-            else:
-                failed.append({"path": f.path, "reason": "not in upload response"})
+            try:
+                local = _folder.resolve(f.path)
+                send = heic_to_jpeg(local, _folder.cache) if local.suffix.lower() in (".heic", ".heif") else local
+                docs = api().bulk_upload(_folder.survey_id, category, document_type_id, [send])
+                d = next((d for d in docs if isinstance(d, dict) and d.get("id")), None)
+                if not d:
+                    failed.append({"path": f.path, "reason": "empty upload response"})
+                    continue
+                _folder.record_upload(f.sha256, f.path, d["id"], applicant,
+                                      uploaded_path=str(send.relative_to(_folder.root)) if send != local else None)
+                uploaded.append({"path": f.path, "document_id": d["id"], "file_name": d.get("file_name")})
+            except (ApiError, OSError, ValueError) as ex:
+                failed.append({"path": f.path, "reason": str(ex)[:300]})
         return _ok(uploaded=len(uploaded), documents=uploaded, skipped=skipped, failed=failed)
     return _wrap(go)
 
@@ -150,7 +179,7 @@ def list_documents() -> dict:
 
     def go():
         rows = [{"id": d["id"], "file_name": d.get("file_name"), "status": d.get("status"),
-                 "document_type": (d.get("document_type") or {}).get("name") if isinstance(d.get("document_type"), dict) else d.get("document_type"),
+                 "document_type_id": d.get("document_type_id"), "page_of": d.get("old_doc_id"),
                  "error": d.get("error")} for d in api().documents(_folder.survey_id)]
         return _ok(documents=rows)
     return _wrap(go)
@@ -165,8 +194,9 @@ def start_processing(document_ids: Optional[list[str]] = None) -> dict:
         return e
 
     def go():
+        # Only top-level documents: pages of a split PDF mirror their parent (D12).
         ids = document_ids or [d["id"] for d in api().documents(_folder.survey_id)
-                               if d.get("status") in ("uploaded", "failed", "stopped")]
+                               if d.get("status") in ("uploaded", "failed", "stopped") and not d.get("old_doc_id")]
         out = []
         for did in ids:
             try:
@@ -185,7 +215,7 @@ def run_tasks(max_tasks: Optional[int] = None, workers: int = 2, kinds: Optional
         return e
 
     def go():
-        ex = Executor(api(), _folder, runtime=_settings.runtime, model=_settings.model)
+        ex = Executor(api(), _folder, runtime=_settings.runtime, model=_settings.model, force_ocr=_settings.force_ocr)
         stats = ex.run(max_tasks=max_tasks, workers=workers or _settings.workers, kinds=kinds)
         return _ok(runtime=ex.runner.name, **stats.as_dict())
     return _wrap(go)
