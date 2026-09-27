@@ -3,7 +3,8 @@
 # Installs uv (if missing), the uapply-agent CLI, registers it with Claude Code
 # and Codex, and signs in to uApply. Re-run any time to upgrade.
 $ErrorActionPreference = "Stop"
-$Src = if ($env:UAPPLY_AGENT_SOURCE) { $env:UAPPLY_AGENT_SOURCE } else { "git+https://github.com/uapply1/uapply-agent.git" }
+# A source archive, so Git is not required on the machine.
+$Src = if ($env:UAPPLY_AGENT_SOURCE) { $env:UAPPLY_AGENT_SOURCE } else { "uapply-agent @ https://github.com/uapply1/uapply-agent/archive/refs/heads/main.zip" }
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
   Write-Host "Installing uv (Python tool manager)..."
@@ -13,6 +14,8 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 
 Write-Host "Installing uapply-agent from $Src ..."
 uv tool install --force --quiet $Src
+if ($LASTEXITCODE -ne 0) { throw "uv tool install failed (exit $LASTEXITCODE)" }
 uv tool update-shell | Out-Null
 
 & "$env:USERPROFILE\.local\bin\uapply-agent.exe" setup
+if ($LASTEXITCODE -ne 0) { throw "uapply-agent setup failed (exit $LASTEXITCODE)" }

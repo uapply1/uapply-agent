@@ -46,15 +46,13 @@ login` alone renews the sign-in. Optional: install AnyChat (macOS arm64 /
 Windows x64) for WeChat intake, see
 [docs/architecture/chat-sources.md](docs/architecture/chat-sources.md).
 
-The repository is private today, so the installer needs GitHub access on the
-machine (`gh auth login` or an SSH key with
-`UAPPLY_AGENT_SOURCE=git+ssh://git@github.com/uapply1/uapply-agent.git`).
-Publishing the package to PyPI or making the repository public removes that
-step.
+The installer downloads the source archive of `main`, so Git is not needed
+on the machine. `UAPPLY_AGENT_SOURCE` overrides the source (a release zip, a
+PyPI name once published, or a local checkout).
 
 ### What the installer does (manual equivalent)
 
-1. `uv` from https://astral.sh/uv, then `uv tool install --force git+https://github.com/uapply1/uapply-agent.git`
+1. `uv` from https://astral.sh/uv, then `uv tool install --force "uapply-agent @ https://github.com/uapply1/uapply-agent/archive/refs/heads/main.zip"`
    (puts `uapply-agent` in `~/.local/bin`).
 2. `uapply-agent setup`: registers the MCP server **by absolute path** with
    `claude mcp add --scope user uapply -- ~/.local/bin/uapply-agent mcp`

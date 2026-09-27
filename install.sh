@@ -4,7 +4,8 @@
 # Installs uv (if missing), the uapply-agent CLI, registers it with Claude Code
 # and Codex, and signs in to uApply. Re-run any time to upgrade.
 set -e
-SRC="${UAPPLY_AGENT_SOURCE:-git+https://github.com/uapply1/uapply-agent.git}"
+# A source archive, so Git is not required on the machine.
+SRC="${UAPPLY_AGENT_SOURCE:-uapply-agent @ https://github.com/uapply1/uapply-agent/archive/refs/heads/main.zip}"
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "Installing uv (Python tool manager)..."
