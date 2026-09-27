@@ -29,6 +29,11 @@ class Settings:
     model: str = ""                # runtime default when empty
     workers: int = 2
     force_ocr: bool = False        # ignore PDF text layers and always OCR with the model
+    team_id: str = ""              # team to create cases in (business accounts)
+    chat_source: str = "anychat"   # anychat | none
+    anychat_bin: str = ""          # override the AnyChat CLI location
+    chat_default_days: int = 365
+    chat_max_chars: int = 200_000  # transcript cap for the local intake call
     extra: dict = field(default_factory=dict)
 
     @classmethod
@@ -42,6 +47,9 @@ class Settings:
                     setattr(s, k, v)
         # Environment overrides make CI and tests easy.
         for k, env in (("backend_url", "UAPPLY_BACKEND_URL"), ("runtime", "UAPPLY_RUNTIME"), ("model", "UAPPLY_MODEL")):
+            if os.environ.get(env):
+                setattr(s, k, os.environ[env])
+        for k, env in (("team_id", "UAPPLY_TEAM_ID"), ("anychat_bin", "ANYCHAT_BIN"), ("chat_source", "UAPPLY_CHAT_SOURCE")):
             if os.environ.get(env):
                 setattr(s, k, os.environ[env])
         if os.environ.get("UAPPLY_FORCE_OCR"):

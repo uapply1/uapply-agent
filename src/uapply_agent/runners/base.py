@@ -51,7 +51,9 @@ class Runner:
         self.model = model
 
     def run(self, *, system_prompt: str, user_prompt: str, schema: dict,
-            images: list[Path], cwd: Path, timeout_s: int = 300) -> RunResult:
+            images: list[Path], cwd: Path, timeout_s: int = 300,
+            text_files: list[Path] = ()) -> RunResult:
+        """`text_files` are long inputs the model reads from disk (argv is limited on Windows)."""
         raise NotImplementedError
 
     @staticmethod

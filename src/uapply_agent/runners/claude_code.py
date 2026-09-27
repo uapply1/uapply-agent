@@ -18,13 +18,15 @@ class ClaudeCodeRunner(Runner):
     supports_pdf = True    # the Read tool reads PDFs, ≤ 20 pages per call
     pages_per_call = 20
 
-    def run(self, *, system_prompt, user_prompt, schema, images, cwd, timeout_s=300) -> RunResult:
+    def run(self, *, system_prompt, user_prompt, schema, images, cwd, timeout_s=300, text_files=()) -> RunResult:
         prompt = user_prompt
-        if images:
-            listing = "\n".join(f"- {p.name}" for p in images)
-            prompt = (f"{user_prompt}\n\nThe document file(s) to look at are in the current directory:\n{listing}\n"
+        files = list(images) + list(text_files)
+        if files:
+            listing = "\n".join(f"- {p.name}" for p in files)
+            prompt = (f"{user_prompt}\n\nThe file(s) to look at are in the current directory:\n{listing}\n"
                       f"Read each one with the Read tool (for a PDF, use its `pages` parameter for the page range "
-                      f"named in the task), then answer with JSON only.")
+                      f"named in the task; a long text file may need several Reads with offset/limit), "
+                      f"then answer with JSON only.")
         cmd = [
             self.binary, "-p", prompt,
             "--bare", "--no-session-persistence",

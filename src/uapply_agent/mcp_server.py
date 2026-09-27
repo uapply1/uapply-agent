@@ -5,6 +5,7 @@ happens in the chat — `run_tasks` spawns the runtime headless per task.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -17,8 +18,11 @@ from .api import ApiError, UApplyApi
 from .config import Settings
 from .executor import Executor
 from .folder import WorkingFolder
+from .chat.anychat import AnyChatSource
+from .chat.base import ChatError
+from .chat.store import ChatStore, redact
 from .local_ops import heic_to_jpeg
-from .runners import detect_runtimes
+from .runners import RunnerError, detect_runtimes, get_runner
 
 logging.basicConfig(level=os.environ.get("UAPPLY_LOG", "WARNING"), format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -59,6 +63,8 @@ def _wrap(fn):
         return fn()
     except ApiError as e:
         return _err(f"HTTP_{e.status}", str(e), e.hint or ("log in with `uapply-agent login`" if e.status == 401 else ""))
+    except ChatError as e:
+        return _err(e.code, str(e), e.hint)
     except Exception as e:  # keep the chat informative, never a stack trace
         logger.exception("tool failed")
         return _err(type(e).__name__, str(e)[:300])
@@ -101,7 +107,7 @@ def init_case(survey_id: str, llm_mode: str = "local_agent") -> dict:
         deps = [{"survey_id": d.get("id"), "name": d.get("name"), "relationship": d.get("relationship")}
                 for d in (s.get("dependents") or []) if isinstance(d, dict)]
         case = _folder.init_case(survey_id, _settings.backend_url, llm_mode, name=s.get("name", ""), dependents=deps)
-        return _ok(case=case)
+        return _ok(case=case, chat_uploads=_flush_pending_uploads())
     return _wrap(go)
 
 
@@ -252,6 +258,149 @@ def set_llm_mode(llm_mode: str) -> dict:
     return _wrap(go)
 
 
+# ---------- chat history (optional, AnyChat) ----------
+
+CREATE_CONFIRMATIONS = ("create case", "确认创建")
+
+
+def _chat_source():
+    if _settings.chat_source != "anychat":
+        return None
+    return AnyChatSource(binary=_settings.anychat_bin)
+
+
+def _upload_transcript(md_path: Path) -> dict:
+    """Render the transcript to a text PDF and file it on the case as an agent_survey document."""
+    from .chat.render import transcript_to_pdf
+    from .folder import sha256_of
+    store = ChatStore(_folder)
+    row = next((r for r in store.index() if r.get("path") == str(md_path)), {})
+    pdf = md_path.with_suffix(".pdf")
+    transcript_to_pdf(md_path, pdf, f"Chat history: {row.get('contact', md_path.stem)}", [
+        f"Source: {row.get('source', 'chat')} (self-reported, unverified)",
+        f"Period: {row.get('from', '?')} to {row.get('to', '?')}",
+        f"Fetched: {row.get('fetched_at', '')}",
+        f"Case: {_folder.case.get('name', '')} ({_folder.survey_id})",
+    ])
+    type_id = api().agent_survey_type_id()
+    docs = api().bulk_upload(_folder.survey_id, "other", type_id, [pdf])
+    d = next((d for d in docs if isinstance(d, dict) and d.get("id")), None)
+    if not d:
+        raise ChatError("upload_failed", "empty upload response for the transcript PDF")
+    _folder.record_upload(sha256_of(pdf), str(pdf.relative_to(_folder.root)), d["id"], "principal",
+                          uploaded_path=str(pdf.relative_to(_folder.root)))
+    store.clear_pending(md_path)
+    return {"document_id": d["id"], "pdf": str(pdf.relative_to(_folder.root))}
+
+
+def _flush_pending_uploads() -> list:
+    store = ChatStore(_folder)
+    out = []
+    for p in store.pending_uploads():
+        try:
+            out.append({"path": p, **_upload_transcript(Path(p))})
+        except Exception as ex:  # keep the rest going; the RCIC can re-run chat_upload
+            out.append({"path": p, "error": str(ex)[:200]})
+    return out
+
+
+@server.tool()
+def chat_sources() -> dict:
+    """Which local chat archives the agent can read (AnyChat CLI), and whether they are ready."""
+    src = _chat_source()
+    if src is None:
+        return _ok(sources=[{"source": "anychat", "ok": False, "state": "disabled", "hint": "set chat_source=anychat"}])
+    return _wrap(lambda: _ok(sources=[src.available().as_dict()]))
+
+
+@server.tool()
+def chat_find_contact(name: str) -> dict:
+    """Resolve a contact name in the chat archive. Returns display names only."""
+    src = _chat_source()
+    if src is None:
+        return _err("disabled", "chat_source is none")
+    return _wrap(lambda: _ok(candidates=[c.public() for c in src.resolve(name)]))
+
+
+@server.tool()
+def chat_fetch(contact: str, days: Optional[int] = None) -> dict:
+    """Fetch the chat history with one contact the RCIC named, derive intake hints locally
+    (headless runtime, RCIC's plan), and file the transcript on the case as an agent_survey
+    document (queued until a case is bound). Message bodies never enter this conversation."""
+    src = _chat_source()
+    if src is None:
+        return _err("disabled", "chat_source is none")
+
+    def go():
+        avail = src.available()
+        if not avail.ok:
+            return _err(avail.state, avail.detail, avail.hint)
+        t = src.fetch(contact, int(days or _settings.chat_default_days), _folder.chat)
+        store = ChatStore(_folder)
+        store.record(t)
+        hints, usage, intake_error = None, {}, ""
+        try:
+            from .chat.intake import run_intake
+            runner = get_runner(_settings.runtime, _settings.model)
+            types = api().application_types()
+            h, usage = run_intake(runner, t, types, _folder.cache / "chat", max_chars=_settings.chat_max_chars)
+            hints = h.model_dump()
+            store.save_intake(t, hints)
+        except (RunnerError, ApiError, Exception) as ex:
+            intake_error = f"{type(ex).__name__}: {str(ex)[:200]}"
+        if _folder.survey_id:
+            upload = _upload_transcript(t.path)
+        else:
+            store.queue_upload(t.path)
+            upload = "queued"
+        out = {"transcript": t.public(), "intake": hints, "upload": upload, "usage": usage}
+        if intake_error:
+            out["intake_error"] = intake_error
+        return _ok(**json.loads(redact(json.dumps(out, ensure_ascii=False))))
+    return _wrap(go)
+
+
+@server.tool()
+def chat_upload(path: Optional[str] = None) -> dict:
+    """Upload a fetched transcript (or every queued one) to the bound case as an agent_survey document."""
+    if e := _need_case():
+        return e
+    if path:
+        return _wrap(lambda: _ok(**_upload_transcript(_folder.resolve(path))))
+    return _wrap(lambda: _ok(uploads=_flush_pending_uploads()))
+
+
+@server.tool()
+def list_application_types(query: str = "") -> dict:
+    """Application types the RCIC can open a case under (id, code, name, program, visa_type, visa_location)."""
+    def go():
+        q = query.lower()
+        rows = [t for t in api().application_types()
+                if not q or q in " ".join(str(v) for v in t.values() if v).lower()]
+        return _ok(application_types=rows)
+    return _wrap(go)
+
+
+@server.tool()
+def create_case(name: str, application_type_id: str, confirmation: str = "") -> dict:
+    """Create the survey (this charges the RCIC's account), set llm_mode=local_agent, bind this folder,
+    and upload any queued chat transcripts. Refused unless `confirmation` is exactly "create case" or
+    "确认创建" — pass it only after the RCIC typed those words in this conversation."""
+    if confirmation.strip().lower() not in CREATE_CONFIRMATIONS:
+        return _err("CONFIRMATION_REQUIRED", "the RCIC must type 'create case' (or 确认创建) first",
+                    "show the proposed name and application type, wait for those words, then call again")
+    if _folder.survey_id:
+        return _err("CASE_EXISTS", f"this folder is already bound to survey {_folder.survey_id}",
+                    "use set_folder for a different client, or init_case to rebind")
+
+    def go():
+        s = api().create_survey(name, application_type_id, team_id=_settings.team_id or None)
+        survey_id = s.get("id")
+        case = _folder.init_case(survey_id, _settings.backend_url, "local_agent", name=s.get("name", name))
+        return _ok(survey_id=survey_id, case=case, chat_uploads=_flush_pending_uploads())
+    return _wrap(go)
+
+
 # ---------- prompts ----------
 
 @server.prompt(name="run")
@@ -264,6 +413,12 @@ def prompt_run() -> str:
 def prompt_status() -> str:
     """Summarise the case status."""
     return playbook.prompt("status")
+
+
+@server.prompt(name="intake-from-chat")
+def prompt_intake_from_chat() -> str:
+    """Pull a client's chat history, propose the case, create it on the RCIC's confirmation."""
+    return playbook.prompt("intake-from-chat")
 
 
 def main() -> None:

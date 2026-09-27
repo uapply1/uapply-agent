@@ -11,6 +11,7 @@ from pathlib import Path
 from . import __version__
 from .api import ApiError, UApplyApi
 from .auth import LoginError, device_login, token_login
+from .chat.base import ChatError
 from .config import Credentials, Settings
 from .folder import WorkingFolder
 from .runners import RunnerError, detect_runtimes
@@ -94,6 +95,24 @@ def cmd_mcp(args, settings):
     return 0
 
 
+def cmd_chat(args, settings):
+    from .chat.anychat import AnyChatSource
+    from .chat.store import ChatStore
+    src = AnyChatSource(binary=settings.anychat_bin)
+    if args.chat_cmd == "sources":
+        print(json.dumps(src.available().as_dict(), indent=2, ensure_ascii=False))
+        return 0
+    if args.chat_cmd == "find":
+        print(json.dumps([c.public() for c in src.resolve(args.name)], indent=2, ensure_ascii=False))
+        return 0
+    f = _folder(args)
+    t = src.fetch(args.contact, args.days or settings.chat_default_days, f.chat)
+    ChatStore(f).record(t)
+    print(json.dumps(t.public(), indent=2, ensure_ascii=False))
+    print("Next: `uapply-agent init --survey <id>` (or the create_case tool) then chat_upload, or use the MCP tools.", file=sys.stderr)
+    return 0
+
+
 def cmd_clean(args, settings):
     print(f"removed {_folder(args).clean()} cached files")
     return 0
@@ -138,6 +157,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_run)
 
     s = sub.add_parser("mcp", help="serve the MCP tools over stdio"); s.add_argument("--folder"); s.set_defaults(fn=cmd_mcp)
+    s = sub.add_parser("chat", help="local chat archive (AnyChat): sources | find <name> | fetch <contact>")
+    cs = s.add_subparsers(dest="chat_cmd", required=True)
+    cs.add_parser("sources")
+    c = cs.add_parser("find"); c.add_argument("name")
+    c = cs.add_parser("fetch"); c.add_argument("contact"); c.add_argument("--days", type=int); c.add_argument("--folder")
+    s.set_defaults(fn=cmd_chat)
     s = sub.add_parser("clean"); s.add_argument("--folder"); s.set_defaults(fn=cmd_clean)
     s = sub.add_parser("config"); s.add_argument("--set", nargs="*", metavar="KEY=VALUE"); s.set_defaults(fn=cmd_config)
     return p
@@ -154,6 +179,9 @@ def main(argv=None) -> int:
         return 2
     except RunnerError as e:
         print(f"error: {e}", file=sys.stderr)
+        return 2
+    except ChatError as e:
+        print(f"error: {e}" + (f" — {e.hint}" if e.hint else ""), file=sys.stderr)
         return 2
 
 

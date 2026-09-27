@@ -58,6 +58,7 @@ class WorkingFolder:
         self.state = self.root / STATE_DIR
         self.cache = self.state / "cache"
         self.output = self.state / "output"
+        self.chat = self.state / "chat"
 
     # ---- state files ----
 

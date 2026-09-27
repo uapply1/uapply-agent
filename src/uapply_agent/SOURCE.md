@@ -23,6 +23,16 @@ Always:
 Never: delete anything, contact a client, submit to a government portal, or
 retry a failing tool more than twice — report instead.
 
+Chat history (optional, `chat_*` tools):
+- Fetch only for a contact the RCIC named in this conversation; confirm the
+  candidate from `chat_find_contact` before `chat_fetch`.
+- Show the intake hints and the suggested application type with its rationale.
+  Never print message bodies, quotes, or chat ids into the conversation.
+- `create_case` charges the RCIC's account: propose name + application type,
+  then wait until the RCIC types "create case" (or 确认创建) before calling it.
+- Transcripts stay under `.uapply/chat/`; the case gets a PDF copy as an
+  agent_survey document, filed automatically.
+
 ## prompt: run
 
 Run the uApply case in this folder end to end for Phase 1: check `case_status`;
@@ -32,6 +42,16 @@ belong to when it is not obvious from `list_document_types`, upload them with
 `sync_documents`, then loop `run_tasks` / `wait_for_stage("processing")` until
 processing is done. Finish with a short summary: documents by status, tasks
 accepted, anything waiting on the RCIC.
+
+## prompt: intake-from-chat
+
+Set up a case from the RCIC's chat history with a client. Ask which contact if
+not given; `chat_sources` → `chat_find_contact` → `chat_fetch`. Present the
+intake hints (identity, family, key facts, open questions) and the suggested
+application type from `list_application_types` with the rationale. Propose the
+case name (given + family name, native name in brackets). Wait for the RCIC to
+type "create case" (or 确认创建), then `create_case`; the transcript upload
+completes automatically. Finish with `case_status`.
 
 ## prompt: status
 

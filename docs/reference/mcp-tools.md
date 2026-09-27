@@ -115,6 +115,19 @@ the stage is done.
 | `autofill_status` | — | automation_status, imm pdf statuses |
 | `download_output` | `what: l3 \| imm_pdfs \| all` | paths under `.uapply/output/` |
 
+## Chat history (optional, AnyChat)
+
+| Tool | Input | Output |
+|---|---|---|
+| `chat_sources` | — | per-source availability: `ok`, `state` (ok \| not_installed \| unsupported_platform \| not_logged_in \| cli_error \| disabled), hint |
+| `chat_find_contact` | `name` | candidates as display names only |
+| `chat_fetch` | `contact`, `days?` (default 365) | transcript summary (path, messages, range), redacted `intake` hints, `upload` (document id or `"queued"`), usage |
+| `chat_upload` | `path?` | uploads one transcript or every queued one as an agent_survey PDF |
+| `list_application_types` | `query?` | id, code, name, program, visa_type, visa_location |
+| `create_case` | `name`, `application_type_id`, `confirmation` | refused unless `confirmation` is "create case" / "确认创建"; creates the survey (charges the account), binds the folder, flushes queued uploads |
+
+See [architecture/chat-sources.md](../architecture/chat-sources.md).
+
 ## Report
 
 | Tool | Input | Output |

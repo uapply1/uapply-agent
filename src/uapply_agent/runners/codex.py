@@ -19,8 +19,10 @@ class CodexRunner(Runner):
     supports_pdf = False   # images only; the executor renders PDF pages
     pages_per_call = 10
 
-    def run(self, *, system_prompt, user_prompt, schema, images, cwd, timeout_s=300) -> RunResult:
+    def run(self, *, system_prompt, user_prompt, schema, images, cwd, timeout_s=300, text_files=()) -> RunResult:
         prompt = f"## Instructions\n{system_prompt}\n\n## Task\n{user_prompt}\n\nAnswer with JSON only."
+        for tf in text_files:  # no file-read tool in exec mode: inline the text
+            prompt += f"\n\n## File {Path(tf).name}\n{Path(tf).read_text(encoding='utf-8', errors='replace')}"
         with tempfile.TemporaryDirectory() as td:
             schema_path = Path(td) / "schema.json"
             schema_path.write_text(json.dumps(schema))

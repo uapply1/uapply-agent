@@ -86,6 +86,27 @@ class UApplyApi:
         # can never leak another case's documents into the chat.
         return [d for d in rows if str(d.get("survey", survey_id)) == str(survey_id)]
 
+    def application_types(self) -> list:
+        data = self._req("GET", "/api/survey/application-types/")
+        rows = data.get("results", data) if isinstance(data, dict) else data
+        return [{"id": r.get("id"), "code": r.get("code"), "name": r.get("name"), "program": r.get("program"),
+                 "visa_type": r.get("visa_type"), "visa_location": r.get("visa_location"),
+                 "applicant_type": r.get("applicant_type")} for r in rows if r.get("is_active", True)]
+
+    def agent_survey_type_id(self) -> str:
+        for t in self.document_types():
+            if t.get("file_name") == "agent_survey":
+                return t["id"]
+        raise ApiError(404, {"message": "agent_survey document type not found"})
+
+    def create_survey(self, name: str, application_type_id: str, team_id: Optional[str] = None,
+                      llm_mode: str = "local_agent") -> dict:
+        """Creates the case and charges the RCIC's account — only after explicit RCIC confirmation."""
+        body = {"name": name, "application_type_id": application_type_id, "llm_mode": llm_mode}
+        if team_id:
+            body["team_id"] = team_id
+        return self._req("POST", "/api/survey/surveys/", json=body)
+
     def survey_document_types(self, survey_id: str) -> list:
         """The types attached to this case (the only ones bulk_upload accepts), with category."""
         return self.survey(survey_id).get("document_types") or []

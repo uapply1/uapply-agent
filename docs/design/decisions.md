@@ -195,6 +195,27 @@ of pages × (P + N·T); evidence stays verifiable; prompt-template edits and
 retries re-run on text. Text-layer PDFs — most bank, school and employer
 documents — need no model at all for OCR.
 
+## D13. Chat history is an optional intake source, filed as an agent_survey PDF
+
+**Decision.** `uapply-agent` can read the RCIC's WeChat (and other local chat)
+history through the AnyChat CLI, derive intake hints with one local headless
+call, and always file the transcript on the case as an `agent_survey` text PDF.
+The agent may create the survey after the RCIC types "create case" in chat.
+
+**Alternatives.**
+- *Reimplement WeChat extraction.* Rejected: AnyChat already does it, is the
+  product owner's own tool, and the storage format is undocumented and fragile.
+- *Keep the transcript local, hints only.* Rejected by the product owner: the
+  pipeline should extract the self-reported facts, and analysis already ranks
+  `agent_survey` lowest in conflicts.
+- *Approval-page consent for case creation (D10).* Deferred: the dashboard has
+  no approval pages yet; typed confirmation is an explicit, recorded exception
+  that the approval page replaces later.
+
+**Why.** Intake starts from what the client actually said; the cost is one
+local model call per transcript plus the pipeline's normal section pass.
+Details: [architecture/chat-sources.md](../architecture/chat-sources.md).
+
 ## Open questions
 
 - **Billing model.** Local-token cases cost uApply almost nothing in LLM spend;

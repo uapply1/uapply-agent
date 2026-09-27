@@ -33,6 +33,7 @@ Everything from Phase 2 on is still a plan.
 | [architecture/local-llm-task-queue.md](architecture/local-llm-task-queue.md) | The core mechanism: prepare/continue stages on Celery, `AgentTask` queue, API-driven continuation, result validation |
 | [architecture/case-workflow.md](architecture/case-workflow.md) | End-to-end stages — intake, upload, classify, extract, resolve, auto-fill — with the RCIC gates |
 | [architecture/working-folder.md](architecture/working-folder.md) | Layout of the client folder, `.uapply/` manifest and case state, idempotent sync |
+| [architecture/chat-sources.md](architecture/chat-sources.md) | Optional WeChat intake through the AnyChat CLI: fetch, local intake hints, agent_survey upload, create_case |
 | [architecture/runtime-modes.md](architecture/runtime-modes.md) | One headless executor per task; interactive (chat orchestrates) vs batch (CLI orchestrates); subscription usage limits |
 
 ## Reference
