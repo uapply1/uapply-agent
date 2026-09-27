@@ -28,8 +28,8 @@ playbook/
     └── codex/AGENTS.md      # only for RCICs who prefer file-based config
 ```
 
-`uapply-agent init` registers the MCP server with whichever runtimes it
-detects; the wrappers are opt-in.
+`uapply-agent setup` (run by the installer) registers the MCP server with
+whichever runtimes it detects; the wrappers are opt-in.
 
 ## Commands
 

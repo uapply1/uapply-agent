@@ -11,121 +11,67 @@ through the AnyChat CLI to draft the intake and create the case.
 
 ## Install (production)
 
-The agent is a small Python CLI installed on the RCIC's machine. It is not on
-PyPI; install it straight from the GitHub repository.
+One command installs everything: `uv` (Python tool manager), the
+`uapply-agent` CLI, the MCP registration for Claude Code and Codex, and the
+uApply login. It only needs Claude Code or Codex to be installed and logged in
+first, plus a uApply account.
 
-### 1. Prerequisites
-
-| Need | Why | Check |
-|---|---|---|
-| Python 3.11+ | runtime for the CLI | `python3 --version` |
-| [`uv`](https://docs.astral.sh/uv/) (or `pipx`) | installs the CLI in its own isolated environment and puts `uapply-agent` on `PATH` | `uv --version` |
-| Claude Code **or** Codex CLI, logged in | every model call runs through it on the RCIC's plan | `claude --version` / `codex --version` |
-| a uApply account | the case, documents and results live on api.uapply.io | log in to the dashboard once |
-| AnyChat (optional; macOS arm64 / Windows x64) | chat-history intake, see [docs/architecture/chat-sources.md](docs/architecture/chat-sources.md) | `anychat whoami --json` |
-
-Install `uv` if missing:
+macOS / Linux (Terminal):
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh        # macOS / Linux
+curl -LsSf https://raw.githubusercontent.com/uapply1/uapply-agent/main/install.sh | sh
 ```
+
+Windows (PowerShell):
 
 ```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"   # Windows
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/uapply1/uapply-agent/main/install.ps1 | iex"
 ```
 
-### 2. Install the CLI
+When the browser opens, confirm the code and sign in with the uApply account.
+Then open Claude Code (desktop app or terminal) or Codex in a client folder
+and type `/uapply:run`. The installer prints what it did, for example:
 
-```bash
-uv tool install git+https://github.com/uapply1/uapply-agent.git
+```
+uapply-agent: /Users/anna/.local/bin/uapply-agent
+Claude Code: registered via `claude mcp add` (user scope)
+Codex: written to /Users/anna/.codex/config.toml
+Logged in; token stored in keyring
+Done. Open Claude Code or Codex in a client folder and type /uapply:run
 ```
 
-Pin a release instead of `main` with `@v0.1.0` (or a commit) at the end of the
-URL. With `pipx`: `pipx install git+https://github.com/uapply1/uapply-agent.git`.
-The repository is private, so the machine needs GitHub access (SSH key or
-`gh auth login`); use `git+ssh://git@github.com/uapply1/uapply-agent.git` for SSH.
+Re-run the same command to upgrade. `uapply-agent setup` alone re-registers
+the MCP server (for example after installing Codex later); `uapply-agent
+login` alone renews the sign-in. Optional: install AnyChat (macOS arm64 /
+Windows x64) for WeChat intake, see
+[docs/architecture/chat-sources.md](docs/architecture/chat-sources.md).
 
-Verify:
+The repository is private today, so the installer needs GitHub access on the
+machine (`gh auth login` or an SSH key with
+`UAPPLY_AGENT_SOURCE=git+ssh://git@github.com/uapply1/uapply-agent.git`).
+Publishing the package to PyPI or making the repository public removes that
+step.
 
-```bash
-uapply-agent --version
-uapply-agent chat sources          # AnyChat availability; "unsupported_platform" on Linux is expected
-```
+### What the installer does (manual equivalent)
 
-### 3. Sign in to uApply
+1. `uv` from https://astral.sh/uv, then `uv tool install --force git+https://github.com/uapply1/uapply-agent.git`
+   (puts `uapply-agent` in `~/.local/bin`).
+2. `uapply-agent setup`: registers the MCP server **by absolute path** with
+   `claude mcp add --scope user uapply -- ~/.local/bin/uapply-agent mcp`
+   (or writes `~/.claude.json` when only the desktop app is installed) and
+   `codex mcp add uapply -- … mcp` (or `[mcp_servers.uapply]` in
+   `~/.codex/config.toml`). The absolute path matters: GUI apps start with a
+   minimal `PATH`. It then checks `claude mcp list` reports the server connected.
+3. `uapply-agent login`: Auth0 Device Code flow against production
+   (`https://api.uapply.io`); the token goes to the OS keychain, or a `0600`
+   file under `~/.config/uapply-agent/` when no keychain exists. Until "Allow
+   Offline Access" is enabled on the uApply API in Auth0, no refresh token is
+   issued; re-run `uapply-agent login` when a command reports `401`.
 
-The defaults already point at production (`https://api.uapply.io`, the uApply
-Auth0 tenant, Device Code flow). No config file is needed.
-
-```bash
-uapply-agent login
-```
-
-Open the printed URL, confirm the code, and log in with your uApply account.
-The token is stored in the OS keychain (macOS Keychain, Windows Credential
-Manager, Secret Service on Linux) or, failing that, in a `0600` file under
-`~/.config/uapply-agent/`. `uapply-agent logout` removes it.
-
-Until "Allow Offline Access" is enabled on the uApply API in Auth0, no refresh
-token is issued and the login lasts as long as the access token; re-run
-`uapply-agent login` when a command reports `401`.
-
-Alternative for scripted use: `uapply-agent login --token <jwt>` or
-`--token-stdin`, or set `UAPPLY_TOKEN` in the environment.
-
-### 4. Register the MCP server with your coding agent
-
-The `/uapply:run`, `/uapply:status` and `/uapply:intake-from-chat` commands are
-MCP prompts served by `uapply-agent mcp`. They exist only in a session where
-the `uapply` MCP server is connected; "Unknown command: /uapply:run" means it
-is not.
-
-Claude Code (user scope, so it works from any client folder). Register the
-absolute path: the desktop app is launched from the Dock / Start menu with a
-minimal `PATH` that usually lacks `~/.local/bin`, where `uv` puts the command.
-
-```bash
-claude mcp add --scope user uapply -- "$(command -v uapply-agent)" mcp
-claude mcp list                    # expect: uapply: ... - ✔ Connected
-```
-
-```powershell
-claude mcp add --scope user uapply -- (Get-Command uapply-agent).Source mcp
-```
-
-Then start a **new** session (MCP servers are loaded at session start), type
-`/uapply` and pick a command from the list, or run `/mcp` to see the server's
-status. Older Claude Code builds list MCP prompts as `/mcp__uapply__run`.
-
-Codex:
-
-```bash
-codex mcp add uapply -- "$(command -v uapply-agent)" mcp
-```
-
-or in `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.uapply]
-command = "/Users/<you>/.local/bin/uapply-agent"
-args = ["mcp"]
-```
-
-Claude Desktop / other MCP clients: point a stdio server at the `uapply-agent`
-command with the argument `mcp`.
-
-### 5. First case
-
-```bash
-mkdir -p ~/Clients/Zhang_Wei && cp <client documents> ~/Clients/Zhang_Wei/
-cd ~/Clients/Zhang_Wei && claude          # or: codex
-> /uapply:run
-```
-
-The agent binds the folder to a survey (or, with WeChat history, drafts the
-intake and creates the case after you type "create case"), uploads the
-documents, runs the local tasks on your plan and waits for the pipeline.
-Everything the agent keeps locally lives in `.uapply/` inside the folder.
+The `/uapply:run`, `/uapply:status` and `/uapply:intake-from-chat` commands
+are MCP prompts served by `uapply-agent mcp`; they exist only in a session
+where the `uapply` server is connected, and MCP servers load at session start,
+so open a new session after installing.
 
 ### Settings
 
@@ -148,15 +94,11 @@ Environment overrides: `UAPPLY_BACKEND_URL`, `UAPPLY_RUNTIME`, `UAPPLY_MODEL`,
 `UAPPLY_TOKEN`, `UAPPLY_TEAM_ID`, `UAPPLY_FORCE_OCR`, `UAPPLY_CHAT_SOURCE`,
 `ANYCHAT_BIN`.
 
-### Upgrade and uninstall
+### Uninstall
 
 ```bash
-uv tool upgrade uapply-agent          # or: uv tool install --force git+https://github.com/uapply1/uapply-agent.git@v0.2.0
-uv tool uninstall uapply-agent
+uv tool uninstall uapply-agent && claude mcp remove --scope user uapply
 ```
-
-The MCP registration keeps working across upgrades: `uv tool` keeps the same
-`~/.local/bin/uapply-agent` path.
 
 ### Server side (uApply operations)
 
@@ -173,8 +115,8 @@ have "Allow Offline Access" enabled so refresh tokens are issued.
 | Symptom | Fix |
 |---|---|
 | `no runtime found` | install Claude Code or Codex and log in to it; on Windows make sure `claude`/`codex` is on `PATH` |
-| `Unknown command: /uapply:run` | the `uapply` MCP server is not connected: `claude mcp list`, re-add it with the absolute path (step 4), start a new session |
-| `401` from the API | `uapply-agent login` again (no refresh token yet, see step 3) |
+| `Unknown command: /uapply:run` | the `uapply` MCP server is not connected: run `uapply-agent setup`, then start a new session; `/mcp` in a session shows server status |
+| `401` from the API | `uapply-agent login` again (no refresh token yet) |
 | `404` on `/api/ai-parse/agent/...` | the backend in use does not have the agent branch deployed |
 | `chat sources` → `not_installed` / `not_logged_in` | install the AnyChat plugin and run its own login; the agent never handles that token |
 | headless run hits the plan's usage limit | the executor stops with `PlanLimited`; resume with `uapply-agent run --follow` later |
@@ -212,7 +154,8 @@ the task's prompt as a real system prompt.
 
 ```
 src/uapply_agent/
-  cli.py          login | logout | init | status | run | mcp | chat | clean | config
+  cli.py          setup | login | logout | init | status | run | mcp | chat | clean | config
+  integrate.py    MCP registration for Claude Code / Codex (used by `setup`)
   mcp_server.py   stdio MCP server (tools, prompts, instructions)
   executor.py     pull → download inputs → spawn runtime → validate → submit
   runners/        claude_code.py, codex.py (all runtime flags live here)

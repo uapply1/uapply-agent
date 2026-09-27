@@ -1,4 +1,4 @@
-"""uapply-agent CLI: login | init | status | run | mcp | clean."""
+"""uapply-agent CLI: setup | login | init | status | run | mcp | chat | clean | config."""
 from __future__ import annotations
 
 import argparse
@@ -14,6 +14,7 @@ from .auth import LoginError, device_login, token_login
 from .chat.base import ChatError
 from .config import Credentials, Settings
 from .folder import WorkingFolder
+from .integrate import run_setup
 from .runners import RunnerError, detect_runtimes
 
 
@@ -32,6 +33,20 @@ def cmd_login(args, settings):
     except LoginError as e:
         print(f"login failed: {e}", file=sys.stderr)
         return 2
+    return 0
+
+
+def cmd_setup(args, settings):
+    """Register the MCP server with every runtime found, then log in unless a token exists."""
+    run_setup()
+    if args.no_login or Credentials.get_token():
+        print("uApply login: already signed in" if Credentials.get_token() else "uApply login: skipped")
+    else:
+        try:
+            device_login(settings)
+        except LoginError as e:
+            print(f"login failed: {e} — run `uapply-agent login` later", file=sys.stderr)
+    print("Done. Open Claude Code or Codex in a client folder and type /uapply:run")
     return 0
 
 
@@ -71,7 +86,6 @@ def cmd_run(args, settings):
     ex = Executor(api, f, runtime=args.runtime or settings.runtime, model=args.model or settings.model,
                   force_ocr=args.force_ocr or settings.force_ocr)
     print(f"executor: {ex.runner.name} session {ex.session_id}", file=sys.stderr)
-    total = None
     while True:
         stats = ex.run(max_tasks=args.max_tasks, workers=args.workers or settings.workers, kinds=args.kinds)
         print(json.dumps(stats.as_dict()), file=sys.stderr)
@@ -136,6 +150,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("setup", help="register the MCP server with Claude Code / Codex and log in")
+    s.add_argument("--no-login", action="store_true"); s.set_defaults(fn=cmd_setup)
 
     s = sub.add_parser("login", help="Auth0 device login, or --token to paste a JWT")
     s.add_argument("--token"); s.add_argument("--token-stdin", action="store_true")
