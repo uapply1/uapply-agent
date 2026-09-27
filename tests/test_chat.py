@@ -168,8 +168,8 @@ class FakeApi:
     def application_types(self):
         return [{"id": "at-study", "code": "sp", "name": "Study Permit", "program": "tra", "visa_type": "study_visa", "visa_location": "outside_canada"}]
 
-    def agent_survey_type_id(self):
-        return "dt-agent-survey"
+    def agent_survey_type(self):
+        return {"id": "dt-agent-survey", "name": "Agent Survey", "file_name": "agent_survey"}
 
     def create_survey(self, name, application_type_id, team_id=None, llm_mode="local_agent", imm_pdf_types=None):
         self.created.append((name, application_type_id, team_id))
@@ -184,8 +184,9 @@ class FakeApi:
     def set_llm_mode(self, survey_id, mode):
         return {"llm_mode": mode}
 
-    def bulk_upload(self, survey_id, category, type_id, files):
+    def bulk_upload(self, survey_id, category, type_id, files, archive_name=""):
         self.uploads.append((survey_id, category, type_id, Path(files[0]).name))
+        self.archives = getattr(self, "archives", []) + [archive_name]
         return [{"id": f"doc-{len(self.uploads)}", "file_name": Path(files[0]).name}]
 
 
@@ -225,6 +226,7 @@ def test_chat_fetch_without_case_queues_then_create_case_uploads(tools):
     assert ok["ok"] and ok["survey_id"] == "s-new" and api.created == [("Zhang Wei", "at-study", None)]
     assert m._folder.survey_id == "s-new"
     assert ok["chat_uploads"][0]["document_id"] == "doc-1"
+    assert api.archives == ["Agent Survey"]  # the type's default archive, not a new unnamed one
     assert api.uploads[0][1:3] == ("other", "dt-agent-survey") and api.uploads[0][3].endswith(".pdf")
     assert ChatStore(m._folder).pending_uploads() == []
     # the PDF is in the manifest under .uapply/chat

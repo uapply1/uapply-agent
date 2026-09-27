@@ -106,11 +106,14 @@ class UApplyApi:
         rows = data.get("results", data) if isinstance(data, dict) else data
         return [{"id": t.get("id"), "name": t.get("name")} for t in rows if isinstance(t, dict) and t.get("id")]
 
-    def agent_survey_type_id(self) -> str:
+    def agent_survey_type(self) -> dict:
         for t in self.document_types():
             if t.get("file_name") == "agent_survey":
-                return t["id"]
+                return t
         raise ApiError(404, {"message": "agent_survey document type not found"})
+
+    def agent_survey_type_id(self) -> str:
+        return self.agent_survey_type()["id"]
 
     def create_survey(self, name: str, application_type_id: str, team_id: Optional[str] = None,
                       llm_mode: str = "local_agent", imm_pdf_types: Optional[list] = None) -> dict:

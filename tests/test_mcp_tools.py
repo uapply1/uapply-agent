@@ -26,11 +26,12 @@ class FakeApi:
     def set_llm_mode(self, survey_id, mode):
         return {"llm_mode": mode}
 
-    def bulk_upload(self, survey_id, category, document_type_id, files):
+    def bulk_upload(self, survey_id, category, document_type_id, files, archive_name=""):
         assert len(files) == 1
         name = Path(files[0]).name
         doc_id = f"doc-{len(self.uploads) + 1}"
         self.uploads.append((category, document_type_id, name))
+        self.archives = getattr(self, "archives", []) + [archive_name]
         # The server converts HEIC to PNG and renames accordingly.
         server_name = name[:-5] + ".png" if name.lower().endswith(".heic") else name
         return [{"id": doc_id, "file_name": server_name}]
@@ -115,3 +116,13 @@ def test_set_folder_switches_case(bound, tmp_path):
     out = m.set_folder(str(other))
     assert out["ok"] and out["case"] is None
     assert not m.set_folder(str(tmp_path / "missing"))["ok"]
+
+
+def test_upload_goes_to_the_types_default_archive(bound):
+    m.sync_documents("dt-pass", paths=["passport.pdf"])
+    assert bound.archives == ["Passport & Visa & Permit"]
+
+
+def test_archive_name_override(bound):
+    m.sync_documents("dt-pass", paths=["passport.pdf"], archive_name="Previous passports")
+    assert bound.archives == ["Previous passports"]

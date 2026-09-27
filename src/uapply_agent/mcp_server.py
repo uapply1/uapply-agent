@@ -137,19 +137,20 @@ def list_document_types(query: str = "") -> dict:
 
 @server.tool()
 def sync_documents(document_type_id: str, document_category: str = "", paths: Optional[list[str]] = None,
-                   applicant: str = "principal") -> dict:
+                   applicant: str = "principal", archive_name: str = "") -> dict:
     """Upload folder files under one document type. Skips files already in the manifest.
     document_category defaults to the type's category from list_document_types; otherwise one of
     identity, school, financial, spouse, parent, child, language, employment, proof_of_capability,
-    immigration, inviter, education, other."""
+    immigration, inviter, education, other. archive_name defaults to the type's own archive (the
+    dashboard's default folder, named after the type); set it only to file into another folder."""
     if e := _need_case():
         return e
 
     def go():
-        category = document_category
-        if not category:
-            match = [t for t in api().survey_document_types(_folder.survey_id) if str(t.get("id")) == document_type_id]
-            category = (match[0].get("category") if match else "") or "other"
+        match = [t for t in api().survey_document_types(_folder.survey_id) if str(t.get("id")) == document_type_id]
+        dtype = match[0] if match else {}
+        category = document_category or dtype.get("category") or "other"
+        archive = archive_name or dtype.get("name") or ""
         if category not in DOCUMENT_CATEGORIES:
             return _err("BAD_CATEGORY", f"document_category must be one of {DOCUMENT_CATEGORIES}")
         scanned = _folder.scan(include_manifested=True)
@@ -163,7 +164,7 @@ def sync_documents(document_type_id: str, document_category: str = "", paths: Op
             try:
                 local = _folder.resolve(f.path)
                 send = heic_to_jpeg(local, _folder.cache) if local.suffix.lower() in (".heic", ".heif") else local
-                docs = api().bulk_upload(_folder.survey_id, category, document_type_id, [send])
+                docs = api().bulk_upload(_folder.survey_id, category, document_type_id, [send], archive_name=archive)
                 d = next((d for d in docs if isinstance(d, dict) and d.get("id")), None)
                 if not d:
                     failed.append({"path": f.path, "reason": "empty upload response"})
@@ -286,8 +287,9 @@ def _upload_transcript(md_path: Path) -> dict:
         f"Fetched: {row.get('fetched_at', '')}",
         f"Case: {_folder.case.get('name', '')} ({_folder.survey_id})",
     ])
-    type_id = api().agent_survey_type_id()
-    docs = api().bulk_upload(_folder.survey_id, "other", type_id, [pdf])
+    dtype = api().agent_survey_type()
+    # The type's default archive, so the transcript sits next to RCIC uploads of the same kind.
+    docs = api().bulk_upload(_folder.survey_id, "other", dtype["id"], [pdf], archive_name=dtype.get("name") or "")
     d = next((d for d in docs if isinstance(d, dict) and d.get("id")), None)
     if not d:
         raise ChatError("upload_failed", "empty upload response for the transcript PDF")
