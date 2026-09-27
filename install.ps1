@@ -12,9 +12,21 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
   $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
 }
 
+# A running MCP server (an open Claude Code / Codex session) locks the exe on Windows.
+$running = Get-Process uapply-agent -ErrorAction SilentlyContinue
+if ($running) {
+  Write-Host "Stopping the running uapply-agent MCP server for the upgrade (open sessions reconnect on restart)..."
+  $running | Stop-Process -Force
+  Start-Sleep -Seconds 1
+}
+
 Write-Host "Installing uapply-agent from $Src ..."
 uv tool install --force --quiet $Src
-if ($LASTEXITCODE -ne 0) { throw "uv tool install failed (exit $LASTEXITCODE)" }
+if ($LASTEXITCODE -ne 0) {
+  $tools = "$env:APPDATA\uv\tools\uapply-agent"
+  throw "uv tool install failed (exit $LASTEXITCODE). If it reported 'Access is denied' on $tools, close Claude Code / Codex, " +
+        "delete that folder (it may have been created by an elevated install), then run this installer again in a normal window."
+}
 uv tool update-shell | Out-Null
 
 & "$env:USERPROFILE\.local\bin\uapply-agent.exe" setup

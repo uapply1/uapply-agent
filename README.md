@@ -125,6 +125,7 @@ have "Allow Offline Access" enabled so refresh tokens are issued.
 |---|---|
 | `no runtime found` | install Claude Code or Codex and log in to it; on Windows make sure `claude`/`codex` is on `PATH` |
 | Windows: `Access is denied` starting the installer | run it in a normal PowerShell window, not "Run as administrator" |
+| Windows: `failed to remove directory …\uv\tools\uapply-agent` | the exe is in use or owned by an elevated install: close Claude Code / Codex sessions, delete `%APPDATA%\uv\tools\uapply-agent`, rerun the installer |
 | `Unknown command: /uapply:run` | run `uapply-agent setup` (writes the plugin and registers the server), then start a **new** session; `claude plugin list` should show `uapply@skills-dir` and `/mcp` the connected server |
 | `401` from the API | `uapply-agent login` again (no refresh token yet) |
 | `404` on `/api/ai-parse/agent/...` | the backend in use does not have the agent branch deployed |
