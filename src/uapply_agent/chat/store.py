@@ -33,11 +33,28 @@ class ChatStore:
         return self._read("index.json", [])
 
     def record(self, t: Transcript, extra: dict | None = None) -> dict:
-        rows = [r for r in self.index() if r.get("path") != str(t.path)]
-        row = {**t.public(), "fetched_at": now_iso(), **(extra or {})}
+        rows = self.index()
+        previous = next((r for r in rows if r.get("path") == str(t.path)), {})
+        rows = [r for r in rows if r.get("path") != str(t.path)]
+        kept = {k: previous[k] for k in ("document_id", "md_sha256", "pdf", "uploaded_at") if k in previous}
+        row = {**kept, **t.public(), "fetched_at": now_iso(), **(extra or {})}
         rows.append(row)
         self._write("index.json", rows)
         return row
+
+    def filed(self, md_path: Path, md_sha256: str) -> str | None:
+        """Document id if this exact transcript content was already filed on the case."""
+        for r in self.index():
+            if r.get("path") == str(md_path) and r.get("md_sha256") == md_sha256 and r.get("document_id"):
+                return r["document_id"]
+        return None
+
+    def mark_uploaded(self, md_path: Path, document_id: str, md_sha256: str, pdf: str) -> None:
+        rows = self.index()
+        for r in rows:
+            if r.get("path") == str(md_path):
+                r.update({"document_id": document_id, "md_sha256": md_sha256, "pdf": pdf, "uploaded_at": now_iso()})
+        self._write("index.json", rows)
 
     def save_intake(self, t: Transcript, hints: dict) -> Path:
         p = self.dir / (t.path.stem + ".intake.json")

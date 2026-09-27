@@ -74,9 +74,13 @@ def run_intake(runner: Runner, transcript: Transcript, application_types: list[d
         f"- id={t.get('id')} | {t.get('name')} | program={t.get('program')} visa_type={t.get('visa_type')} "
         f"visa_location={t.get('visa_location')}" for t in application_types) or "- (no catalog provided)"
     user_prompt = (
-        f"Chat history between the RCIC and the client '{transcript.contact}' "
+        f"Chat history between the RCIC (consultant) and the client '{transcript.contact}' "
         f"({transcript.date_from} to {transcript.date_to}) is in the file {src.name} in the current directory. "
-        f"Read it fully, then answer.\n\nApplication type catalog (choose suggested_application_type_id from these ids only):\n{catalog}"
+        f"Read it fully, then answer.\n\n"
+        f"Speakers: messages from '{transcript.contact}' are the client's own statements; every other speaker "
+        f"is the consultant. Record only what the client states about themselves; the consultant's suggestions, "
+        f"quotes or options are not client facts.\n\n"
+        f"Application type catalog (choose suggested_application_type_id from these ids only):\n{catalog}"
     )
     rr = runner.run(system_prompt=system_prompt(), user_prompt=user_prompt, schema=IntakeHints.model_json_schema(),
                     images=[], cwd=cwd, text_files=[src])

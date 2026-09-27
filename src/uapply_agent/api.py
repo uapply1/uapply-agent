@@ -89,9 +89,22 @@ class UApplyApi:
     def application_types(self) -> list:
         data = self._req("GET", "/api/survey/application-types/")
         rows = data.get("results", data) if isinstance(data, dict) else data
-        return [{"id": r.get("id"), "code": r.get("code"), "name": r.get("name"), "program": r.get("program"),
-                 "visa_type": r.get("visa_type"), "visa_location": r.get("visa_location"),
-                 "applicant_type": r.get("applicant_type")} for r in rows if r.get("is_active", True)]
+        out = []
+        for r in rows:
+            if not r.get("is_active", True):
+                continue
+            pdfs = r.get("imm_pdf_types") or []
+            default_forms = [p["id"] for p in pdfs if isinstance(p, dict) and p.get("id")
+                             and p.get("confirmed", True) and p.get("role") in (None, "main", "required")]
+            out.append({"id": r.get("id"), "code": r.get("code"), "name": r.get("name"), "program": r.get("program"),
+                        "visa_type": r.get("visa_type"), "visa_location": r.get("visa_location"),
+                        "applicant_type": r.get("applicant_type"), "default_imm_pdf_types": default_forms})
+        return out
+
+    def teams(self) -> list:
+        data = self._req("GET", "/api/teams/")
+        rows = data.get("results", data) if isinstance(data, dict) else data
+        return [{"id": t.get("id"), "name": t.get("name")} for t in rows if isinstance(t, dict) and t.get("id")]
 
     def agent_survey_type_id(self) -> str:
         for t in self.document_types():
@@ -100,9 +113,10 @@ class UApplyApi:
         raise ApiError(404, {"message": "agent_survey document type not found"})
 
     def create_survey(self, name: str, application_type_id: str, team_id: Optional[str] = None,
-                      llm_mode: str = "local_agent") -> dict:
+                      llm_mode: str = "local_agent", imm_pdf_types: Optional[list] = None) -> dict:
         """Creates the case and charges the RCIC's account — only after explicit RCIC confirmation."""
-        body = {"name": name, "application_type_id": application_type_id, "llm_mode": llm_mode}
+        body = {"name": name, "application_type_id": application_type_id, "llm_mode": llm_mode,
+                "imm_pdf_types": imm_pdf_types or []}
         if team_id:
             body["team_id"] = team_id
         return self._req("POST", "/api/survey/surveys/", json=body)

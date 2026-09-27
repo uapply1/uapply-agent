@@ -171,9 +171,12 @@ class FakeApi:
     def agent_survey_type_id(self):
         return "dt-agent-survey"
 
-    def create_survey(self, name, application_type_id, team_id=None, llm_mode="local_agent"):
+    def create_survey(self, name, application_type_id, team_id=None, llm_mode="local_agent", imm_pdf_types=None):
         self.created.append((name, application_type_id, team_id))
         return {"id": "s-new", "name": name}
+
+    def teams(self):
+        return []
 
     def survey(self, survey_id):
         return {"id": survey_id, "name": "Zhang Wei", "dependents": []}
@@ -245,3 +248,84 @@ def test_chat_fetch_reports_intake_failure_but_keeps_transcript(tools, monkeypat
     out = m.chat_fetch("张伟")
     assert out["ok"] and out["intake"] is None and "no runtime" in out["intake_error"]
     assert Path(out["transcript"]["path"]).exists()
+
+
+def test_upload_is_deduplicated_on_transcript_content(tools):
+    m, api = tools
+    m.init_case("s-1")
+    first = m.chat_fetch("张伟")
+    second = m.chat_upload(path=first["transcript"]["path"].replace(str(m._folder.root) + "/", ""))
+    assert second["ok"] and second["already_filed"] and second["document_id"] == first["upload"]["document_id"]
+    assert len(api.uploads) == 1
+    # same contact fetched again on the same day → same content → not filed twice
+    again = m.chat_fetch("张伟")
+    assert again["upload"]["already_filed"] and len(api.uploads) == 1
+
+
+def test_chat_upload_can_be_disabled(tools):
+    m, api = tools
+    m.init_case("s-1")
+    m._settings.chat_upload = False
+    try:
+        out = m.chat_fetch("张伟")
+    finally:
+        m._settings.chat_upload = True
+    assert out["upload"] == "disabled" and api.uploads == [] and out["intake"] is not None
+
+
+def test_create_case_attaches_default_forms_and_single_team(tools, monkeypatch):
+    m, api = tools
+    api.application_types = lambda: [{"id": "at-study", "name": "Study Permit", "default_imm_pdf_types": ["imm-1294", "imm-5645"]}]
+    api.teams = lambda: [{"id": "team-1", "name": "Maple Immigration"}]
+    captured = {}
+
+    def create_survey(name, application_type_id, team_id=None, llm_mode="local_agent", imm_pdf_types=None):
+        captured.update(team_id=team_id, imm_pdf_types=imm_pdf_types)
+        return {"id": "s-new", "name": name}
+
+    api.create_survey = create_survey
+    out = m.create_case("Zhang Wei", "at-study", confirmation="create case")
+    assert out["ok"] and out["team_id"] == "team-1"
+    assert captured == {"team_id": "team-1", "imm_pdf_types": ["imm-1294", "imm-5645"]}
+    assert m.create_case("X", "nope", confirmation="create case")["error"]["code"] == "CASE_EXISTS"
+
+
+def test_create_case_rejects_unknown_type(tools):
+    m, api = tools
+    assert m.create_case("X", "nope", confirmation="create case")["error"]["code"] == "BAD_APPLICATION_TYPE"
+
+
+def test_intake_prompt_attributes_speakers(tmp_path):
+    from uapply_agent.chat.intake import run_intake
+    md = tmp_path / "t.md"
+    md.write_text(TRANSCRIPT, encoding="utf-8")
+    runner = IntakeRunner()
+    run_intake(runner, Transcript("anychat", "张伟", "2026-01-01", "2026-03-31", md), [], tmp_path / "cwd")
+    assert "messages from '张伟' are the client's own statements" in runner.calls[0]["user_prompt"]
+
+
+def test_schema_refs_are_inlined_for_the_runtime():
+    from uapply_agent.chat.intake import IntakeHints
+    from uapply_agent.runners.base import inline_schema_refs
+    flat = inline_schema_refs(IntakeHints.model_json_schema())
+    assert "$defs" not in flat and "$ref" not in json.dumps(flat)
+    assert flat["properties"]["applicant"]["properties"]["native_name"]["anyOf"][0]["type"] == "string"
+    assert flat["properties"]["family"]["items"]["properties"]["relationship"]["type"] == "string"
+
+
+def test_codex_runner_sends_prompt_on_stdin(monkeypatch, tmp_path):
+    import subprocess
+    from uapply_agent.runners.codex import CodexRunner
+    seen = {}
+
+    def fake_exec(self, cmd, cwd, timeout_s, stdin=None):
+        seen["cmd"], seen["stdin"] = cmd, stdin
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout='{"file_types": ["Visa"]}', stderr="")
+
+    monkeypatch.setattr(CodexRunner, "_exec", fake_exec)
+    big = tmp_path / "big.md"
+    big.write_text("x" * 100_000)
+    rr = CodexRunner().run(system_prompt="S", user_prompt="U", schema={"type": "object"}, images=[], cwd=tmp_path, text_files=[big])
+    assert rr.output == {"file_types": ["Visa"]}
+    assert seen["cmd"][-1] == "-" and "x" * 100_000 in seen["stdin"] and "## Instructions" in seen["stdin"]
+    assert all(len(a) < 1000 for a in seen["cmd"])

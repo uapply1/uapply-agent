@@ -71,9 +71,21 @@ system prompt is `chat/prompts/intake.md`. Transcripts longer than
 
 ## Config
 
-`chat_source` (`anychat` | `none`), `anychat_bin`, `chat_default_days` (365),
-`chat_max_chars` (200000), `team_id` for `create_survey`. Env: `ANYCHAT_BIN`,
-`UAPPLY_CHAT_SOURCE`, `UAPPLY_TEAM_ID`.
+`chat_source` (`anychat` | `none`), `anychat_bin`, `chat_default_days` (180),
+`chat_max_chars` (200000), `chat_upload` (default true; false keeps the
+transcript local and returns hints only — for firms that do not want client
+chats in the cloud), `team_id` for `create_survey` (auto-detected when the RCIC
+belongs to exactly one team). Env: `ANYCHAT_BIN`, `UAPPLY_CHAT_SOURCE`,
+`UAPPLY_TEAM_ID`.
+
+Uploads are deduplicated on the transcript's sha256 (`index.json`), so
+re-fetching the same history files nothing twice. `create_case` attaches the
+application type's confirmed main/required IMM forms so auto-fill has forms to
+fill.
+
+Onboarding note for RCICs: with `chat_upload` on, the client's chat is stored
+on uApply and read by the section-extraction step; the RCIC is responsible for
+having the client's consent to process it.
 
 ## Not done
 

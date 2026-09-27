@@ -32,7 +32,8 @@ class Settings:
     team_id: str = ""              # team to create cases in (business accounts)
     chat_source: str = "anychat"   # anychat | none
     anychat_bin: str = ""          # override the AnyChat CLI location
-    chat_default_days: int = 365
+    chat_default_days: int = 180
+    chat_upload: bool = True       # file transcripts on the case (False: local hints only)
     chat_max_chars: int = 200_000  # transcript cap for the local intake call
     extra: dict = field(default_factory=dict)
 

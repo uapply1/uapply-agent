@@ -51,7 +51,8 @@ intake hints (identity, family, key facts, open questions) and the suggested
 application type from `list_application_types` with the rationale. Propose the
 case name (given + family name, native name in brackets). Wait for the RCIC to
 type "create case" (or 确认创建), then `create_case`; the transcript upload
-completes automatically. Finish with `case_status`.
+completes automatically and starts processing. Then loop `run_tasks` →
+`wait_for_stage("processing")` until done, and finish with `case_status`.
 
 ## prompt: status
 

@@ -9,7 +9,7 @@ import json
 import os
 from pathlib import Path
 
-from .base import Runner, RunnerError, RunResult, extract_json
+from .base import Runner, RunnerError, RunResult, extract_json, inline_schema_refs
 
 
 class ClaudeCodeRunner(Runner):
@@ -31,7 +31,7 @@ class ClaudeCodeRunner(Runner):
             self.binary, "-p", prompt,
             "--bare", "--no-session-persistence",
             "--output-format", "json",
-            "--json-schema", json.dumps(schema),
+            "--json-schema", json.dumps(inline_schema_refs(schema)),
             "--system-prompt", system_prompt,
             "--allowedTools", "Read",
             "--permission-mode", "dontAsk",

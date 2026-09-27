@@ -26,6 +26,27 @@ class RunResult:
     raw: str = ""
 
 
+def inline_schema_refs(schema: dict) -> dict:
+    """Resolve local `$ref`s into place and drop `$defs`, for runtimes that only take flat schemas."""
+    defs = schema.get("$defs") or {}
+
+    def walk(node, depth=0):
+        if depth > 30:
+            return node
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/$defs/"):
+                target = defs.get(ref.split("/")[-1], {})
+                merged = {**target, **{k: v for k, v in node.items() if k != "$ref"}}
+                return walk(merged, depth + 1)
+            return {k: walk(v, depth + 1) for k, v in node.items() if k != "$defs"}
+        if isinstance(node, list):
+            return [walk(v, depth + 1) for v in node]
+        return node
+
+    return walk(schema)
+
+
 def extract_json(text: str) -> dict:
     """Parse the model's answer: bare JSON, fenced JSON, or JSON embedded in prose."""
     text = text.strip()

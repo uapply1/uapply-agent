@@ -10,7 +10,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from .base import Runner, RunnerError, RunResult, extract_json
+from .base import Runner, RunnerError, RunResult, extract_json, inline_schema_refs
 
 
 class CodexRunner(Runner):
@@ -25,7 +25,7 @@ class CodexRunner(Runner):
             prompt += f"\n\n## File {Path(tf).name}\n{Path(tf).read_text(encoding='utf-8', errors='replace')}"
         with tempfile.TemporaryDirectory() as td:
             schema_path = Path(td) / "schema.json"
-            schema_path.write_text(json.dumps(schema))
+            schema_path.write_text(json.dumps(inline_schema_refs(schema)))
             last_msg = Path(td) / "last.txt"
             cmd = [self.binary, "exec", "--skip-git-repo-check", "--sandbox", "read-only",
                    "--output-schema", str(schema_path), "--output-last-message", str(last_msg)]
@@ -33,8 +33,9 @@ class CodexRunner(Runner):
                 cmd += ["--image", str(img)]
             if self.model:
                 cmd += ["--model", self.model]
-            cmd.append(prompt)
-            proc = self._exec(cmd, cwd, timeout_s)
+            # Prompt on stdin: argv is capped at ~32 KB on Windows and transcripts are longer.
+            cmd.append("-")
+            proc = self._exec(cmd, cwd, timeout_s, stdin=prompt)
             text = last_msg.read_text() if last_msg.exists() else proc.stdout
         if proc.returncode != 0 and not text.strip():
             self._raise_if_limited(proc.stderr)

@@ -275,6 +275,10 @@ def _upload_transcript(md_path: Path) -> dict:
     from .folder import sha256_of
     store = ChatStore(_folder)
     row = next((r for r in store.index() if r.get("path") == str(md_path)), {})
+    md_sha = sha256_of(md_path)
+    if existing := store.filed(md_path, md_sha):
+        store.clear_pending(md_path)
+        return {"document_id": existing, "pdf": row.get("pdf"), "already_filed": True}
     pdf = md_path.with_suffix(".pdf")
     transcript_to_pdf(md_path, pdf, f"Chat history: {row.get('contact', md_path.stem)}", [
         f"Source: {row.get('source', 'chat')} (self-reported, unverified)",
@@ -289,6 +293,7 @@ def _upload_transcript(md_path: Path) -> dict:
         raise ChatError("upload_failed", "empty upload response for the transcript PDF")
     _folder.record_upload(sha256_of(pdf), str(pdf.relative_to(_folder.root)), d["id"], "principal",
                           uploaded_path=str(pdf.relative_to(_folder.root)))
+    store.mark_uploaded(md_path, d["id"], md_sha, str(pdf.relative_to(_folder.root)))
     store.clear_pending(md_path)
     return {"document_id": d["id"], "pdf": str(pdf.relative_to(_folder.root))}
 
@@ -348,7 +353,9 @@ def chat_fetch(contact: str, days: Optional[int] = None) -> dict:
             store.save_intake(t, hints)
         except (RunnerError, ApiError, Exception) as ex:
             intake_error = f"{type(ex).__name__}: {str(ex)[:200]}"
-        if _folder.survey_id:
+        if not _settings.chat_upload:
+            upload = "disabled"
+        elif _folder.survey_id:
             upload = _upload_transcript(t.path)
         else:
             store.queue_upload(t.path)
@@ -394,10 +401,19 @@ def create_case(name: str, application_type_id: str, confirmation: str = "") -> 
                     "use set_folder for a different client, or init_case to rebind")
 
     def go():
-        s = api().create_survey(name, application_type_id, team_id=_settings.team_id or None)
+        types = {t["id"]: t for t in api().application_types()}
+        if application_type_id not in types:
+            return _err("BAD_APPLICATION_TYPE", "unknown application_type_id", "pick one from list_application_types")
+        team_id = _settings.team_id or None
+        if not team_id:
+            teams = api().teams()
+            if len(teams) == 1:            # a member of exactly one team: the case belongs there
+                team_id = teams[0]["id"]
+        s = api().create_survey(name, application_type_id, team_id=team_id,
+                                imm_pdf_types=types[application_type_id].get("default_imm_pdf_types") or [])
         survey_id = s.get("id")
         case = _folder.init_case(survey_id, _settings.backend_url, "local_agent", name=s.get("name", name))
-        return _ok(survey_id=survey_id, case=case, chat_uploads=_flush_pending_uploads())
+        return _ok(survey_id=survey_id, team_id=team_id, case=case, chat_uploads=_flush_pending_uploads())
     return _wrap(go)
 
 
