@@ -22,11 +22,17 @@ macOS / Linux (Terminal):
 curl -LsSf https://raw.githubusercontent.com/uapply1/uapply-agent/main/install.sh | sh
 ```
 
-Windows (PowerShell):
+Windows, in a normal (not Administrator) PowerShell window:
 
 ```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/uapply1/uapply-agent/main/install.ps1 | iex"
+irm https://raw.githubusercontent.com/uapply1/uapply-agent/main/install.ps1 | iex
 ```
+
+From the Start menu "Run" box or a Command Prompt instead:
+`powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/uapply1/uapply-agent/main/install.ps1 | iex"`.
+Everything installs into the user profile, so elevation is never needed; an
+elevated window can fail with "Program 'powershell.exe' failed to run: Access
+is denied".
 
 When the browser opens, confirm the code and sign in with the uApply account.
 Then open Claude Code (desktop app or terminal) or Codex in a client folder
@@ -118,6 +124,7 @@ have "Allow Offline Access" enabled so refresh tokens are issued.
 | Symptom | Fix |
 |---|---|
 | `no runtime found` | install Claude Code or Codex and log in to it; on Windows make sure `claude`/`codex` is on `PATH` |
+| Windows: `Access is denied` starting the installer | run it in a normal PowerShell window, not "Run as administrator" |
 | `Unknown command: /uapply:run` | run `uapply-agent setup` (writes the plugin and registers the server), then start a **new** session; `claude plugin list` should show `uapply@skills-dir` and `/mcp` the connected server |
 | `401` from the API | `uapply-agent login` again (no refresh token yet) |
 | `404` on `/api/ai-parse/agent/...` | the backend in use does not have the agent branch deployed |

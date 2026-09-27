@@ -1,5 +1,5 @@
-# uapply-agent installer for Windows (PowerShell):
-#   powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/uapply1/uapply-agent/main/install.ps1 | iex"
+# uapply-agent installer for Windows. In a normal (non-administrator) PowerShell window:
+#   irm https://raw.githubusercontent.com/uapply1/uapply-agent/main/install.ps1 | iex
 # Installs uv (if missing), the uapply-agent CLI, registers it with Claude Code
 # and Codex, and signs in to uApply. Re-run any time to upgrade.
 $ErrorActionPreference = "Stop"
