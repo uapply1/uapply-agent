@@ -75,28 +75,44 @@ Alternative for scripted use: `uapply-agent login --token <jwt>` or
 
 ### 4. Register the MCP server with your coding agent
 
-Claude Code (user scope, so it works from any client folder):
+The `/uapply:run`, `/uapply:status` and `/uapply:intake-from-chat` commands are
+MCP prompts served by `uapply-agent mcp`. They exist only in a session where
+the `uapply` MCP server is connected; "Unknown command: /uapply:run" means it
+is not.
+
+Claude Code (user scope, so it works from any client folder). Register the
+absolute path: the desktop app is launched from the Dock / Start menu with a
+minimal `PATH` that usually lacks `~/.local/bin`, where `uv` puts the command.
 
 ```bash
-claude mcp add --scope user uapply -- uapply-agent mcp
+claude mcp add --scope user uapply -- "$(command -v uapply-agent)" mcp
+claude mcp list                    # expect: uapply: ... - ✔ Connected
 ```
+
+```powershell
+claude mcp add --scope user uapply -- (Get-Command uapply-agent).Source mcp
+```
+
+Then start a **new** session (MCP servers are loaded at session start), type
+`/uapply` and pick a command from the list, or run `/mcp` to see the server's
+status. Older Claude Code builds list MCP prompts as `/mcp__uapply__run`.
 
 Codex:
 
 ```bash
-codex mcp add uapply -- uapply-agent mcp
+codex mcp add uapply -- "$(command -v uapply-agent)" mcp
 ```
 
 or in `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.uapply]
-command = "uapply-agent"
+command = "/Users/<you>/.local/bin/uapply-agent"
 args = ["mcp"]
 ```
 
-Claude Desktop / other MCP clients: point a stdio server at the command
-`uapply-agent` with the argument `mcp`.
+Claude Desktop / other MCP clients: point a stdio server at the `uapply-agent`
+command with the argument `mcp`.
 
 ### 5. First case
 
@@ -139,8 +155,8 @@ uv tool upgrade uapply-agent          # or: uv tool install --force git+https://
 uv tool uninstall uapply-agent
 ```
 
-The MCP registration keeps working across upgrades because it refers to the
-`uapply-agent` command, not to a path.
+The MCP registration keeps working across upgrades: `uv tool` keeps the same
+`~/.local/bin/uapply-agent` path.
 
 ### Server side (uApply operations)
 
@@ -157,6 +173,7 @@ have "Allow Offline Access" enabled so refresh tokens are issued.
 | Symptom | Fix |
 |---|---|
 | `no runtime found` | install Claude Code or Codex and log in to it; on Windows make sure `claude`/`codex` is on `PATH` |
+| `Unknown command: /uapply:run` | the `uapply` MCP server is not connected: `claude mcp list`, re-add it with the absolute path (step 4), start a new session |
 | `401` from the API | `uapply-agent login` again (no refresh token yet, see step 3) |
 | `404` on `/api/ai-parse/agent/...` | the backend in use does not have the agent branch deployed |
 | `chat sources` → `not_installed` / `not_logged_in` | install the AnyChat plugin and run its own login; the agent never handles that token |
