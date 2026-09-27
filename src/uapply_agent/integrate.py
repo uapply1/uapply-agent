@@ -111,11 +111,32 @@ def register_codex(exe: str, home: Path, which: Callable[[str], Optional[str]] =
     return "skipped: Codex not found (no `codex` command, no ~/.codex)"
 
 
-def run_setup(say: Callable[[str], None] = print, home: Optional[Path] = None) -> dict:
+def record_runtimes(settings, which: Callable[[str], Optional[str]] = shutil.which) -> dict:
+    """Remember where `claude` / `codex` are: the terminal running setup has the full PATH, the
+    desktop app that later launches the MCP server usually does not."""
+    found = {}
+    for attr, binary in (("claude_bin", "claude"), ("codex_bin", "codex")):
+        path = which(binary)
+        if path:
+            setattr(settings, attr, str(Path(path).absolute()))
+            found[binary] = getattr(settings, attr)
+    if found:
+        settings.save()
+    return found
+
+
+def run_setup(say: Callable[[str], None] = print, home: Optional[Path] = None, settings=None) -> dict:
     home = home or Path(os.environ.get("UAPPLY_HOME") or Path.home())
     exe = own_executable()
     say(f"uapply-agent: {exe}")
     out = {"executable": exe}
+    if settings is not None:
+        out["runtimes"] = record_runtimes(settings)
+        if out["runtimes"]:
+            say("Runtimes: " + ", ".join(f"{k} = {v}" for k, v in out["runtimes"].items()))
+        else:
+            say("Runtimes: neither `claude` nor `codex` found on PATH — install Claude Code or Codex, log in, "
+                "and run `uapply-agent setup` again")
     out["claude"] = register_claude(exe, home)
     say(f"Claude Code: {out['claude']}")
     if not out["claude"].startswith("skipped"):

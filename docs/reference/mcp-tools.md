@@ -24,7 +24,7 @@ written for the model ("run `wait_for_stage` before calling this again").
 
 | Tool | Input | Output |
 |---|---|---|
-| `whoami` | — | RCIC name, team, backend URL, token scope, runtime detected |
+| `whoami` | — | backend URL, login state, `agent_api` (does the backend serve the local-agent API), runtimes as `{name, path}`, folder, case |
 | `case_status` | — | server-truth status of the folder's case: stage, document counts by status, open review items, automation status, open agent tasks, blockers. First call in every session. |
 
 ## Intake
@@ -32,6 +32,7 @@ written for the model ("run `wait_for_stage` before calling this again").
 | Tool | Input | Output |
 |---|---|---|
 | `scan_folder` | `include_manifested?: bool` | files: path, size, sha256, kind, applicant hint (from subfolder), manifested (bool) |
+| `preview_document` | `path`, `pages?: "1" \| "1-3"` (≤ 3) | PNG paths under `.uapply/cache/preview/` for the chat model to Read before classifying; images returned as-is (HEIC converted). Local only. |
 | `list_application_types` | `query?: string` | id, program, visa_type, visa_location, label |
 | `propose_case` | `application_type_id`, `principal: {name, …}`, `dependents: [{name, relationship, folder?}]` | `approval_id`, `approval_url` — the page shows the proposed setup with Approve / Edit / Reject |
 | `add_dependent` | `name`, `relationship`, `folder?` | same approval flow as `propose_case` |

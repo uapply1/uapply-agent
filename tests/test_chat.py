@@ -184,6 +184,9 @@ class FakeApi:
     def set_llm_mode(self, survey_id, mode):
         return {"llm_mode": mode}
 
+    def agent_api_available(self):
+        return True
+
     def bulk_upload(self, survey_id, category, type_id, files, archive_name=""):
         self.uploads.append((survey_id, category, type_id, Path(files[0]).name))
         self.archives = getattr(self, "archives", []) + [archive_name]

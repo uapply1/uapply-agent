@@ -14,14 +14,14 @@ from typing import Optional
 from mcp.server.mcpserver import MCPServer
 
 from . import playbook
-from .api import ApiError, UApplyApi
+from .api import NO_AGENT_API_HINT, ApiError, UApplyApi
 from .config import Settings
 from .executor import Executor
 from .folder import WorkingFolder
 from .chat.anychat import AnyChatSource
 from .chat.base import ChatError
 from .chat.store import ChatStore, redact
-from .local_ops import heic_to_jpeg
+from .local_ops import heic_to_jpeg, pdf_page_count, render_pdf_page
 from .runners import RunnerError, detect_runtimes, get_runner
 
 logging.basicConfig(level=os.environ.get("UAPPLY_LOG", "WARNING"), format="%(levelname)s %(name)s: %(message)s")
@@ -58,6 +58,29 @@ def _need_case():
     return None
 
 
+def _need_agent_api():
+    """Local-agent tools need the backend branch; production without it must not be half-driven."""
+    if e := _need_case():
+        return e
+    try:
+        if not api().agent_api_available():
+            return _err("AGENT_API_UNAVAILABLE", "this backend has no local-agent API", NO_AGENT_API_HINT)
+    except ApiError as e:
+        return _err(f"HTTP_{e.status}", str(e), e.hint)
+    return None
+
+
+def _bind(survey_id: str, llm_mode: str, name: str, dependents=None) -> tuple[dict, str]:
+    """Bind the folder; on a backend without the agent API the case stays in server mode."""
+    warning = ""
+    if llm_mode == "local_agent" and not api().agent_api_available():
+        llm_mode, warning = "server", NO_AGENT_API_HINT
+    elif llm_mode in ("local_agent", "server"):
+        api().set_llm_mode(survey_id, llm_mode)
+    case = _folder.init_case(survey_id, _settings.backend_url, llm_mode, name=name, dependents=dependents)
+    return case, warning
+
+
 def _wrap(fn):
     try:
         return fn()
@@ -74,9 +97,13 @@ def _wrap(fn):
 
 @server.tool()
 def whoami() -> dict:
-    """Backend URL, login state, detected runtimes, and the working folder."""
-    return _ok(backend=_settings.backend_url, logged_in=api().logged_in,
-               runtimes=detect_runtimes(), folder=str(_folder.root), case=_folder.case or None)
+    """Backend URL, login state, whether the backend serves the local-agent API, detected runtimes
+    (name + absolute path), and the working folder."""
+    def go():
+        agent_api = api().agent_api_available() if api().logged_in else None
+        return _ok(backend=_settings.backend_url, logged_in=api().logged_in, agent_api=agent_api,
+                   runtimes=detect_runtimes(), folder=str(_folder.root), case=_folder.case or None)
+    return _wrap(go)
 
 
 @server.tool()
@@ -92,10 +119,23 @@ def set_folder(path: str) -> dict:
 
 @server.tool()
 def case_status() -> dict:
-    """Server-truth status of this folder's case: documents by status, tasks, failures. Call first."""
+    """Server-truth status of this folder's case: documents by status, tasks, failures. Call first.
+    On a backend without the local-agent API it falls back to the survey's own document list."""
     if e := _need_case():
         return e
-    return _wrap(lambda: _ok(**api().agent_status(_folder.survey_id)))
+
+    def go():
+        if not api().agent_api_available():
+            s = api().survey(_folder.survey_id)
+            docs = s.get("documents") or []
+            by_status: dict[str, int] = {}
+            for d in docs:
+                if not d.get("old_doc_id"):
+                    by_status[d.get("status", "?")] = by_status.get(d.get("status", "?"), 0) + 1
+            return _ok(survey_id=_folder.survey_id, name=s.get("name"), llm_mode="server", agent_api=False,
+                       documents=by_status, warning=NO_AGENT_API_HINT)
+        return _ok(**api().agent_status(_folder.survey_id))
+    return _wrap(go)
 
 
 @server.tool()
@@ -103,11 +143,13 @@ def init_case(survey_id: str, llm_mode: str = "local_agent") -> dict:
     """Bind this folder to an existing uApply survey and set its LLM mode (local_agent | server)."""
     def go():
         s = api().survey(survey_id)
-        api().set_llm_mode(survey_id, llm_mode)
         deps = [{"survey_id": d.get("id"), "name": d.get("name"), "relationship": d.get("relationship")}
                 for d in (s.get("dependents") or []) if isinstance(d, dict)]
-        case = _folder.init_case(survey_id, _settings.backend_url, llm_mode, name=s.get("name", ""), dependents=deps)
-        return _ok(case=case, chat_uploads=_flush_pending_uploads())
+        case, warning = _bind(survey_id, llm_mode, s.get("name", ""), deps)
+        out = _ok(case=case, chat_uploads=_flush_pending_uploads())
+        if warning:
+            out["warning"] = warning
+        return out
     return _wrap(go)
 
 
@@ -117,6 +159,31 @@ def init_case(survey_id: str, llm_mode: str = "local_agent") -> dict:
 def scan_folder(include_manifested: bool = False) -> dict:
     """Files in the working folder with hash, kind, applicant hint and whether they were already uploaded."""
     return _wrap(lambda: _ok(files=[f.as_dict() for f in _folder.scan(include_manifested)]))
+
+
+@server.tool()
+def preview_document(path: str, pages: str = "1") -> dict:
+    """Look at a folder file before classifying it: renders PDF pages (e.g. "1", "1-3", at most 3) to PNG
+    under .uapply/cache/preview/ and returns the image paths to Read. Images are returned as-is (HEIC
+    converted). Nothing leaves the machine."""
+    def go():
+        local = _folder.resolve(path)
+        if not local.is_file():
+            return _err("NO_FILE", f"{path} is not a file in the working folder")
+        suffix = local.suffix.lower()
+        out_dir = _folder.cache / "preview"
+        if suffix == ".pdf":
+            total = pdf_page_count(local)
+            first, _, last = pages.partition("-")
+            a = max(1, int(first or 1)); b = min(total, int(last or a), a + 2)
+            imgs = [render_pdf_page(local, n, out_dir, dpi=110) for n in range(a, b + 1)]
+            return _ok(kind="pdf", page_count=total, pages=f"{a}-{b}", images=[str(i) for i in imgs])
+        if suffix in (".heic", ".heif"):
+            return _ok(kind="image", images=[str(heic_to_jpeg(local, out_dir))])
+        if suffix in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"):
+            return _ok(kind="image", images=[str(local)])
+        return _err("UNSUPPORTED", f"cannot preview {suffix or 'this'} files")
+    return _wrap(go)
 
 
 @server.tool()
@@ -218,7 +285,7 @@ def start_processing(document_ids: Optional[list[str]] = None) -> dict:
 @server.tool()
 def run_tasks(max_tasks: Optional[int] = None, workers: int = 2, kinds: Optional[list[str]] = None) -> dict:
     """Execute queued agent tasks in fresh headless runtime processes. Returns counts only."""
-    if e := _need_case():
+    if e := _need_agent_api():
         return e
 
     def go():
@@ -231,7 +298,7 @@ def run_tasks(max_tasks: Optional[int] = None, workers: int = 2, kinds: Optional
 @server.tool()
 def wait_for_stage(stage: str = "processing", timeout_s: int = 45) -> dict:
     """Long-poll (≤ 60 s) until processing/analysis is done for the case; returns status either way."""
-    if e := _need_case():
+    if e := _need_agent_api():
         return e
     return _wrap(lambda: _ok(**api().agent_wait(_folder.survey_id, stage, max(1, min(int(timeout_s), 60)))))
 
@@ -239,7 +306,7 @@ def wait_for_stage(stage: str = "processing", timeout_s: int = 45) -> dict:
 @server.tool()
 def task_stats() -> dict:
     """Agent task counts by status for the case."""
-    if e := _need_case():
+    if e := _need_agent_api():
         return e
     return _wrap(lambda: _ok(stats=api().task_stats(_folder.survey_id)))
 
@@ -247,7 +314,7 @@ def task_stats() -> dict:
 @server.tool()
 def set_llm_mode(llm_mode: str) -> dict:
     """Switch the case between local_agent and server. Only after the RCIC asked for it."""
-    if e := _need_case():
+    if e := _need_agent_api():
         return e
 
     def go():
@@ -414,8 +481,15 @@ def create_case(name: str, application_type_id: str, confirmation: str = "") -> 
         s = api().create_survey(name, application_type_id, team_id=team_id,
                                 imm_pdf_types=types[application_type_id].get("default_imm_pdf_types") or [])
         survey_id = s.get("id")
-        case = _folder.init_case(survey_id, _settings.backend_url, "local_agent", name=s.get("name", name))
-        return _ok(survey_id=survey_id, team_id=team_id, case=case, chat_uploads=_flush_pending_uploads())
+        # The create body already asked for local_agent; a branch backend honoured it.
+        case, warning = _bind(survey_id, "local_agent" if api().agent_api_available() else "server",
+                              s.get("name", name))
+        if not api().agent_api_available():
+            warning = NO_AGENT_API_HINT
+        out = _ok(survey_id=survey_id, team_id=team_id, case=case, chat_uploads=_flush_pending_uploads())
+        if warning:
+            out["warning"] = warning
+        return out
     return _wrap(go)
 
 

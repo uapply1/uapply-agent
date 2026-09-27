@@ -123,7 +123,8 @@ have "Allow Offline Access" enabled so refresh tokens are issued.
 
 | Symptom | Fix |
 |---|---|
-| `no runtime found` | install Claude Code or Codex and log in to it; on Windows make sure `claude`/`codex` is on `PATH` |
+| `no runtime found` | the MCP server runs under the desktop app with a minimal `PATH`: run `uapply-agent setup` in a terminal where `claude --version` works (it records the path), then start a new session |
+| `AGENT_API_UNAVAILABLE` / `agent_api: false` | the backend in use does not have the agent branch deployed; the case runs in server mode until it is |
 | Windows: `Access is denied` starting the installer | run it in a normal PowerShell window, not "Run as administrator" |
 | Windows: `failed to remove directory …\uv\tools\uapply-agent` | the exe is in use or owned by an elevated install: close Claude Code / Codex sessions, delete `%APPDATA%\uv\tools\uapply-agent`, rerun the installer |
 | `Unknown command: /uapply:run` | run `uapply-agent setup` (writes the plugin and registers the server), then start a **new** session; `claude plugin list` should show `uapply@skills-dir` and `/mcp` the connected server |

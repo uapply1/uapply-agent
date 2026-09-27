@@ -58,3 +58,12 @@ def test_plugin_generated_from_playbook(tmp_path):
         assert body.startswith("---\ndescription: ") and playbook.prompt(name) in body
     it.install_claude_plugin(tmp_path)  # idempotent
     assert sorted(p.name for p in (root / "commands").iterdir()) == ["intake-from-chat.md", "run.md", "status.md"]
+
+
+def test_record_runtimes_saves_absolute_paths(tmp_path, monkeypatch):
+    from uapply_agent.config import Settings
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    s = Settings()
+    found = it.record_runtimes(s, which=lambda n: "/usr/local/bin/claude" if n == "claude" else None)
+    assert found == {"claude": "/usr/local/bin/claude"} and s.claude_bin == "/usr/local/bin/claude" and s.codex_bin == ""
+    assert Settings.load().claude_bin == "/usr/local/bin/claude"

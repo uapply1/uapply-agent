@@ -18,7 +18,7 @@ incomplete stage.
     ├── case.json                  # survey ids, application type, family map, stage
     ├── manifest.json              # sha256 → {document_id, applicant, path, uploaded_at}
     ├── review.md                  # human-readable run report + client questions
-    ├── cache/                     # rendered pages, converted HEICs (safe to delete)
+    ├── cache/                     # rendered pages, converted HEICs, preview/ PNGs (safe to delete)
     └── output/                    # L3 JSON, filled IMM PDFs (from auto-fill)
 ```
 

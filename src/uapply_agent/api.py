@@ -10,6 +10,11 @@ import httpx
 from .config import Credentials, Settings
 
 
+AGENT_PREFIX = "/api/ai-parse/agent/"
+NO_AGENT_API_HINT = ("the backend has no local-agent API (branch not deployed); the case runs in server mode "
+                     "and its documents are processed by uApply's server models")
+
+
 class ApiError(RuntimeError):
     def __init__(self, status: int, body: Any, hint: str = ""):
         self.status, self.body, self.hint = status, body, hint
@@ -23,6 +28,7 @@ class UApplyApi:
         self.token = token or Credentials.get_token()
         self._client = httpx.Client(base_url=self.settings.backend_url, timeout=timeout,
                                     headers=self._headers())
+        self._agent_api: Optional[bool] = None
 
     def _headers(self) -> dict:
         h = {"Accept": "application/json", "User-Agent": "uapply-agent/0.1"}
@@ -66,10 +72,24 @@ class UApplyApi:
                 body = r.json()
             except Exception:
                 body = r.text
-            raise ApiError(r.status_code, body, body.get("hint", "") if isinstance(body, dict) else "")
+            hint = body.get("hint", "") if isinstance(body, dict) else ""
+            if r.status_code == 404 and path.startswith(AGENT_PREFIX) and not isinstance(body, dict):
+                self._agent_api = False
+                body, hint = {"message": "this backend has no local-agent API"}, NO_AGENT_API_HINT
+            raise ApiError(r.status_code, body, hint)
         if r.headers.get("content-type", "").startswith("application/json"):
             return r.json()
         return r.text
+
+    def agent_api_available(self) -> bool:
+        """Does this backend serve /api/ai-parse/agent/? Production without the branch answers an HTML 404."""
+        if self._agent_api is None:
+            try:
+                self._req("GET", f"{AGENT_PREFIX}tasks/stats/")
+                self._agent_api = True
+            except ApiError as e:
+                self._agent_api = e.status != 404
+        return self._agent_api
 
     # ---- surveys / documents (existing endpoints) ----
 
@@ -80,11 +100,9 @@ class UApplyApi:
         return self._req("GET", "/api/survey/document-types/")
 
     def documents(self, survey_id: str) -> list:
-        data = self._req("GET", "/api/survey/documents/", params={"survey": survey_id})
-        rows = data.get("results", data) if isinstance(data, dict) else data
-        # The backend filters by ?survey=; keep the client-side guard so an older backend
-        # can never leak another case's documents into the chat.
-        return [d for d in rows if str(d.get("survey", survey_id)) == str(survey_id)]
+        """The case's documents from the survey detail: scoped by construction on every backend.
+        (The flat /documents/ list only honours ?survey= on branch backends and rows carry no survey id.)"""
+        return self.survey(survey_id).get("documents") or []
 
     def application_types(self) -> list:
         data = self._req("GET", "/api/survey/application-types/")

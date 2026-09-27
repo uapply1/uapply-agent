@@ -27,6 +27,8 @@ class Settings:
     auth0_audience: str = "https://uapply.io"
     runtime: str = "auto"          # auto | claude-code | codex
     model: str = ""                # runtime default when empty
+    claude_bin: str = ""           # absolute paths recorded by `setup`; GUI apps run with a minimal PATH
+    codex_bin: str = ""
     workers: int = 2
     force_ocr: bool = False        # ignore PDF text layers and always OCR with the model
     team_id: str = ""              # team to create cases in (business accounts)
@@ -50,7 +52,8 @@ class Settings:
         for k, env in (("backend_url", "UAPPLY_BACKEND_URL"), ("runtime", "UAPPLY_RUNTIME"), ("model", "UAPPLY_MODEL")):
             if os.environ.get(env):
                 setattr(s, k, os.environ[env])
-        for k, env in (("team_id", "UAPPLY_TEAM_ID"), ("anychat_bin", "ANYCHAT_BIN"), ("chat_source", "UAPPLY_CHAT_SOURCE")):
+        for k, env in (("team_id", "UAPPLY_TEAM_ID"), ("anychat_bin", "ANYCHAT_BIN"), ("chat_source", "UAPPLY_CHAT_SOURCE"),
+                       ("claude_bin", "UAPPLY_CLAUDE_BIN"), ("codex_bin", "UAPPLY_CODEX_BIN")):
             if os.environ.get(env):
                 setattr(s, k, os.environ[env])
         if os.environ.get("UAPPLY_FORCE_OCR"):

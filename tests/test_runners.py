@@ -72,3 +72,25 @@ def test_playbook_sections_load():
     assert "case_status" in playbook.instructions()
     assert playbook.prompt("run") and playbook.prompt("status")
     assert playbook.prompt("missing") == ""
+
+
+def test_resolve_binary_order(tmp_path, monkeypatch):
+    from uapply_agent import runners as r
+    monkeypatch.setattr(r.shutil, "which", lambda _: None)
+    monkeypatch.setattr(r.Path, "home", classmethod(lambda cls: tmp_path))
+    assert r.resolve_binary("claude") is None
+    local = tmp_path / ".local" / "bin" / "claude"
+    local.parent.mkdir(parents=True); local.write_text("#!/bin/sh\n")
+    assert r.resolve_binary("claude") == str(local)           # known location, not on PATH
+    conf = tmp_path / "elsewhere" / "claude"; conf.parent.mkdir(); conf.write_text("")
+    assert r.resolve_binary("claude", str(conf)) == str(conf)  # configured path wins
+    assert r.resolve_binary("claude", str(tmp_path / "gone")) is None
+
+
+def test_get_runner_uses_resolved_path_and_explains_when_missing(tmp_path, monkeypatch):
+    from uapply_agent import runners as r
+    monkeypatch.setattr(r, "detect_runtimes", lambda: [{"name": "claude-code", "path": "/opt/claude"}])
+    assert r.get_runner("auto").binary == "/opt/claude"
+    monkeypatch.setattr(r, "detect_runtimes", lambda: [])
+    with pytest.raises(r.RunnerError, match="uapply-agent setup"):
+        r.get_runner("auto")

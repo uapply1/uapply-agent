@@ -38,7 +38,7 @@ def cmd_login(args, settings):
 
 def cmd_setup(args, settings):
     """Register the MCP server with every runtime found, then log in unless a token exists."""
-    run_setup()
+    run_setup(settings=settings)
     if args.no_login or Credentials.get_token():
         print("uApply login: already signed in" if Credentials.get_token() else "uApply login: skipped")
     else:
@@ -66,7 +66,7 @@ def cmd_init(args, settings):
     case = f.init_case(args.survey, settings.backend_url, args.llm_mode, name=s.get("name", ""), dependents=deps)
     print(json.dumps(case, indent=2))
     rt = detect_runtimes()
-    print(f"runtimes detected: {rt or 'none — install Claude Code or Codex'}", file=sys.stderr)
+    print(f"runtimes detected: {[r['path'] for r in rt] or 'none — install Claude Code or Codex'}", file=sys.stderr)
     return 0
 
 

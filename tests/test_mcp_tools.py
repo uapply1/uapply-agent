@@ -14,6 +14,11 @@ class FakeApi:
         self.uploads = []
         self.started = []
         self.docs = []
+        self.agent_api = True
+        self.modes = []
+
+    def agent_api_available(self):
+        return self.agent_api
 
     def survey(self, survey_id):
         return {"id": survey_id, "name": "Zhang Wei", "dependents": [],
@@ -24,6 +29,7 @@ class FakeApi:
         return self.survey(survey_id)["document_types"]
 
     def set_llm_mode(self, survey_id, mode):
+        self.modes.append(mode)
         return {"llm_mode": mode}
 
     def bulk_upload(self, survey_id, category, document_type_id, files, archive_name=""):
@@ -126,3 +132,47 @@ def test_upload_goes_to_the_types_default_archive(bound):
 def test_archive_name_override(bound):
     m.sync_documents("dt-pass", paths=["passport.pdf"], archive_name="Previous passports")
     assert bound.archives == ["Previous passports"]
+
+
+def test_old_backend_binds_in_server_mode_and_gates_agent_tools(bound):
+    bound.agent_api = False
+    out = m.init_case("s-1")
+    assert out["ok"] and out["case"]["llm_mode"] == "server" and "server mode" in out["warning"]
+    assert bound.modes == ["local_agent"]  # only the first bind (agent api on) called set_llm_mode
+    for tool in (m.run_tasks, m.wait_for_stage, m.task_stats):
+        r = tool()
+        assert not r["ok"] and r["error"]["code"] == "AGENT_API_UNAVAILABLE"
+    assert m.set_llm_mode("local_agent")["error"]["code"] == "AGENT_API_UNAVAILABLE"
+
+
+def test_case_status_falls_back_to_survey_documents(bound, monkeypatch):
+    bound.agent_api = False
+    monkeypatch.setattr(bound, "survey", lambda sid: {"id": sid, "name": "Zhang Wei", "dependents": [], "document_types": [],
+                                                      "documents": [{"id": "a", "status": "completed", "old_doc_id": None},
+                                                                    {"id": "a1", "status": "completed", "old_doc_id": "a"},
+                                                                    {"id": "b", "status": "failed", "old_doc_id": None}]})
+    out = m.case_status()
+    assert out["ok"] and out["agent_api"] is False and out["documents"] == {"completed": 1, "failed": 1}
+
+
+def test_whoami_reports_agent_api_and_runtime_paths(bound, monkeypatch):
+    monkeypatch.setattr(m, "detect_runtimes", lambda: [{"name": "claude-code", "path": "/x/claude"}])
+    out = m.whoami()
+    assert out["agent_api"] is True and out["runtimes"] == [{"name": "claude-code", "path": "/x/claude"}]
+
+
+def test_preview_document_renders_pdf_pages_locally(bound, tmp_path):
+    import pymupdf
+    root = m._folder.root
+    doc = pymupdf.open()
+    for i in range(4):
+        page = doc.new_page(); page.insert_text((72, 72), f"page {i + 1}")
+    doc.save(root / "scan.pdf"); doc.close()
+    out = m.preview_document("scan.pdf")
+    assert out["ok"] and out["page_count"] == 4 and len(out["images"]) == 1 and out["images"][0].endswith("_p001.png")
+    assert Path(out["images"][0]).exists() and ".uapply/cache/preview" in out["images"][0].replace("\\", "/")
+    out = m.preview_document("scan.pdf", pages="2-9")
+    assert out["pages"] == "2-4" and len(out["images"]) == 3
+    (root / "photo.jpg").write_bytes(b"\xff\xd8\xff")
+    assert m.preview_document("photo.jpg")["images"] == [str(root / "photo.jpg")]
+    assert m.preview_document("missing.pdf")["error"]["code"] == "NO_FILE"

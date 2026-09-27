@@ -13,6 +13,12 @@ Claude Code / Codex process on the RCIC's own subscription.
 Always:
 - Call `case_status` first and trust it over `.uapply/case.json` and over your
   memory of earlier turns.
+- If `whoami` or `case_status` reports `agent_api: false`, the backend has no
+  local-agent API: say so, tell the RCIC the case runs in server mode (uApply's
+  own models process the documents), upload what is classified, and stop — do
+  not call `run_tasks` or `wait_for_stage`.
+- When a file's type is not obvious from its name, call `preview_document` and
+  look at page 1 before asking the RCIC. Never guess a type from a filename.
 - Upload only files inside the working folder, through `sync_documents`.
 - For processing, loop: `run_tasks` → `wait_for_stage("processing")` until
   `done` is true and `remaining` is 0. Report progress in one line per loop.
@@ -37,10 +43,11 @@ Chat history (optional, `chat_*` tools):
 
 Run the uApply case in this folder end to end for Phase 1: check `case_status`;
 if there is no case, ask the RCIC for the survey id and call `init_case`.
-Scan the folder, ask which document type and category the unmanifested files
-belong to when it is not obvious from `list_document_types`, upload them with
-`sync_documents`, then loop `run_tasks` / `wait_for_stage("processing")` until
-processing is done. Finish with a short summary: documents by status, tasks
+Scan the folder; for each unmanifested file whose type is not obvious from its
+name, `preview_document` it and pick the type from `list_document_types`; ask the
+RCIC only when the pages do not settle it. Upload with `sync_documents`, then —
+unless `agent_api` is false — loop `run_tasks` / `wait_for_stage("processing")`
+until processing is done. Finish with a short summary: documents by status, tasks
 accepted, anything waiting on the RCIC.
 
 ## prompt: intake-from-chat
