@@ -19,10 +19,12 @@ def config_dir() -> Path:
 
 @dataclass
 class Settings:
+    # Production defaults: the same Auth0 native client the desktop app uses
+    # (Device Code + Refresh Token grants enabled). `config --set` switches tenants.
     backend_url: str = "https://api.uapply.io"
-    auth0_domain: str = ""
-    auth0_client_id: str = ""
-    auth0_audience: str = ""
+    auth0_domain: str = "uapply-prod-tenant.us.auth0.com"
+    auth0_client_id: str = "q5ByF8FNi6byld0JmnkW2CkcWpHuzxXd"
+    auth0_audience: str = "https://uapply.io"
     runtime: str = "auto"          # auto | claude-code | codex
     model: str = ""                # runtime default when empty
     workers: int = 2

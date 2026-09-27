@@ -24,12 +24,14 @@ def device_login(settings: Settings, say: Callable[[str], None] = print, timeout
                          "(or use `uapply-agent login --token <jwt>`)")
     base = f"https://{settings.auth0_domain}"
     with httpx.Client(timeout=30) as c:
-        r = c.post(f"{base}/oauth/device/code", data={
-            "client_id": settings.auth0_client_id,
-            "scope": "openid profile email offline_access",
-            "audience": settings.auth0_audience,
-        })
-        if r.status_code != 200:
+        r = None
+        for scope in ("openid profile email offline_access", "openid profile email"):
+            r = c.post(f"{base}/oauth/device/code", data={
+                "client_id": settings.auth0_client_id, "scope": scope, "audience": settings.auth0_audience})
+            if r.status_code == 200:
+                break
+            say(f"device code request with scope '{scope}' refused: {r.status_code} {r.text[:160]}")
+        if r is None or r.status_code != 200:
             raise LoginError(f"device code request failed: {r.status_code} {r.text[:200]}")
         d = r.json()
         say(f"Open {d.get('verification_uri_complete') or d['verification_uri']} and confirm code {d['user_code']}")
