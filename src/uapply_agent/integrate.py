@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Optional
 
 SERVER = "uapply"
+PLUGIN_DIR = Path(".claude") / "skills" / "uapply"   # auto-loaded by Claude Code as uapply@skills-dir
 
 
 def own_executable() -> str:
@@ -68,6 +69,18 @@ def verify_claude(which: Callable[[str], Optional[str]] = shutil.which) -> Optio
     return ("Connected" in line) if line else False
 
 
+def install_claude_plugin(home: Path) -> str:
+    """Write the generated plugin so `/uapply:run` is a real slash command (MCP prompts show as `/uapply:run (MCP)`)."""
+    from . import __version__, playbook
+    root = home / PLUGIN_DIR
+    if root.exists():
+        shutil.rmtree(root)
+    for rel, content in playbook.plugin_files(__version__).items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(content, encoding="utf-8")
+    return f"commands written to {root}"
+
+
 # ---- Codex (~/.codex/config.toml) ----
 
 _SECTION = re.compile(r"^\[mcp_servers\.uapply\][^\[]*", re.M | re.S)
@@ -105,6 +118,9 @@ def run_setup(say: Callable[[str], None] = print, home: Optional[Path] = None) -
     out = {"executable": exe}
     out["claude"] = register_claude(exe, home)
     say(f"Claude Code: {out['claude']}")
+    if not out["claude"].startswith("skipped"):
+        out["claude_plugin"] = install_claude_plugin(home)
+        say(f"Claude Code: {out['claude_plugin']}")
     out["codex"] = register_codex(exe, home)
     say(f"Codex: {out['codex']}")
     if not out["claude"].startswith("skipped"):

@@ -44,3 +44,17 @@ def test_cli_fallback_when_claude_add_fails(tmp_path):
     fake.write_text("#!/bin/sh\nexit 1\n"); fake.chmod(0o755)
     msg = it.register_claude("/x/uapply-agent", tmp_path, which=lambda n: str(fake) if n == "claude" else None)
     assert msg.startswith("written") and (tmp_path / ".claude.json").exists()
+
+
+def test_plugin_generated_from_playbook(tmp_path):
+    import json
+    msg = it.install_claude_plugin(tmp_path)
+    root = tmp_path / ".claude" / "skills" / "uapply"
+    assert msg.endswith(str(root))
+    assert json.loads((root / ".claude-plugin" / "plugin.json").read_text())["name"] == "uapply"
+    from uapply_agent import playbook
+    for name in ("run", "status", "intake-from-chat"):
+        body = (root / "commands" / f"{name}.md").read_text()
+        assert body.startswith("---\ndescription: ") and playbook.prompt(name) in body
+    it.install_claude_plugin(tmp_path)  # idempotent
+    assert sorted(p.name for p in (root / "commands").iterdir()) == ["intake-from-chat.md", "run.md", "status.md"]

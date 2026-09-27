@@ -59,17 +59,22 @@ PyPI name once published, or a local checkout).
    (or writes `~/.claude.json` when only the desktop app is installed) and
    `codex mcp add uapply -- … mcp` (or `[mcp_servers.uapply]` in
    `~/.codex/config.toml`). The absolute path matters: GUI apps start with a
-   minimal `PATH`. It then checks `claude mcp list` reports the server connected.
+   minimal `PATH`. It then checks `claude mcp list` reports the server
+   connected, and writes a small Claude Code plugin to
+   `~/.claude/skills/uapply/` (generated from the same playbook prompts) so
+   that `/uapply:run`, `/uapply:status` and `/uapply:intake-from-chat` are
+   plain slash commands.
 3. `uapply-agent login`: Auth0 Device Code flow against production
    (`https://api.uapply.io`); the token goes to the OS keychain, or a `0600`
    file under `~/.config/uapply-agent/` when no keychain exists. Until "Allow
    Offline Access" is enabled on the uApply API in Auth0, no refresh token is
    issued; re-run `uapply-agent login` when a command reports `401`.
 
-The `/uapply:run`, `/uapply:status` and `/uapply:intake-from-chat` commands
-are MCP prompts served by `uapply-agent mcp`; they exist only in a session
-where the `uapply` server is connected, and MCP servers load at session start,
-so open a new session after installing.
+The commands need the `uapply` MCP server connected in the session (the
+tools they call come from it), and both the server and the plugin load at
+session start, so open a new session after installing. Without the plugin,
+Claude Code lists the server's prompts as `/uapply:run (MCP)` (also reachable
+as `/mcp__uapply__run`); Codex shows them in its prompt picker.
 
 ### Settings
 
@@ -95,7 +100,7 @@ Environment overrides: `UAPPLY_BACKEND_URL`, `UAPPLY_RUNTIME`, `UAPPLY_MODEL`,
 ### Uninstall
 
 ```bash
-uv tool uninstall uapply-agent && claude mcp remove --scope user uapply
+uv tool uninstall uapply-agent && claude mcp remove --scope user uapply && rm -r ~/.claude/skills/uapply
 ```
 
 ### Server side (uApply operations)
@@ -113,7 +118,7 @@ have "Allow Offline Access" enabled so refresh tokens are issued.
 | Symptom | Fix |
 |---|---|
 | `no runtime found` | install Claude Code or Codex and log in to it; on Windows make sure `claude`/`codex` is on `PATH` |
-| `Unknown command: /uapply:run` | the `uapply` MCP server is not connected: run `uapply-agent setup`, then start a new session; `/mcp` in a session shows server status |
+| `Unknown command: /uapply:run` | run `uapply-agent setup` (writes the plugin and registers the server), then start a **new** session; `claude plugin list` should show `uapply@skills-dir` and `/mcp` the connected server |
 | `401` from the API | `uapply-agent login` again (no refresh token yet) |
 | `404` on `/api/ai-parse/agent/...` | the backend in use does not have the agent branch deployed |
 | `chat sources` → `not_installed` / `not_logged_in` | install the AnyChat plugin and run its own login; the agent never handles that token |
