@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -49,19 +51,41 @@ def _configured(name: str) -> str:
     return {"claude-code": s.claude_bin, "codex": s.codex_bin}.get(name, "")
 
 
-def detect_runtimes() -> list[dict]:
-    """[{name, path}] for every runtime that can be launched from this process."""
+@lru_cache(maxsize=16)
+def runtime_error(path: str) -> str:
+    """'' when `<path> --version` runs; otherwise why not (e.g. a build this Windows cannot start)."""
+    try:
+        r = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return str(e)[:300]
+    if r.returncode == 0:
+        return ""
+    return ((r.stderr or r.stdout or "").strip().splitlines() or [f"exit code {r.returncode}"])[0][:300]
+
+
+def detect_runtimes(check: bool = True) -> list[dict]:
+    """[{name, path}] for every runtime that is installed and actually starts; a broken install
+    carries `error` instead of being silently used."""
     out = []
     for name, cls in RUNNERS.items():
         path = resolve_binary(cls.binary, _configured(name))
         if path:
-            out.append({"name": name, "path": path})
+            row = {"name": name, "path": path}
+            if check and (err := runtime_error(path)):
+                row["error"] = err
+            out.append(row)
     return out
 
 
 def get_runner(name: str = "auto", model: str = "") -> Runner:
-    found = detect_runtimes()
+    installed = detect_runtimes()
+    found = [f for f in installed if not f.get("error")]
     if name in (None, "", "auto"):
+        if not found and installed:
+            b = installed[0]
+            raise RunnerError(f"{b['name']} is installed at {b['path']} but does not start on this machine: {b['error']}. "
+                              "Reinstall it with the uApply installer; if Windows reports it is not compatible, this "
+                              "Windows version is too old for it.")
         if not found:
             tried = ", ".join(str(c) for cls in RUNNERS.values() for c in _known_locations(cls.binary))
             install = ("irm https://claude.ai/install.ps1 | iex" if _WIN
@@ -82,4 +106,4 @@ def get_runner(name: str = "auto", model: str = "") -> Runner:
     return runner
 
 
-__all__ = ["Runner", "RunResult", "RunnerError", "PlanLimited", "get_runner", "detect_runtimes", "resolve_binary", "RUNNERS"]
+__all__ = ["Runner", "RunResult", "RunnerError", "PlanLimited", "get_runner", "detect_runtimes", "resolve_binary", "runtime_error", "RUNNERS"]

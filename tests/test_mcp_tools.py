@@ -207,3 +207,10 @@ def test_imm_form_uploads_under_agent_survey_folder(bound):
 def test_unknown_type_is_refused_without_uploading(bound):
     r = m.sync_documents("dt-nope", paths=["passport.pdf"])
     assert r["error"]["code"] == "UNKNOWN_TYPE" and bound.uploads == []
+
+
+def test_whoami_flags_an_installed_runtime_that_does_not_start(bound, monkeypatch):
+    monkeypatch.setattr(m, "detect_runtimes", lambda: [{"name": "claude-code", "path": "C:/nodejs/claude.CMD",
+                                                        "error": "not compatible with the version of Windows"}])
+    out = m.whoami()
+    assert "does not start" in out["hint"] and "logged_in" not in out["runtimes"][0]

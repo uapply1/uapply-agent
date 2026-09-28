@@ -91,6 +91,19 @@ def test_get_runner_uses_resolved_path_and_explains_when_missing(tmp_path, monke
     from uapply_agent import runners as r
     monkeypatch.setattr(r, "detect_runtimes", lambda: [{"name": "claude-code", "path": "/opt/claude"}])
     assert r.get_runner("auto").binary == "/opt/claude"
+    monkeypatch.setattr(r, "detect_runtimes", lambda: [{"name": "claude-code", "path": "/opt/claude",
+                                                        "error": "This version is not compatible with the version of Windows"}])
+    with pytest.raises(r.RunnerError, match="does not start on this machine"):
+        r.get_runner("auto")
     monkeypatch.setattr(r, "detect_runtimes", lambda: [])
     with pytest.raises(r.RunnerError, match="uapply-agent setup"):
         r.get_runner("auto")
+
+
+def test_runtime_error_reports_a_binary_that_does_not_start(tmp_path):
+    from uapply_agent import runners as r
+    good = tmp_path / "good"; good.write_text("#!/bin/sh\necho 2.1.0\n"); good.chmod(0o755)
+    bad = tmp_path / "bad"; bad.write_text("#!/bin/sh\necho 'not compatible with this Windows' >&2; exit 216\n"); bad.chmod(0o755)
+    assert r.runtime_error(str(good)) == ""
+    assert "not compatible" in r.runtime_error(str(bad))
+    assert r.runtime_error(str(tmp_path / "missing"))

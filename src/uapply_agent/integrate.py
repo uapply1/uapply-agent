@@ -141,15 +141,26 @@ def register_codex(exe: str, home: Path, which: Callable[[str], Optional[str]] =
 def record_runtimes(settings, which: Callable[[str], Optional[str]] = _find) -> dict:
     """Remember where `claude` / `codex` are: the terminal running setup has the full PATH, the
     desktop app that later launches the MCP server usually does not."""
+    from .runners import _known_locations, runtime_error
     found = {}
     for attr, binary in (("claude_bin", "claude"), ("codex_bin", "codex")):
         path = which(binary)
+        if path and runtime_error(path):
+            # e.g. an npm build Windows refuses to start while the native build in ~/.local/bin works
+            path = next((str(c) for c in _known_locations(binary) if c.exists() and not runtime_error(str(c))), path)
         if path:
             setattr(settings, attr, str(Path(path).absolute()))
             found[binary] = getattr(settings, attr)
     if found:
         settings.save()
     return found
+
+
+def broken_runtimes(found: dict, check: Callable[[str], str] | None = None) -> dict:
+    """{binary: error} for recorded runtimes that do not start (`--version` fails)."""
+    if check is None:
+        from .runners import runtime_error as check
+    return {b: err for b, p in found.items() if (err := check(p))}
 
 
 def run_setup(say: Callable[[str], None] = print, home: Optional[Path] = None, settings=None,
@@ -162,10 +173,16 @@ def run_setup(say: Callable[[str], None] = print, home: Optional[Path] = None, s
         out["runtimes"] = record_runtimes(settings)
         if out["runtimes"]:
             say("Runtimes: " + ", ".join(f"{k} = {v}" for k, v in out["runtimes"].items()))
+            out["broken"] = broken_runtimes(out["runtimes"])
+            for b, err in out["broken"].items():
+                say(f"Runtimes: {b} at {out['runtimes'][b]} does NOT start on this machine: {err}")
+                if "not compatible" in err.lower():
+                    say("  Windows reports this build is incompatible with this Windows version: Claude Code needs "
+                        "a newer Windows (see the README), or use the Codex CLI instead.")
         else:
             say("Runtimes: neither `claude` nor `codex` found — rerun the uApply installer (it installs the Claude "
                 "Code CLI) or install Claude Code, then run `uapply-agent setup` again")
-        if claude := out["runtimes"].get("claude"):
+        if (claude := out["runtimes"].get("claude")) and "claude" not in out.get("broken", {}):
             state = ensure_claude_login(claude, say, interactive=login and sys.stdin.isatty())
             out["claude_logged_in"] = state
             say({True: "Claude Code CLI: signed in",

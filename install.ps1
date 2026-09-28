@@ -77,8 +77,28 @@ function Install-ClaudeCli {
 }
 
 $claudeExe = "$env:USERPROFILE\.local\bin\claude.exe"
-$haveRuntime = (Get-Command claude -ErrorAction SilentlyContinue) -or (Get-Command codex -ErrorAction SilentlyContinue) -or (Test-Path $claudeExe)
-if (-not $haveRuntime -and -not $env:UAPPLY_SKIP_CLAUDE_INSTALL) {
+function Test-Runs($cmd) {
+  # Installed is not enough: an incompatible build fails to start ("not compatible with the version of Windows").
+  if (-not $cmd) { return $false }
+  try { & $cmd --version *> $null; return ($LASTEXITCODE -eq 0) } catch { return $false }
+}
+$claudeCmd = (Get-Command claude -ErrorAction SilentlyContinue).Source
+if (-not $claudeCmd -and (Test-Path $claudeExe)) { $claudeCmd = $claudeExe }
+$codexCmd = (Get-Command codex -ErrorAction SilentlyContinue).Source
+$haveRuntime = (Test-Runs $claudeCmd) -or (Test-Runs $codexCmd)
+if ($claudeCmd -and -not (Test-Runs $claudeCmd)) {
+  Write-Warning "Claude Code at $claudeCmd is installed but does not start on this machine; installing the native build."
+}
+# Claude Code needs Windows 10 1809 (build 17763) / Windows Server 2019 or later, x64 or ARM64.
+$os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+$build = [int]([Environment]::OSVersion.Version.Build)
+$tooOld = $build -lt 17763 -or -not [Environment]::Is64BitOperatingSystem
+if (-not $haveRuntime -and $tooOld) {
+  Write-Warning ("This Windows ($($os.Caption), build $build) is too old for Claude Code, which needs Windows 10 " +
+                 "version 1809 / Windows Server 2019 or later (64-bit). uApply will install, but local AI tasks cannot " +
+                 "run on this machine: use a newer PC, or have the case processed in server mode.")
+}
+if (-not $haveRuntime -and -not $tooOld -and -not $env:UAPPLY_SKIP_CLAUDE_INSTALL) {
   Write-Host "Installing the Claude Code CLI (runs uApply's AI tasks on your Claude plan)..."
   try {
     Install-ClaudeCli

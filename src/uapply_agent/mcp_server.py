@@ -116,11 +116,14 @@ def whoami() -> dict:
         agent_api = api().agent_api_available() if api().logged_in else None
         runtimes = detect_runtimes()
         for r in runtimes:
-            if r["name"] == "claude-code":
+            if r["name"] == "claude-code" and not r.get("error"):
                 r["logged_in"] = _claude_login_state(r["path"])
         out = _ok(backend=_settings.backend_url, logged_in=api().logged_in, agent_api=agent_api,
                   runtimes=runtimes, folder=str(_folder.root), case=_folder.case or None)
-        if not runtimes:
+        if runtimes and all(r.get("error") for r in runtimes):
+            out["hint"] = (f"{runtimes[0]['name']} is installed but does not start on this machine "
+                           f"({runtimes[0]['error']}); local tasks cannot run — tell the RCIC, do not retry")
+        elif not runtimes:
             out["hint"] = "no Claude Code / Codex CLI: local tasks cannot run; rerun the uApply installer"
         elif all(r.get("logged_in") is False for r in runtimes):
             out["hint"] = "the Claude Code CLI is not signed in: ask the RCIC to run `claude auth login` in a terminal"

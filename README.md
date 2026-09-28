@@ -17,6 +17,11 @@ One command installs everything: `uv` (Python tool manager), the
 sign-ins. The only prerequisites are a uApply account and a Claude Pro/Max
 plan (or a Codex CLI already set up).
 
+Claude Code needs Windows 10 version 1809 / Windows Server 2019 or later
+(64-bit), or macOS / Linux. On an older Windows the installer still installs
+uApply but warns that local AI tasks cannot run there; the Codex CLI is no
+alternative, since on Windows it only runs inside WSL2.
+
 The Claude Code CLI is required even when the RCIC works in the Claude desktop
 app: every local AI task runs in a separate headless `claude -p` process on the
 RCIC's plan, and the desktop app does not provide that command. The CLI has its
@@ -134,6 +139,7 @@ have "Allow Offline Access" enabled so refresh tokens are issued.
 | Symptom | Fix |
 |---|---|
 | `no runtime found` | the Claude Code CLI is missing (the desktop app is not enough): rerun the installer, which installs it; or install it with `curl -fsSL https://claude.ai/install.sh \| bash` / `irm https://claude.ai/install.ps1 \| iex`, then run `uapply-agent setup` |
+| `… is not compatible with the version of Windows you're running` / `does NOT start on this machine` | the installed `claude` cannot run on this Windows. Rerun the installer: it installs the native build and `setup` prefers whichever build starts. If Windows is older than 10 1809 / Server 2019, Claude Code cannot run there at all |
 | `whoami` says the Claude CLI is not signed in | run `claude auth login` in a terminal (Claude subscription), then start a new session |
 | `AGENT_API_UNAVAILABLE` / `agent_api: false` | the backend in use does not have the agent branch deployed; the case runs in server mode until it is |
 | Windows: `Access is denied` starting the installer | run it in a normal PowerShell window, not "Run as administrator" |

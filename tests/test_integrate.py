@@ -63,6 +63,8 @@ def test_plugin_generated_from_playbook(tmp_path):
 def test_record_runtimes_saves_absolute_paths(tmp_path, monkeypatch):
     from uapply_agent.config import Settings
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from uapply_agent import runners
+    monkeypatch.setattr(runners.Path, "home", classmethod(lambda cls: tmp_path))
     s = Settings()
     found = it.record_runtimes(s, which=lambda n: "/usr/local/bin/claude" if n == "claude" else None)
     assert found == {"claude": "/usr/local/bin/claude"} and s.claude_bin == "/usr/local/bin/claude" and s.codex_bin == ""
@@ -102,3 +104,22 @@ def test_claude_login_skipped_when_signed_in_or_non_interactive(tmp_path):
 
 def test_claude_login_state_unknown_when_cli_missing(tmp_path):
     assert it.claude_logged_in(str(tmp_path / "nope")) is None
+
+
+def test_broken_runtime_is_reported_and_skips_login(tmp_path):
+    assert it.broken_runtimes({"claude": "/c"}, check=lambda p: "not compatible") == {"claude": "not compatible"}
+    assert it.broken_runtimes({"claude": "/c"}, check=lambda p: "") == {}
+
+
+def test_record_runtimes_prefers_a_build_that_starts(tmp_path, monkeypatch):
+    """An npm claude that Windows refuses to start loses to the native build in ~/.local/bin."""
+    from uapply_agent.config import Settings
+    from uapply_agent import runners
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(runners.Path, "home", classmethod(lambda cls: tmp_path))
+    broken = tmp_path / "nodejs" / "claude"; broken.parent.mkdir(); broken.write_text("#!/bin/sh\nexit 216\n"); broken.chmod(0o755)
+    native = tmp_path / ".local" / "bin" / "claude"; native.parent.mkdir(parents=True)
+    native.write_text("#!/bin/sh\necho 2.1.0\n"); native.chmod(0o755)
+    runners.runtime_error.cache_clear()
+    found = it.record_runtimes(Settings(), which=lambda n: str(broken) if n == "claude" else None)
+    assert found == {"claude": str(native)}
