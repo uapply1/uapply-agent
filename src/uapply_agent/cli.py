@@ -38,7 +38,7 @@ def cmd_login(args, settings):
 
 def cmd_setup(args, settings):
     """Register the MCP server with every runtime found, then log in unless a token exists."""
-    run_setup(settings=settings)
+    run_setup(settings=settings, login=not args.no_login)
     if args.no_login or Credentials.get_token():
         print("uApply login: already signed in" if Credentials.get_token() else "uApply login: skipped")
     else:

@@ -67,3 +67,38 @@ def test_record_runtimes_saves_absolute_paths(tmp_path, monkeypatch):
     found = it.record_runtimes(s, which=lambda n: "/usr/local/bin/claude" if n == "claude" else None)
     assert found == {"claude": "/usr/local/bin/claude"} and s.claude_bin == "/usr/local/bin/claude" and s.codex_bin == ""
     assert Settings.load().claude_bin == "/usr/local/bin/claude"
+
+
+def _fake_claude(tmp_path, logged_in_after_login: bool, start_logged_in: bool = False):
+    """A `claude` stand-in: `auth status --json` reads a state file, `auth login` flips it."""
+    state = tmp_path / "state"
+    state.write_text("1" if start_logged_in else "0")
+    exe = tmp_path / "claude"
+    exe.write_text(f"""#!/bin/sh
+if [ "$1 $2" = "auth status" ]; then
+  if [ "$(cat {state})" = "1" ]; then echo '{{"loggedIn": true}}'; else echo '{{"loggedIn": false}}'; fi
+elif [ "$1 $2" = "auth login" ]; then
+  echo login >> {tmp_path}/calls; echo {"1" if logged_in_after_login else "0"} > {state}
+fi
+""")
+    exe.chmod(0o755)
+    return str(exe)
+
+
+def test_claude_login_runs_when_signed_out(tmp_path):
+    exe = _fake_claude(tmp_path, logged_in_after_login=True)
+    assert it.claude_logged_in(exe) is False
+    assert it.ensure_claude_login(exe, say=lambda _: None) is True
+    assert (tmp_path / "calls").read_text().count("login") == 1
+
+
+def test_claude_login_skipped_when_signed_in_or_non_interactive(tmp_path):
+    exe = _fake_claude(tmp_path, logged_in_after_login=True, start_logged_in=True)
+    assert it.ensure_claude_login(exe, say=lambda _: None) is True
+    exe2 = _fake_claude(tmp_path / "x" if (tmp_path / "x").mkdir() is None else tmp_path, logged_in_after_login=True)
+    assert it.ensure_claude_login(exe2, say=lambda _: None, interactive=False) is False
+    assert not (tmp_path / "x" / "calls").exists()
+
+
+def test_claude_login_state_unknown_when_cli_missing(tmp_path):
+    assert it.claude_logged_in(str(tmp_path / "nope")) is None

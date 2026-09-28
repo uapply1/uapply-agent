@@ -12,9 +12,15 @@ through the AnyChat CLI to draft the intake and create the case.
 ## Install (production)
 
 One command installs everything: `uv` (Python tool manager), the
-`uapply-agent` CLI, the MCP registration for Claude Code and Codex, and the
-uApply login. It only needs Claude Code or Codex to be installed and logged in
-first, plus a uApply account.
+**Claude Code CLI** when neither Claude Code nor Codex is on the machine, the
+`uapply-agent` CLI, the MCP registration for Claude Code and Codex, and both
+sign-ins. The only prerequisites are a uApply account and a Claude Pro/Max
+plan (or a Codex CLI already set up).
+
+The Claude Code CLI is required even when the RCIC works in the Claude desktop
+app: every local AI task runs in a separate headless `claude -p` process on the
+RCIC's plan, and the desktop app does not provide that command. The CLI has its
+own sign-in, separate from the desktop app.
 
 macOS / Linux (Terminal):
 
@@ -34,14 +40,18 @@ Everything installs into the user profile, so elevation is never needed; an
 elevated window can fail with "Program 'powershell.exe' failed to run: Access
 is denied".
 
-When the browser opens, confirm the code and sign in with the uApply account.
-Then open Claude Code (desktop app or terminal) or Codex in a client folder
-and type `/uapply:run`. The installer prints what it did, for example:
+The browser opens twice: first to sign in to Claude (the CLI's own login), then
+to confirm a code and sign in to uApply. Then open Claude Code (desktop app or
+terminal) or Codex in a client folder and type `/uapply:run`. The installer
+prints what it did, for example:
 
 ```
+Installing the Claude Code CLI (runs uApply's AI tasks on your Claude plan)...
 uapply-agent: /Users/anna/.local/bin/uapply-agent
+Runtimes: claude = /Users/anna/.local/bin/claude
+Claude Code CLI: signed in
 Claude Code: registered via `claude mcp add` (user scope)
-Codex: written to /Users/anna/.codex/config.toml
+Codex: skipped: Codex not found (no `codex` command, no ~/.codex)
 Logged in; token stored in keyring
 Done. Open Claude Code or Codex in a client folder and type /uapply:run
 ```
@@ -123,7 +133,8 @@ have "Allow Offline Access" enabled so refresh tokens are issued.
 
 | Symptom | Fix |
 |---|---|
-| `no runtime found` | the MCP server runs under the desktop app with a minimal `PATH`: run `uapply-agent setup` in a terminal where `claude --version` works (it records the path), then start a new session |
+| `no runtime found` | the Claude Code CLI is missing (the desktop app is not enough): rerun the installer, which installs it; or install it with `curl -fsSL https://claude.ai/install.sh \| bash` / `irm https://claude.ai/install.ps1 \| iex`, then run `uapply-agent setup` |
+| `whoami` says the Claude CLI is not signed in | run `claude auth login` in a terminal (Claude subscription), then start a new session |
 | `AGENT_API_UNAVAILABLE` / `agent_api: false` | the backend in use does not have the agent branch deployed; the case runs in server mode until it is |
 | Windows: `Access is denied` starting the installer | run it in a normal PowerShell window, not "Run as administrator" |
 | Windows: `failed to remove directory …\uv\tools\uapply-agent` | the exe is in use or owned by an elevated install: close Claude Code / Codex sessions, delete `%APPDATA%\uv\tools\uapply-agent`, rerun the installer |

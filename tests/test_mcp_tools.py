@@ -28,6 +28,9 @@ class FakeApi:
     def survey_document_types(self, survey_id):
         return self.survey(survey_id)["document_types"]
 
+    def agent_survey_type(self):
+        return {"id": "dt-agent", "name": "Agent Survey", "file_name": "agent_survey"}
+
     def set_llm_mode(self, survey_id, mode):
         self.modes.append(mode)
         return {"llm_mode": mode}
@@ -157,8 +160,12 @@ def test_case_status_falls_back_to_survey_documents(bound, monkeypatch):
 
 def test_whoami_reports_agent_api_and_runtime_paths(bound, monkeypatch):
     monkeypatch.setattr(m, "detect_runtimes", lambda: [{"name": "claude-code", "path": "/x/claude"}])
+    monkeypatch.setattr(m, "_claude_login_state", lambda path: False)
     out = m.whoami()
-    assert out["agent_api"] is True and out["runtimes"] == [{"name": "claude-code", "path": "/x/claude"}]
+    assert out["agent_api"] is True and out["runtimes"] == [{"name": "claude-code", "path": "/x/claude", "logged_in": False}]
+    assert "claude auth login" in out["hint"]
+    monkeypatch.setattr(m, "detect_runtimes", lambda: [])
+    assert "installer" in m.whoami()["hint"]
 
 
 def test_preview_document_renders_pdf_pages_locally(bound, tmp_path):
@@ -184,3 +191,19 @@ def test_no_case_hint_offers_create_or_bind(tmp_path, monkeypatch):
     assert r["error"]["code"] == "NO_CASE" and "create_case" in r["error"]["hint"] and "init_case" in r["error"]["hint"]
     from uapply_agent import playbook
     assert "create a new case" in playbook.prompt("run") and "survey id" in playbook.prompt("run")
+
+
+def test_generic_agent_survey_type_listed_once_for_imm_forms(bound):
+    rows = m.list_document_types()["document_types"]
+    generic = [r for r in rows if r.get("generic")]
+    assert len(generic) == 1 and generic[0]["id"] == "dt-agent" and "IMM forms only" in generic[0]["use_for"]
+
+
+def test_imm_form_uploads_under_agent_survey_folder(bound):
+    m.sync_documents("dt-agent", paths=["passport.pdf"])
+    assert bound.uploads[-1][:2] == ("other", "dt-agent") and bound.archives == ["Agent Survey"]
+
+
+def test_unknown_type_is_refused_without_uploading(bound):
+    r = m.sync_documents("dt-nope", paths=["passport.pdf"])
+    assert r["error"]["code"] == "UNKNOWN_TYPE" and bound.uploads == []

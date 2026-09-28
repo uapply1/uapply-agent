@@ -15,6 +15,11 @@ SERVER = "uapply"
 PLUGIN_DIR = Path(".claude") / "skills" / "uapply"   # auto-loaded by Claude Code as uapply@skills-dir
 
 
+def _find(binary: str) -> Optional[str]:
+    from .runners import resolve_binary
+    return resolve_binary(binary)
+
+
 def own_executable() -> str:
     """Absolute path of the `uapply-agent` command; GUI apps run with a PATH that lacks ~/.local/bin."""
     # Keep the launcher path (~/.local/bin/...), not the symlink target inside uv's tool dir.
@@ -43,7 +48,7 @@ def write_claude_json(exe: str, path: Path) -> None:
     path.write_text(json.dumps(data, indent=2))
 
 
-def register_claude(exe: str, home: Path, which: Callable[[str], Optional[str]] = shutil.which) -> str:
+def register_claude(exe: str, home: Path, which: Callable[[str], Optional[str]] = _find) -> str:
     claude = which("claude")
     cfg = home / ".claude.json"
     if claude:
@@ -57,7 +62,7 @@ def register_claude(exe: str, home: Path, which: Callable[[str], Optional[str]] 
     return "skipped: Claude Code not found (no `claude` command, no ~/.claude.json)"
 
 
-def verify_claude(which: Callable[[str], Optional[str]] = shutil.which) -> Optional[bool]:
+def verify_claude(which: Callable[[str], Optional[str]] = _find) -> Optional[bool]:
     claude = which("claude")
     if not claude:
         return None
@@ -81,6 +86,28 @@ def install_claude_plugin(home: Path) -> str:
     return f"commands written to {root}"
 
 
+def claude_logged_in(claude: str) -> Optional[bool]:
+    """`claude auth status --json` → loggedIn; None when the CLI cannot tell us."""
+    try:
+        r = _run([claude, "auth", "status", "--json"], timeout=30)
+        return bool(json.loads(r.stdout or "{}").get("loggedIn"))
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+
+
+def ensure_claude_login(claude: str, say: Callable[[str], None] = print, interactive: bool = True) -> Optional[bool]:
+    """The CLI has its own login, separate from the desktop app; headless tasks fail without it."""
+    state = claude_logged_in(claude)
+    if state is False and interactive:
+        say("Claude Code CLI: not signed in. Opening the Claude sign-in page (use your Claude Pro/Max account)...")
+        try:
+            subprocess.run([claude, "auth", "login"], check=False, timeout=900)  # interactive: inherits the terminal
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        state = claude_logged_in(claude)
+    return state
+
+
 # ---- Codex (~/.codex/config.toml) ----
 
 _SECTION = re.compile(r"^\[mcp_servers\.uapply\][^\[]*", re.M | re.S)
@@ -97,7 +124,7 @@ def write_codex_toml(exe: str, path: Path) -> None:
     path.write_text(text)
 
 
-def register_codex(exe: str, home: Path, which: Callable[[str], Optional[str]] = shutil.which) -> str:
+def register_codex(exe: str, home: Path, which: Callable[[str], Optional[str]] = _find) -> str:
     codex = which("codex")
     cfg = home / ".codex" / "config.toml"
     if codex:
@@ -111,7 +138,7 @@ def register_codex(exe: str, home: Path, which: Callable[[str], Optional[str]] =
     return "skipped: Codex not found (no `codex` command, no ~/.codex)"
 
 
-def record_runtimes(settings, which: Callable[[str], Optional[str]] = shutil.which) -> dict:
+def record_runtimes(settings, which: Callable[[str], Optional[str]] = _find) -> dict:
     """Remember where `claude` / `codex` are: the terminal running setup has the full PATH, the
     desktop app that later launches the MCP server usually does not."""
     found = {}
@@ -125,7 +152,8 @@ def record_runtimes(settings, which: Callable[[str], Optional[str]] = shutil.whi
     return found
 
 
-def run_setup(say: Callable[[str], None] = print, home: Optional[Path] = None, settings=None) -> dict:
+def run_setup(say: Callable[[str], None] = print, home: Optional[Path] = None, settings=None,
+              login: bool = True) -> dict:
     home = home or Path(os.environ.get("UAPPLY_HOME") or Path.home())
     exe = own_executable()
     say(f"uapply-agent: {exe}")
@@ -135,8 +163,14 @@ def run_setup(say: Callable[[str], None] = print, home: Optional[Path] = None, s
         if out["runtimes"]:
             say("Runtimes: " + ", ".join(f"{k} = {v}" for k, v in out["runtimes"].items()))
         else:
-            say("Runtimes: neither `claude` nor `codex` found on PATH — install Claude Code or Codex, log in, "
-                "and run `uapply-agent setup` again")
+            say("Runtimes: neither `claude` nor `codex` found — rerun the uApply installer (it installs the Claude "
+                "Code CLI) or install Claude Code, then run `uapply-agent setup` again")
+        if claude := out["runtimes"].get("claude"):
+            state = ensure_claude_login(claude, say, interactive=login and sys.stdin.isatty())
+            out["claude_logged_in"] = state
+            say({True: "Claude Code CLI: signed in",
+                 False: "Claude Code CLI: NOT signed in — run `claude auth login`, or local tasks cannot run",
+                 None: "Claude Code CLI: sign-in state unknown — run `claude auth status`"}[state])
     out["claude"] = register_claude(exe, home)
     say(f"Claude Code: {out['claude']}")
     if not out["claude"].startswith("skipped"):

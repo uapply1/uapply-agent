@@ -24,7 +24,7 @@ written for the model ("run `wait_for_stage` before calling this again").
 
 | Tool | Input | Output |
 |---|---|---|
-| `whoami` | — | backend URL, login state, `agent_api` (does the backend serve the local-agent API), runtimes as `{name, path}`, folder, case |
+| `whoami` | — | backend URL, login state, `agent_api` (does the backend serve the local-agent API), runtimes as `{name, path, logged_in}`, a `hint` when no CLI is installed or signed in, folder, case |
 | `case_status` | — | server-truth status of the folder's case: stage, document counts by status, open review items, automation status, open agent tasks, blockers. First call in every session. |
 
 ## Intake
@@ -52,7 +52,7 @@ that require the RCIC's normal login.
 
 | Tool | Input | Output |
 |---|---|---|
-| `sync_documents` | `document_type_id`, `paths?: string[]` (default: all unmanifested), `applicant?`, `document_category?` (default: the type's), `archive_name?` (default: the type's own archive, i.e. the dashboard's default folder) | uploaded: n, skipped (already manifested): n, failed: [{path, reason}] |
+| `sync_documents` | `document_type_id` (a case type, or the generic Agent Survey type for filled IMM forms; anything else is refused with `UNKNOWN_TYPE`), `paths?: string[]` (default: all unmanifested), `applicant?`, `document_category?` (default: the type's), `archive_name?` (default: the type's own archive, i.e. the dashboard's default folder) | uploaded: n, skipped (already manifested): n, failed: [{path, reason}] |
 | `list_documents` | `applicant?`, `status?` | id, path, applicant, document_type, confidence, status, pages |
 | `get_document_text` | `document_id`, `pages?: int[]`, `max_chars?` (default 4000) | page-marked text excerpt from `RawMemo` |
 | `render_pages` | `document_id` or `path`, `pages: int[]`, `dpi?` | local image paths in `.uapply/cache/` (for the model to look at) |

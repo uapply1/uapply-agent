@@ -19,6 +19,12 @@ Always:
   not call `run_tasks` or `wait_for_stage`.
 - When a file's type is not obvious from its name, call `preview_document` and
   look at page 1 before asking the RCIC. Never guess a type from a filename.
+- IMM forms the client or a previous consultant filled (intake, draft or earlier
+  IMM forms, including screenshots or scans) go under the generic Agent Survey
+  type from `list_document_types`, even when the case will generate its own
+  copy: they record what the client stated. Any other file with no matching type:
+  ask the RCIC which type to use or whether to skip it. Never file non-IMM
+  documents under Agent Survey on your own.
 - Upload only files inside the working folder, through `sync_documents`.
 - For processing, loop: `run_tasks` → `wait_for_stage("processing")` until
   `done` is true and `remaining` is 0. Report progress in one line per loop.
@@ -50,8 +56,8 @@ types from `list_application_types`, and call `create_case` only after the RCIC
 has typed "create case" (or 确认创建). For (b), call `init_case` with the id. Do
 not upload anything before the folder is bound.
 Scan the folder; for each unmanifested file whose type is not obvious from its
-name, `preview_document` it and pick the type from `list_document_types`; ask the
-RCIC only when the pages do not settle it. Upload with `sync_documents`, then —
+name, `preview_document` it and pick the type from `list_document_types`; filled
+IMM forms go under Agent Survey; ask the RCIC only when the pages do not settle it. Upload with `sync_documents`, then —
 unless `agent_api` is false — loop `run_tasks` / `wait_for_stage("processing")`
 until processing is done. Finish with a short summary: documents by status, tasks
 accepted, anything waiting on the RCIC.

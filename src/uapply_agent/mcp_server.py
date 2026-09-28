@@ -32,6 +32,8 @@ server = MCPServer("uapply", instructions=playbook.instructions())
 _settings = Settings.load()
 _folder = WorkingFolder(os.environ.get("UAPPLY_FOLDER") or os.getcwd())
 _api: Optional[UApplyApi] = None
+AGENT_SURVEY_USE = ("IMM forms only: filled intake, draft or previous IMM forms (e.g. IMM 5709, 5257, 5645, 5406), "
+                    "including screenshots or scans. Not for other unmatched documents: ask the RCIC.")
 DOCUMENT_CATEGORIES = ("identity", "school", "financial", "spouse", "parent", "child", "language",
                        "employment", "proof_of_capability", "immigration", "inviter", "education", "other")
 
@@ -49,6 +51,16 @@ def _err(code: str, message: str, hint: str = "") -> dict:
 
 def _ok(**data) -> dict:
     return {"ok": True, **data}
+
+
+_claude_login_cache: dict[str, Optional[bool]] = {}
+
+
+def _claude_login_state(path: str) -> Optional[bool]:
+    if path not in _claude_login_cache or _claude_login_cache[path] is not True:
+        from .integrate import claude_logged_in
+        _claude_login_cache[path] = claude_logged_in(path)
+    return _claude_login_cache[path]
 
 
 def _need_case():
@@ -102,8 +114,17 @@ def whoami() -> dict:
     (name + absolute path), and the working folder."""
     def go():
         agent_api = api().agent_api_available() if api().logged_in else None
-        return _ok(backend=_settings.backend_url, logged_in=api().logged_in, agent_api=agent_api,
-                   runtimes=detect_runtimes(), folder=str(_folder.root), case=_folder.case or None)
+        runtimes = detect_runtimes()
+        for r in runtimes:
+            if r["name"] == "claude-code":
+                r["logged_in"] = _claude_login_state(r["path"])
+        out = _ok(backend=_settings.backend_url, logged_in=api().logged_in, agent_api=agent_api,
+                  runtimes=runtimes, folder=str(_folder.root), case=_folder.case or None)
+        if not runtimes:
+            out["hint"] = "no Claude Code / Codex CLI: local tasks cannot run; rerun the uApply installer"
+        elif all(r.get("logged_in") is False for r in runtimes):
+            out["hint"] = "the Claude Code CLI is not signed in: ask the RCIC to run `claude auth login` in a terminal"
+        return out
     return _wrap(go)
 
 
@@ -189,16 +210,24 @@ def preview_document(path: str, pages: str = "1") -> dict:
 
 @server.tool()
 def list_document_types(query: str = "") -> dict:
-    """Document types attached to this case (the only ones uploads accept), with their category."""
+    """Document types uploads accept on this case, with their category. The row with `generic: true`
+    (Agent Survey) is for IMM forms only: filled intake, draft or previous IMM forms."""
     if e := _need_case():
         return e
 
     def go():
         q = query.lower()
+        types = api().survey_document_types(_folder.survey_id)
         rows = [{"id": t["id"], "name": t["name"], "file_name": t.get("file_name"), "category": t.get("category"),
-                 "requirement": t.get("requirement"), "can_process": t.get("can_process")}
-                for t in api().survey_document_types(_folder.survey_id)
-                if not q or q in (str(t.get("name")) + " " + str(t.get("file_name"))).lower()]
+                 "requirement": t.get("requirement"), "can_process": t.get("can_process")} for t in types]
+        if not any(r["file_name"] == "agent_survey" for r in rows):
+            try:
+                g = api().agent_survey_type()
+                rows.append({"id": g["id"], "name": g.get("name"), "file_name": "agent_survey", "category": "other",
+                             "requirement": None, "can_process": True, "generic": True, "use_for": AGENT_SURVEY_USE})
+            except ApiError:
+                pass
+        rows = [r for r in rows if not q or q in (str(r["name"]) + " " + str(r["file_name"])).lower()]
         return _ok(document_types=rows)
     return _wrap(go)
 
@@ -217,6 +246,13 @@ def sync_documents(document_type_id: str, document_category: str = "", paths: Op
     def go():
         match = [t for t in api().survey_document_types(_folder.survey_id) if str(t.get("id")) == document_type_id]
         dtype = match[0] if match else {}
+        if not dtype:
+            # Not on the case: only the generic Agent Survey type is accepted (backend rule).
+            g = api().agent_survey_type()
+            if str(g.get("id")) != document_type_id:
+                return _err("UNKNOWN_TYPE", f"document type {document_type_id} is not on this case",
+                            "pick an id from list_document_types")
+            dtype = {**g, "category": "other"}
         category = document_category or dtype.get("category") or "other"
         archive = archive_name or dtype.get("name") or ""
         if category not in DOCUMENT_CATEGORIES:
