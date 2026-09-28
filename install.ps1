@@ -51,15 +51,16 @@ function Install-ClaudeCli {
   $url = "$base/$version/$platform/claude.exe"
   $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
   $ok = $false
-  for ($i = 1; $i -le 10 -and -not $ok; $i++) {
+  for ($i = 1; $i -le 20 -and -not $ok; $i++) {
     if ((Test-Path $exe) -and ((Get-Item $exe).Length -ge $entry.size)) {
       $ok = (Get-FileHash -Path $exe -Algorithm SHA256).Hash.ToLower() -eq $entry.checksum
       if (-not $ok) { Remove-Item -Force $exe }   # complete but corrupt: start over
       continue
     }
-    if ($i -gt 1) { Write-Host "  download interrupted, resuming (attempt $i of 10)..."; Start-Sleep -Seconds 3 }
+    if ($i -gt 1) { Write-Host "  download interrupted, resuming (attempt $i of 20)..."; Start-Sleep -Seconds 3 }
     if ($curl) {
-      & $curl.Source -fL --connect-timeout 30 -C - -o $exe $url   # no --retry: it restarts from 0; the loop resumes
+      # A stalled link (0 B/s) aborts after 30 s so the loop resumes; no --retry: it restarts from 0.
+      & $curl.Source -fL --connect-timeout 30 --speed-limit 1024 --speed-time 30 -C - -o $exe $url
     } else {
       try { Start-BitsTransfer -Source $url -Destination $exe -ErrorAction Stop } catch { Write-Host "  $_" }
     }
