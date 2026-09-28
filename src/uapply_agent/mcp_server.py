@@ -54,7 +54,8 @@ def _ok(**data) -> dict:
 def _need_case():
     if not _folder.survey_id:
         return _err("NO_CASE", "this folder is not bound to a case",
-                    "ask the RCIC for the survey id and call init_case")
+                    "ask the RCIC: create a new case (list_application_types → confirmation → create_case) "
+                    "or bind an existing one (they paste the survey id → init_case)")
     return None
 
 

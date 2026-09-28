@@ -176,3 +176,11 @@ def test_preview_document_renders_pdf_pages_locally(bound, tmp_path):
     (root / "photo.jpg").write_bytes(b"\xff\xd8\xff")
     assert m.preview_document("photo.jpg")["images"] == [str(root / "photo.jpg")]
     assert m.preview_document("missing.pdf")["error"]["code"] == "NO_FILE"
+
+
+def test_no_case_hint_offers_create_or_bind(tmp_path, monkeypatch):
+    monkeypatch.setattr(m, "_folder", WorkingFolder(tmp_path))
+    r = m.list_documents()
+    assert r["error"]["code"] == "NO_CASE" and "create_case" in r["error"]["hint"] and "init_case" in r["error"]["hint"]
+    from uapply_agent import playbook
+    assert "create a new case" in playbook.prompt("run") and "survey id" in playbook.prompt("run")

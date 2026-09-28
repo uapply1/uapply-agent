@@ -35,7 +35,7 @@ whichever runtimes it detects; the wrappers are opt-in.
 
 | Command | Does |
 |---|---|
-| `/uapply:run` | Full pipeline with gates. Starts by calling `case_status` and resuming from the first incomplete stage |
+| `/uapply:run` | Full pipeline with gates. Starts by calling `case_status`; with no bound case it asks the RCIC to choose between creating a new case (typed confirmation) and pasting an existing survey id, then resumes from the first incomplete stage |
 | `/uapply:intake` | Stage 1 only — propose and confirm case + family, create it |
 | `/uapply:review` | Stage 5 only — work the review queue, produce proposals and client questions |
 | `/uapply:autofill` | Stage 6 only — preflight, gate, start, download |

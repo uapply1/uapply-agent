@@ -41,8 +41,14 @@ Chat history (optional, `chat_*` tools):
 
 ## prompt: run
 
-Run the uApply case in this folder end to end for Phase 1: check `case_status`;
-if there is no case, ask the RCIC for the survey id and call `init_case`.
+Run the uApply case in this folder end to end for Phase 1: check `case_status`.
+If the folder is not bound to a case (`NO_CASE`), stop and ask the RCIC one
+question with two options: (a) create a new case for this client, or (b) use an
+existing case — paste its survey id. For (a), propose the client name from the
+folder (and chat history, if the RCIC offers it), show the matching application
+types from `list_application_types`, and call `create_case` only after the RCIC
+has typed "create case" (or 确认创建). For (b), call `init_case` with the id. Do
+not upload anything before the folder is bound.
 Scan the folder; for each unmanifested file whose type is not obvious from its
 name, `preview_document` it and pick the type from `list_document_types`; ask the
 RCIC only when the pages do not settle it. Upload with `sync_documents`, then —
