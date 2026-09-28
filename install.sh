@@ -23,7 +23,9 @@ uv tool update-shell >/dev/null 2>&1 || true
 if ! command -v claude >/dev/null 2>&1 && ! command -v codex >/dev/null 2>&1 \
    && [ ! -x "$HOME/.local/bin/claude" ] && [ -z "$UAPPLY_SKIP_CLAUDE_INSTALL" ]; then
   echo "Installing the Claude Code CLI (runs uApply's AI tasks on your Claude plan)..."
-  curl -fsSL https://claude.ai/install.sh | bash
+  # Never lose the uApply install over this; setup below reports the missing CLI too.
+  curl -fsSL https://claude.ai/install.sh | bash || \
+    echo "WARNING: Claude Code CLI not installed. Run this installer again, or: curl -fsSL https://claude.ai/install.sh | bash"
 fi
 
 # Sign-in prompts need the keyboard; under `curl | sh` stdin is the script itself.
