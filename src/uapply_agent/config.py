@@ -44,7 +44,7 @@ class Settings:
         s = cls()
         p = config_dir() / "config.json"
         if p.exists():
-            data = json.loads(p.read_text())
+            data = json.loads(p.read_text(encoding="utf-8"))
             for k, v in data.items():
                 if hasattr(s, k):
                     setattr(s, k, v)
@@ -64,7 +64,7 @@ class Settings:
     def save(self) -> None:
         d = config_dir()
         d.mkdir(parents=True, exist_ok=True)
-        (d / "config.json").write_text(json.dumps(asdict(self), indent=2))
+        (d / "config.json").write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
 
 
 class Credentials:
@@ -87,7 +87,7 @@ class Credentials:
             pass
         p = cls._file()
         if p.exists():
-            return json.loads(p.read_text()).get("access_token")
+            return json.loads(p.read_text(encoding="utf-8")).get("access_token")
         return None
 
     @classmethod
@@ -103,7 +103,7 @@ class Credentials:
         d = config_dir()
         d.mkdir(parents=True, exist_ok=True)
         p = cls._file()
-        p.write_text(json.dumps({"access_token": token, "refresh_token": refresh_token}))
+        p.write_text(json.dumps({"access_token": token, "refresh_token": refresh_token}), encoding="utf-8")
         p.chmod(stat.S_IRUSR | stat.S_IWUSR)
         return str(p)
 

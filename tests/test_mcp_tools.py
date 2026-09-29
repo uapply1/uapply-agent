@@ -214,3 +214,20 @@ def test_whoami_flags_an_installed_runtime_that_does_not_start(bound, monkeypatc
                                                         "error": "not compatible with the version of Windows"}])
     out = m.whoami()
     assert "does not start" in out["hint"] and "logged_in" not in out["runtimes"][0]
+
+
+def test_file_already_on_the_case_is_recorded_not_reuploaded(bound):
+    """The upload succeeded but the local record was lost: match by type, name and size."""
+    size = (m._folder.root / "passport.pdf").stat().st_size
+    bound.docs = [{"id": "srv-1", "file_name": "passport.pdf", "document_type_id": "dt-pass", "size": size, "old_doc_id": None},
+                  {"id": "srv-2", "file_name": "passport.pdf", "document_type_id": "dt-other", "size": size, "old_doc_id": None}]
+    out = m.sync_documents("dt-pass", paths=["passport.pdf"])
+    assert out["already_on_server"] == [{"path": "passport.pdf", "document_id": "srv-1"}] and out["uploaded"] == 0
+    assert bound.uploads == []
+    assert m.sync_documents("dt-pass", paths=["passport.pdf"])["skipped"] == ["passport.pdf"]
+
+
+def test_same_name_different_size_is_uploaded(bound):
+    bound.docs = [{"id": "srv-1", "file_name": "passport.pdf", "document_type_id": "dt-pass", "size": 999999, "old_doc_id": None}]
+    out = m.sync_documents("dt-pass", paths=["passport.pdf"])
+    assert out["uploaded"] == 1 and out["already_on_server"] == []

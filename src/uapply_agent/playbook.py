@@ -12,7 +12,7 @@ _REPO = Path(__file__).resolve().parents[2] / "playbook" / "SOURCE.md"
 @lru_cache(maxsize=1)
 def _sections() -> dict[str, str]:
     src = _REPO if _REPO.exists() else _BUNDLED
-    text = src.read_text() if src.exists() else ""
+    text = src.read_text(encoding="utf-8") if src.exists() else ""
     out: dict[str, str] = {}
     current = None
     for line in text.splitlines():

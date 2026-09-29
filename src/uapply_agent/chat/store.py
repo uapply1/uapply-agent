@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 
-from ..folder import WorkingFolder, now_iso
+from ..folder import WorkingFolder, now_iso, read_json, write_text_atomic
 from .base import Transcript
 
 RAW_ID = re.compile(r"\bwxid_[A-Za-z0-9_-]+\b|\b[A-Za-z0-9_-]{6,}@chatroom\b")
@@ -23,11 +23,11 @@ class ChatStore:
 
     def _read(self, name: str, default):
         p = self.dir / name
-        return json.loads(p.read_text()) if p.exists() else default
+        return read_json(p, default)
 
     def _write(self, name: str, data) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
-        (self.dir / name).write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        write_text_atomic(self.dir / name, json.dumps(data, indent=2, ensure_ascii=False))
 
     def index(self) -> list:
         return self._read("index.json", [])
@@ -59,7 +59,7 @@ class ChatStore:
     def save_intake(self, t: Transcript, hints: dict) -> Path:
         p = self.dir / (t.path.stem + ".intake.json")
         self.dir.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(hints, indent=2, ensure_ascii=False))
+        write_text_atomic(p, json.dumps(hints, indent=2, ensure_ascii=False))
         return p
 
     # ---- uploads queued until a case exists ----

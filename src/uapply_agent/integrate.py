@@ -33,7 +33,8 @@ def own_executable() -> str:
 
 
 def _run(cmd: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=timeout, check=False)
 
 
 # ---- Claude Code / Claude desktop (Code tab reads ~/.claude.json) ----
@@ -43,9 +44,9 @@ def _claude_json_entry(exe: str) -> dict:
 
 
 def write_claude_json(exe: str, path: Path) -> None:
-    data = json.loads(path.read_text()) if path.exists() else {}
+    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     data.setdefault("mcpServers", {})[SERVER] = _claude_json_entry(exe)
-    path.write_text(json.dumps(data, indent=2))
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def register_claude(exe: str, home: Path, which: Callable[[str], Optional[str]] = _find) -> str:
@@ -121,14 +122,14 @@ _SECTION = re.compile(r"^\[mcp_servers\.uapply\][^\[]*", re.M | re.S)
 
 
 def write_codex_toml(exe: str, path: Path) -> None:
-    text = path.read_text() if path.exists() else ""
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
     block = f'[mcp_servers.{SERVER}]\ncommand = {json.dumps(exe)}\nargs = ["mcp"]\n'
     if _SECTION.search(text):
         text = _SECTION.sub(block, text, count=1)
     else:
         text = text.rstrip("\n") + ("\n\n" if text.strip() else "") + block
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
 
 
 def register_codex(exe: str, home: Path, which: Callable[[str], Optional[str]] = _find) -> str:

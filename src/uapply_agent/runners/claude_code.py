@@ -68,7 +68,8 @@ class ClaudeCodeRunner(Runner):
     def _exec_env(self, cmd, cwd, timeout_s, env):
         import subprocess
         try:
-            return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout_s, env=env)
+            return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                  timeout=timeout_s, env=env)
         except FileNotFoundError as e:
             raise RunnerError(f"claude not found: {e}")
         except subprocess.TimeoutExpired:

@@ -63,3 +63,42 @@ def test_clean_removes_cache_only(tmp_path):
     (f.cache / "x.png").write_bytes(b"x")
     assert f.clean() == 1
     assert (tmp_path / "passport.pdf").exists()
+
+
+def test_state_files_are_utf8_whatever_the_system_code_page(tmp_path):
+    """English Windows defaults to cp1252: Chinese names must still round-trip (UTF-8 on disk)."""
+    import subprocess, sys, os
+    name, shot = "李天毅".encode("unicode_escape").decode(), "屏幕截图 1.png".encode("unicode_escape").decode()
+    script = tmp_path / "run.py"   # ASCII-only source: an ASCII locale cannot even decode a Chinese argv
+    script.write_text(
+        "from pathlib import Path; from uapply_agent.folder import WorkingFolder\n"
+        f"f = WorkingFolder(Path({str(tmp_path)!r}))\n"
+        f"f.init_case('s-1', 'https://api', 'local_agent', name='{name}')\n"
+        f"f.record_upload('abc', '{shot}', 'doc-1')\n"
+        "g = WorkingFolder(Path(f.root))\n"
+        f"print(g.case['name'] == '{name}', g.manifest['files']['abc']['path'] == '{shot}')\n", encoding="ascii")
+    env = {**os.environ, "LC_ALL": "C", "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0"}
+    out = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True, encoding="utf-8")
+    assert out.stdout.strip() == "True True", out.stderr[-500:]
+    assert "李天毅".encode() in (tmp_path / ".uapply" / "case.json").read_bytes()
+
+
+def test_truncated_state_file_is_set_aside_not_fatal(tmp_path):
+    from uapply_agent.folder import WorkingFolder
+    f = WorkingFolder(tmp_path)
+    f.state.mkdir()
+    (f.state / "manifest.json").write_bytes(b"")          # what the old build left after a failed write
+    assert f.manifest == {"schema": 1, "files": {}}
+    assert any(p.name.startswith("manifest.json.corrupt-") for p in f.state.iterdir())
+    f.record_upload("abc", "a.pdf", "doc-1")
+    assert WorkingFolder(tmp_path).manifest["files"]["abc"]["document_id"] == "doc-1"
+
+
+def test_state_file_in_a_legacy_code_page_is_still_read(tmp_path, monkeypatch):
+    import locale
+    from uapply_agent.folder import WorkingFolder
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=True: "gbk")
+    f = WorkingFolder(tmp_path)
+    f.state.mkdir()
+    (f.state / "case.json").write_bytes('{"name": "李天毅"}'.encode("gbk"))   # older build on Chinese Windows
+    assert f.case["name"] == "李天毅"

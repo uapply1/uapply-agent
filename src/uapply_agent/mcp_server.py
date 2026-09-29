@@ -264,12 +264,22 @@ def sync_documents(document_type_id: str, document_category: str = "", paths: Op
         chosen = [f for f in scanned if (not paths or f.path in paths)]
         todo = [f for f in chosen if not f.manifested]
         skipped = [f.path for f in chosen if f.manifested]
-        uploaded, failed = [], []
+        uploaded, failed, matched = [], [], []
+        server_docs: Optional[list] = None
+        claimed = {e.get("document_id") for e in _folder.manifest.get("files", {}).values()}
         # One request per file: the response maps to the file with no name matching,
         # so HEIC conversions and duplicate basenames in subfolders cannot mix up ids.
         for f in todo:
             try:
                 local = _folder.resolve(f.path)
+                if server_docs is None:
+                    server_docs = [d for d in api().documents(_folder.survey_id) if not d.get("old_doc_id")]
+                if existing := _already_on_server(local, f.size, document_type_id, server_docs, claimed):
+                    # e.g. the upload went through but the local record was lost: record it, do not duplicate
+                    claimed.add(existing["id"])
+                    _folder.record_upload(f.sha256, f.path, existing["id"], applicant)
+                    matched.append({"path": f.path, "document_id": existing["id"]})
+                    continue
                 send = heic_to_jpeg(local, _folder.cache) if local.suffix.lower() in (".heic", ".heif") else local
                 docs = api().bulk_upload(_folder.survey_id, category, document_type_id, [send], archive_name=archive)
                 d = next((d for d in docs if isinstance(d, dict) and d.get("id")), None)
@@ -281,8 +291,23 @@ def sync_documents(document_type_id: str, document_category: str = "", paths: Op
                 uploaded.append({"path": f.path, "document_id": d["id"], "file_name": d.get("file_name")})
             except (ApiError, OSError, ValueError) as ex:
                 failed.append({"path": f.path, "reason": str(ex)[:300]})
-        return _ok(uploaded=len(uploaded), documents=uploaded, skipped=skipped, failed=failed)
+        return _ok(uploaded=len(uploaded), documents=uploaded, skipped=skipped, failed=failed,
+                   already_on_server=matched)
     return _wrap(go)
+
+
+def _already_on_server(local: Path, size: int, document_type_id: str, server_docs: list, claimed: set):
+    """A case document of this type with this file's name (HEIC arrives as .png/.jpg) and size."""
+    stem, ext = local.stem, local.suffix.lower()
+    converted = ext in (".heic", ".heif")
+    for d in server_docs:
+        if d.get("id") in claimed or str(d.get("document_type_id")) != str(document_type_id):
+            continue
+        name = str(d.get("file_name") or "")
+        same_name = name == local.name or (converted and Path(name).stem == stem)
+        if same_name and (converted or not d.get("size") or int(d["size"]) == int(size)):
+            return d
+    return None
 
 
 @server.tool()
