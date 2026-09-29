@@ -166,6 +166,21 @@ def cmd_clean(args, settings):
     return 0
 
 
+def cmd_acrobat(args, settings):
+    """Check Acrobat Pro automation; with --pdf, fill that XFA form's first text field as a test."""
+    from . import acrobat
+    found = acrobat.detect(probe=True)
+    print(json.dumps(found, indent=2))
+    if not (found["available"] and args.pdf):
+        return 0 if found["available"] else 1
+    src = Path(args.pdf).resolve()
+    out = src.with_name(src.stem + "_uapply_test.pdf")
+    ops = [{"op": "set", "node": args.node, "value": args.value, "event": "change"}]
+    print(json.dumps(acrobat.fill(src, ops, out), indent=2))
+    print(f"saved {out}")
+    return 0
+
+
 def cmd_config(args, settings):
     if args.set:
         for kv in args.set:
@@ -224,6 +239,10 @@ def build_parser() -> argparse.ArgumentParser:
     c = cs.add_parser("fetch"); c.add_argument("contact"); c.add_argument("--days", type=int); c.add_argument("--folder")
     s.set_defaults(fn=cmd_chat)
     s = sub.add_parser("clean"); s.add_argument("--folder"); s.set_defaults(fn=cmd_clean)
+    s = sub.add_parser("acrobat", help="check Adobe Acrobat Pro auto-fill on this PC (Windows)")
+    s.add_argument("--pdf", help="a blank IMM 5709 to test-fill (writes <name>_uapply_test.pdf next to it)")
+    s.add_argument("--node", default="form1[0].Page1[0].PersonalDetails[0].Name[0].FamilyName[0]")
+    s.add_argument("--value", default="TEST"); s.set_defaults(fn=cmd_acrobat)
     s = sub.add_parser("config"); s.add_argument("--set", nargs="*", metavar="KEY=VALUE"); s.set_defaults(fn=cmd_config)
     return p
 

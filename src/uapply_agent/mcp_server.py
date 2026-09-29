@@ -118,8 +118,9 @@ def whoami() -> dict:
         for r in runtimes:
             if r["name"] == "claude-code" and not r.get("error"):
                 r["logged_in"] = _claude_login_state(r["path"])
+        from .autofill import acrobat_status
         out = _ok(backend=_settings.backend_url, logged_in=api().logged_in, agent_api=agent_api,
-                  runtimes=runtimes, folder=str(_folder.root), case=_folder.case or None)
+                  runtimes=runtimes, acrobat=acrobat_status(), folder=str(_folder.root), case=_folder.case or None)
         if runtimes and all(r.get("error") for r in runtimes):
             out["hint"] = (f"{runtimes[0]['name']} is installed but does not start on this machine "
                            f"({runtimes[0]['error']}); local tasks cannot run — tell the RCIC, do not retry")
@@ -406,6 +407,38 @@ def start_analysis() -> dict:
 
 
 @server.tool()
+def confirm_documents() -> dict:
+    """After the analysis is done: the dashboard's Confirm step — merge each archive into one PDF and
+    queue compression on uApply (no AI). Moves the case on from "Not started"; then call autofill_forms."""
+    if e := _need_agent_api():
+        return e
+
+    def go():
+        st = api().agent_status(_folder.survey_id)
+        if st.get("analyzing_status") not in ("completed", "failed"):
+            return _err("ANALYSIS_NOT_DONE", f"analysis is {st.get('analyzing_status')}",
+                        "loop run_tasks / wait_for_stage('analysis') until done, then confirm_documents")
+        r = api().generate_archive_files(_folder.survey_id) or {}
+        return _ok(archives=len(r.get("results") or []), failed_documents=r.get("failed_documents") or [],
+                   status=r.get("status"))
+    return _wrap(go)
+
+
+@server.tool()
+def autofill_forms(budget_s: int = 90) -> dict:
+    """After confirm_documents: fill the case's IMM PDFs. With Adobe Acrobat Pro on this PC they are
+    filled here (copies in .uapply/output/imm_pdfs) and uploaded; otherwise uApply's platform fills them
+    (no AI). Call again while `remaining` > 0; with mode=platform loop wait_for_stage('filling')."""
+    if e := _need_agent_api():
+        return e
+
+    def go():
+        from .autofill import AutoFiller
+        return _ok(**AutoFiller(api(), _folder).run(budget_s=max(20, min(int(budget_s or 90), 300))))
+    return _wrap(go)
+
+
+@server.tool()
 def run_tasks(max_tasks: Optional[int] = None, workers: int = 2, kinds: Optional[list[str]] = None,
               budget_s: int = 90) -> dict:
     """Execute queued agent tasks in fresh headless runtime processes for up to `budget_s` seconds
@@ -424,7 +457,8 @@ def run_tasks(max_tasks: Optional[int] = None, workers: int = 2, kinds: Optional
 
 @server.tool()
 def wait_for_stage(stage: str = "processing", timeout_s: int = 45) -> dict:
-    """Long-poll (≤ 60 s) until processing/analysis is done for the case; returns status either way."""
+    """Long-poll (≤ 60 s) until a stage is done for the case — processing, analysis or filling (the
+    platform auto-fill) — and return the status either way."""
     if e := _need_agent_api():
         return e
     return _wrap(lambda: _with_progress(_ok(**api().agent_wait(_folder.survey_id, stage,

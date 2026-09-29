@@ -63,8 +63,9 @@ that require the RCIC's normal login.
 |---|---|---|
 | `start_processing` | `document_ids?: string[]` | job ids; count of agent tasks expected |
 | `run_analysis` | `force?: bool` (default **true**) | analysis job id |
-| `wait_for_stage` | `stage: processing \| analysis \| formulas`, `timeout_s?` (default 45, ≤ 60) | done: bool, progress: {completed, failed, pending, open_agent_tasks}, failures: [{document_id, reason}]; includes the same `progress` snapshot |
+| `wait_for_stage` | `stage: processing \| analysis \| filling \| formulas`, `timeout_s?` (default 45, ≤ 60) | done: bool, progress: {completed, failed, pending, open_agent_tasks}, failures: [{document_id, reason}]; includes the same `progress` snapshot |
 | `stop_processing` / `stop_analysis` | — | ack |
+| `confirm_documents` | — | after the analysis: the dashboard's Confirm — archives merged to PDFs and compression queued on uApply (no AI); `archives`, `failed_documents`. Refused with `ANALYSIS_NOT_DONE` before that |
 
 `wait_for_stage` is a server long-poll: it returns early on completion, else at
 `timeout_s`. It is capped at 60 s because MCP tool calls have runtime-imposed
@@ -111,6 +112,7 @@ the stage is done.
 
 | Tool | Input | Output |
 |---|---|---|
+| `autofill_forms` | `budget_s?` (default 90, 20–300) | fills the IMM PDFs: with Acrobat Pro on Windows locally (`mode: local`, `filled` / `failed` / `skipped`, `remaining` — call again while > 0), otherwise `mode: platform` (uApply's filler; loop `wait_for_stage("filling")`) |
 | `autofill_preflight` | — | ok: bool, blockers: [{code, detail}], summary: {filled, missing, assumed} |
 | `request_autofill` | — | `approval_id`, `approval_url` — page shows the preflight summary; on approval the server starts auto-fill itself; fails if preflight blockers exist |
 | `autofill_status` | — | automation_status, imm pdf statuses |

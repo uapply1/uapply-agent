@@ -178,6 +178,36 @@ class UApplyApi:
     def start_analysis(self, survey_id: str) -> dict:
         return self._req("POST", f"/api/ai-parse/surveys/{survey_id}/start_analysis/", json={})
 
+    # ---- after analysis: archives + compression, then IMM PDF auto-fill ----
+
+    def generate_archive_files(self, survey_id: str) -> dict:
+        """The dashboard's Confirm: merge each archive into a PDF and queue compression (no AI)."""
+        return self._req("POST", f"/api/survey/surveys/{survey_id}/generate_archive_files/", json={}, timeout=600)
+
+    def start_auto_filling(self, survey_id: str) -> dict:
+        """Platform auto-fill (uApply's Windows filler, no AI)."""
+        return self._req("POST", f"/api/survey/surveys/{survey_id}/start_auto_filling/", json={})
+
+    def autofill_claim(self, survey_id: str) -> dict:
+        return self._req("POST", f"{AGENT_PREFIX}surveys/{survey_id}/autofill/claim/", json={}, timeout=300)
+
+    def autofill_result(self, survey_id: str, imm_pdf_id: str, pdf: Optional[Path] = None, error: str = "",
+                        success_rate: Optional[float] = None, errors: Optional[list] = None,
+                        survey_values_updated_at: Optional[str] = None) -> dict:
+        import json
+        data = {"error": error, "errors": json.dumps(errors or []),
+                "survey_values_updated_at": survey_values_updated_at or ""}
+        if success_rate is not None:
+            data["success_rate"] = str(success_rate)
+        path = f"{AGENT_PREFIX}surveys/{survey_id}/autofill/{imm_pdf_id}/result/"
+        if pdf is None:
+            return self._req("POST", path, data=data, timeout=120)
+        with open(pdf, "rb") as f:
+            return self._req("POST", path, data=data, files={"file": (pdf.name, f, "application/pdf")}, timeout=300)
+
+    def autofill_finish(self, survey_id: str) -> dict:
+        return self._req("POST", f"{AGENT_PREFIX}surveys/{survey_id}/autofill/finish/", json={})
+
     def start_document_processing(self, survey_id: str, document_id: str) -> dict:
         return self._req("POST", f"/api/ai-parse/surveys/{survey_id}/start_document_processing/",
                          json={"document_id": document_id})

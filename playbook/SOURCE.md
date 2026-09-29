@@ -43,6 +43,12 @@ Always:
   for them: every model call (OCR, sections, analysis) is a task this machine
   runs. After uploading, call `start_processing`; once processing is done, call
   `start_analysis`, then run the analysis the same way.
+- Once the analysis is done, finish the case: `confirm_documents` (the
+  dashboard's Confirm — archives and compression on uApply), then
+  `autofill_forms` until `remaining` is 0. It fills the IMM PDFs with Adobe
+  Acrobat Pro on this PC when installed; otherwise it returns `mode: platform`
+  (uApply fills them, no AI) and you loop `wait_for_stage("filling")` until
+  done. Report filled / failed forms by name.
 - For processing (and analysis), loop: `run_tasks` (returns within about 90 s) →
   `wait_for_stage("processing")` (or `"analysis"`) until `done` is true and
   `remaining` is 0.
@@ -93,8 +99,10 @@ IMM forms go under Agent Survey; ask the RCIC only when the pages do not
 settle it, all unclear files in one question call. Upload with `sync_documents`, then —
 unless `agent_api` is false — `start_processing`, loop `run_tasks` /
 `wait_for_stage("processing")` until processing is done, then `start_analysis`
-and loop `run_tasks` / `wait_for_stage("analysis")` until the analysis is done. Finish with a short summary: documents by status, tasks
-accepted, anything waiting on the RCIC.
+and loop `run_tasks` / `wait_for_stage("analysis")` until the analysis is done,
+then `confirm_documents` and `autofill_forms` as above. Finish with a short
+summary: documents by status, tasks accepted, IMM forms filled (here or on
+uApply), anything waiting on the RCIC.
 
 ## prompt: intake-from-chat
 

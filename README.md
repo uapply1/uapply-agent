@@ -168,6 +168,7 @@ have "Allow Offline Access" enabled so refresh tokens are issued.
 | `401` from the API | `uapply-agent login` again (no refresh token yet) |
 | `404` on `/api/ai-parse/agent/...` | the backend in use does not have the agent branch deployed |
 | `chat sources` → `not_installed` / `not_logged_in` | install the AnyChat plugin and run its own login; the agent never handles that token |
+| `whoami` → `acrobat.available: false` although Acrobat is installed | Reader, or Acrobat without a Pro licence, has no automation; forms are filled on uApply instead. `uapply-agent acrobat` shows the reason |
 | headless run hits the plan's usage limit | the executor stops with `PlanLimited`; resume with `uapply-agent run --follow` later |
 
 ## Install (dev)
@@ -198,6 +199,15 @@ The MCP server exposes `case_status`, `scan_folder`, `sync_documents`,
 ([docs/reference/mcp-tools.md](docs/reference/mcp-tools.md)). `run_tasks`
 never executes work in the chat: it spawns the runtime headless per task with
 the task's prompt as a real system prompt.
+
+After the analysis `/uapply:run` finishes the case: `confirm_documents` (the
+dashboard's Confirm: archives + compression on uApply) and `autofill_forms`.
+With **Adobe Acrobat Pro on Windows** the IMM PDFs are filled on the RCIC's PC
+(uApply sends the recorded field operations; the agent replays them through
+Acrobat's IAC automation and uploads the result; copies land in
+`.uapply/output/imm_pdfs/`). Without it — Reader only, macOS, or automation
+failing — uApply's own filler does it (no AI). `uapply-agent acrobat` checks the
+PC; `uapply-agent acrobat --pdf IMM5709.pdf` test-fills one field.
 
 ## Layout
 
