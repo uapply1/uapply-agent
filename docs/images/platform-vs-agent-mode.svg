@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="690" viewBox="0 0 680 690" role="img">
+<title>Platform mode compared with agent mode</title>
+<desc>Stage-by-stage comparison. In platform mode uApply's Gemini and OpenAI models do OCR, sections, analysis and field fixes, starting automatically on upload. In agent mode the RCIC's Claude plan does all of them, started by the agent. Auto-fill uses no AI in both.</desc>
+<style>.th{font:500 14px -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}.t{font:400 14px -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}.ts{font:400 12px -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}</style>
+<rect x="0" y="0" width="680" height="690" fill="#FFFFFF"/>
+<text x="40" y="55" dominant-baseline="central" class="th" fill="#2C2C2A">Stage</text>
+<text x="305" y="55" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">Platform mode</text>
+<text x="535" y="55" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">Agent mode</text>
+<text x="40" y="100" dominant-baseline="central" class="t" fill="#2C2C2A">Starts work</text>
+<rect x="200" y="80" width="210" height="40" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="305" y="100" text-anchor="middle" dominant-baseline="central" class="t" fill="#2C2C2A">RCIC opens dashboard</text>
+<rect x="430" y="80" width="210" height="40" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="535" y="100" text-anchor="middle" dominant-baseline="central" class="t" fill="#2C2C2A">RCIC types /uapply:run</text>
+<text x="40" y="150" dominant-baseline="central" class="t" fill="#2C2C2A">Create case</text>
+<rect x="200" y="130" width="210" height="40" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="305" y="150" text-anchor="middle" dominant-baseline="central" class="t" fill="#2C2C2A">RCIC fills a form</text>
+<rect x="430" y="130" width="210" height="40" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="535" y="150" text-anchor="middle" dominant-baseline="central" class="t" fill="#3C3489">Chat proposes, RCIC ok</text>
+<text x="40" y="200" dominant-baseline="central" class="t" fill="#2C2C2A">Pick doc types</text>
+<rect x="200" y="180" width="210" height="40" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="305" y="200" text-anchor="middle" dominant-baseline="central" class="t" fill="#2C2C2A">RCIC picks folders</text>
+<rect x="430" y="180" width="210" height="40" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="535" y="200" text-anchor="middle" dominant-baseline="central" class="t" fill="#3C3489">Chat reads the pages</text>
+<text x="40" y="250" dominant-baseline="central" class="t" fill="#2C2C2A">Start processing</text>
+<rect x="200" y="230" width="210" height="40" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="305" y="250" text-anchor="middle" dominant-baseline="central" class="t" fill="#2C2C2A">On upload, automatic</text>
+<rect x="430" y="230" width="210" height="40" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="535" y="250" text-anchor="middle" dominant-baseline="central" class="t" fill="#2C2C2A">Agent starts it</text>
+<text x="40" y="300" dominant-baseline="central" class="t" fill="#2C2C2A">OCR, classify</text>
+<rect x="200" y="280" width="210" height="40" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/><text x="305" y="300" text-anchor="middle" dominant-baseline="central" class="t" fill="#712B13">Gemini, every page</text>
+<rect x="430" y="280" width="210" height="40" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="535" y="300" text-anchor="middle" dominant-baseline="central" class="t" fill="#3C3489">Claude, whole PDF</text>
+<text x="40" y="350" dominant-baseline="central" class="t" fill="#2C2C2A">Sections</text>
+<rect x="200" y="330" width="210" height="40" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/><text x="305" y="350" text-anchor="middle" dominant-baseline="central" class="t" fill="#712B13">Gemini</text>
+<rect x="430" y="330" width="210" height="40" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="535" y="350" text-anchor="middle" dominant-baseline="central" class="t" fill="#3C3489">Claude run per task</text>
+<text x="40" y="400" dominant-baseline="central" class="t" fill="#2C2C2A">Analysis</text>
+<rect x="200" y="380" width="210" height="40" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/><text x="305" y="400" text-anchor="middle" dominant-baseline="central" class="t" fill="#712B13">Auto, Gemini + GPT</text>
+<rect x="430" y="380" width="210" height="40" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="535" y="400" text-anchor="middle" dominant-baseline="central" class="t" fill="#3C3489">Agent starts, Claude</text>
+<text x="40" y="450" dominant-baseline="central" class="t" fill="#2C2C2A">Field fixes</text>
+<rect x="200" y="430" width="210" height="40" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/><text x="305" y="450" text-anchor="middle" dominant-baseline="central" class="t" fill="#712B13">Dashboard, GPT</text>
+<rect x="430" y="430" width="210" height="40" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="535" y="450" text-anchor="middle" dominant-baseline="central" class="t" fill="#3C3489">Dashboard, via agent</text>
+<text x="40" y="500" dominant-baseline="central" class="t" fill="#2C2C2A">Auto-fill</text>
+<rect x="200" y="480" width="210" height="40" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="305" y="500" text-anchor="middle" dominant-baseline="central" class="t" fill="#2C2C2A">Backend, no AI</text>
+<rect x="430" y="480" width="210" height="40" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="535" y="500" text-anchor="middle" dominant-baseline="central" class="t" fill="#2C2C2A">Backend, no AI</text>
+<text x="40" y="550" dominant-baseline="central" class="t" fill="#2C2C2A">Model cost</text>
+<rect x="200" y="530" width="210" height="40" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/><text x="305" y="550" text-anchor="middle" dominant-baseline="central" class="t" fill="#712B13">uApply's API keys</text>
+<rect x="430" y="530" width="210" height="40" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="535" y="550" text-anchor="middle" dominant-baseline="central" class="t" fill="#3C3489">RCIC's Claude plan</text>
+<text x="40" y="600" dominant-baseline="central" class="t" fill="#2C2C2A">Runs when</text>
+<rect x="200" y="580" width="210" height="40" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="305" y="600" text-anchor="middle" dominant-baseline="central" class="t" fill="#2C2C2A">Any time, on server</text>
+<rect x="430" y="580" width="210" height="40" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="535" y="600" text-anchor="middle" dominant-baseline="central" class="t" fill="#2C2C2A">While agent runs</text>
+<rect x="40" y="652" width="14" height="14" rx="3" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+<text x="62" y="659" dominant-baseline="central" class="ts" fill="#444441">Thinks on uApply's models</text>
+<rect x="260" y="652" width="14" height="14" rx="3" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="282" y="659" dominant-baseline="central" class="ts" fill="#444441">Thinks on RCIC's plan</text>
+<rect x="460" y="652" width="14" height="14" rx="3" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+<text x="482" y="659" dominant-baseline="central" class="ts" fill="#444441">Code, or the RCIC</text>
+</svg>

@@ -79,6 +79,31 @@ All AI runs on the RCIC's own Claude plan: the chat model orchestrates, the head
 document work. The backend keeps the rules — prompts, section routing, validation, the data
 model — and never calls a model for these cases.
 
+## Platform mode vs agent mode
+
+The same case can run in either mode (`Survey.llm_mode`). Both use the same backend: prompts,
+section routing, validation, data model and auto-fill. What differs is who thinks, who pays and what
+starts the work.
+
+**Platform mode** — the RCIC works in the dashboard and uApply's own models do the thinking:
+
+![uApply platform mode: who thinks and who works](images/platform-mode-who-thinks.svg)
+
+**Stage by stage:**
+
+![Platform mode compared with agent mode](images/platform-vs-agent-mode.svg)
+
+- **Who pays.** Platform mode runs every model call on uApply's Gemini and OpenAI keys. Agent mode
+  runs every call on the RCIC's own Claude plan; uApply's servers run no AI for those cases (D14).
+- **What starts the work.** Platform mode starts processing on upload and analysis once every
+  document is done. Agent mode starts nothing by itself: the agent starts processing, then analysis.
+- **How documents are read.** Platform mode splits a PDF into pages and reads each one. Agent mode
+  reads the whole PDF once, and a PDF with a text layer needs no model at all (D12).
+- **Who picks document types.** In platform mode the RCIC files each upload into a folder. In agent
+  mode the chat model looks at the pages and picks the type, asking only when unsure.
+- **Availability.** Platform mode works any time, including dashboard edits. Agent mode progresses
+  only while the agent runs, and dashboard field fixes on an agent case need an active agent.
+
 ## How a case flows
 
 ```
