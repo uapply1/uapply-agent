@@ -61,7 +61,7 @@ Logged in; token stored in keyring
 Done. Open Claude Code or Codex in a client folder and type /uapply:run
 ```
 
-Re-run the same command to upgrade. `uapply-agent setup` alone re-registers
+The agent updates itself at each start (see Updates); re-running the installer also upgrades. `uapply-agent setup` alone re-registers
 the MCP server (for example after installing Codex later); `uapply-agent
 login` alone renews the sign-in. Optional: install AnyChat (macOS arm64 /
 Windows x64) for WeChat intake, see
@@ -97,6 +97,23 @@ session start, so open a new session after installing. Without the plugin,
 Claude Code lists the server's prompts as `/uapply:run (MCP)` (also reachable
 as `/mcp__uapply__run`); Codex shows them in its prompt picker.
 
+### Updates
+
+The agent updates itself. Each time a Claude / Codex session starts it (`uapply-agent mcp`),
+and each `uapply-agent run`, it asks GitHub for the latest commit on `main`. When there is a
+newer one it installs it next to the current install and hands the session to it, so every
+run uses the latest release. The installed command never overwrites itself (Windows locks a
+running program's files); versions live in `~/.local/share/uapply-agent/versions/<commit>/`
+(`%LOCALAPPDATA%\uapply-agent\versions\` on Windows) and the three newest are kept.
+
+- The check takes about a second; a normal update a few seconds. If an update takes longer than
+  25 s (a first-time dependency download on a slow link), this session starts with the installed
+  version and the update finishes in the background for the next one.
+- Offline, the installed version starts as usual.
+- `uapply-agent update` updates immediately and prints the result; `uapply-agent --version` shows
+  the commit. `uapply-agent config --set auto_update=false` (or `UAPPLY_NO_UPDATE=1`) turns it off.
+- New `/uapply:*` commands from an update are written at that start and load in the next session.
+
 ### Settings
 
 `~/.config/uapply-agent/config.json`, edited with `uapply-agent config --set KEY=VALUE`:
@@ -104,6 +121,7 @@ as `/mcp__uapply__run`); Codex shows them in its prompt picker.
 | Key | Default | Meaning |
 |---|---|---|
 | `backend_url` | `https://api.uapply.io` | uApply API; change only for staging |
+| `auto_update` | `true` | install and switch to the latest `main` at session / run start |
 | `auth0_domain` / `auth0_client_id` / `auth0_audience` | production tenant | change only for staging |
 | `runtime` | `auto` | `claude-code` or `codex` when both are installed |
 | `model` | runtime default | model passed to the headless runtime |
@@ -184,7 +202,8 @@ the task's prompt as a real system prompt.
 
 ```
 src/uapply_agent/
-  cli.py          setup | login | logout | init | status | run | mcp | chat | clean | config
+  updater.py      self-update at start: versions/<commit>/, hand-over to the newest
+  cli.py          update | setup | login | logout | init | status | run | mcp | chat | clean | config
   integrate.py    MCP registration for Claude Code / Codex (used by `setup`)
   mcp_server.py   stdio MCP server (tools, prompts, instructions)
   executor.py     pull → download inputs → spawn runtime → validate → submit

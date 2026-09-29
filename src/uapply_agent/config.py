@@ -27,6 +27,8 @@ class Settings:
     auth0_audience: str = "https://uapply.io"
     runtime: str = "auto"          # auto | claude-code | codex
     model: str = ""                # runtime default when empty
+    installed_sha: str = ""        # commit the installer put in ~/.local/bin (versions/<sha>/ carry their own)
+    auto_update: bool = True       # check GitHub main at `mcp` / `run` start and switch to the newest build
     claude_bin: str = ""           # absolute paths recorded by `setup`; GUI apps run with a minimal PATH
     codex_bin: str = ""
     workers: int = 2

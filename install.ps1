@@ -13,7 +13,15 @@ if ($me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -and -n
          "(not 'Run as administrator'), and run the installer again.")
 }
 # A source archive, so Git is not required on the machine.
-$Src = if ($env:UAPPLY_AGENT_SOURCE) { $env:UAPPLY_AGENT_SOURCE } else { "uapply-agent @ https://github.com/uapply1/uapply-agent/archive/refs/heads/main.zip" }
+# The exact commit of main, so the agent's self-update knows what is installed.
+$Sha = ""
+try {
+  $Sha = "$(Invoke-RestMethod -Uri https://api.github.com/repos/uapply1/uapply-agent/commits/main -Headers @{ Accept = "application/vnd.github.sha" } -TimeoutSec 10)".Trim()
+} catch { $Sha = "" }
+if ($Sha.Length -ne 40) { $Sha = "" }
+$Archive = if ($Sha) { "$Sha.zip" } else { "refs/heads/main.zip" }
+$Src = if ($env:UAPPLY_AGENT_SOURCE) { $env:UAPPLY_AGENT_SOURCE } else { "uapply-agent @ https://github.com/uapply1/uapply-agent/archive/$Archive" }
+$env:UAPPLY_INSTALLED_SHA = if ($env:UAPPLY_AGENT_SOURCE) { "" } else { $Sha }
 
 function Install-Uv {
   # The official uv zip, checksum-verified, straight into ~\.local\bin. Not astral's install.ps1:

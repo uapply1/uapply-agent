@@ -15,7 +15,32 @@ from .chat.base import ChatError
 from .config import Credentials, Settings
 from .folder import WorkingFolder
 from .integrate import run_setup
+from .updater import maybe_delegate, resolve_target, running_sha
 from .runners import RunnerError, detect_runtimes
+
+
+_ARGV: list[str] = []
+
+
+def _argv() -> list[str]:
+    return _ARGV or sys.argv[1:]
+
+
+def _refresh_plugin() -> None:
+    """A new version may ship new /uapply:* commands; rewrite them if the plugin is installed."""
+    try:
+        from .integrate import PLUGIN_DIR, install_claude_plugin
+        home = Path(os.environ.get("UAPPLY_HOME") or Path.home())
+        if (home / PLUGIN_DIR).exists():
+            install_claude_plugin(home)
+    except Exception:
+        pass
+
+
+def cmd_update(args, settings):
+    target, reason = resolve_target(settings, wait_s=600, say=print)
+    print(f"uapply-agent: {reason}" + (f" -> {target}" if target else ""))
+    return 0
 
 
 def _folder(args) -> WorkingFolder:
@@ -38,6 +63,9 @@ def cmd_login(args, settings):
 
 def cmd_setup(args, settings):
     """Register the MCP server with every runtime found, then log in unless a token exists."""
+    if sha := os.environ.get("UAPPLY_INSTALLED_SHA", "").strip():
+        settings.installed_sha = sha
+        settings.save()
     run_setup(settings=settings, login=not args.no_login)
     if args.no_login or Credentials.get_token():
         print("uApply login: already signed in" if Credentials.get_token() else "uApply login: skipped")
@@ -80,6 +108,7 @@ def cmd_status(args, settings):
 
 
 def cmd_run(args, settings):
+    maybe_delegate(_argv(), settings, wait_s=180)
     from .executor import Executor
     f = _folder(args)
     api = UApplyApi(settings)
@@ -102,6 +131,8 @@ def cmd_run(args, settings):
 
 
 def cmd_mcp(args, settings):
+    maybe_delegate(_argv(), settings)
+    _refresh_plugin()
     if args.folder:
         os.environ["UAPPLY_FOLDER"] = str(Path(args.folder).resolve())
     from .mcp_server import main as mcp_main
@@ -139,7 +170,14 @@ def cmd_config(args, settings):
             if not hasattr(settings, k):
                 print(f"unknown setting {k}", file=sys.stderr)
                 return 2
-            setattr(settings, k, type(getattr(settings, k))(v) if not isinstance(getattr(settings, k), dict) else json.loads(v))
+            cur = getattr(settings, k)
+            if isinstance(cur, bool):   # bool("false") is True
+                val = v.strip().lower() in ("1", "true", "yes", "on")
+            elif isinstance(cur, dict):
+                val = json.loads(v)
+            else:
+                val = type(cur)(v)
+            setattr(settings, k, val)
         settings.save()
     print(json.dumps(settings.__dict__, indent=2))
     return 0
@@ -147,9 +185,11 @@ def cmd_config(args, settings):
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="uapply-agent", description="Run uApply cases from Claude Code / Codex")
-    p.add_argument("--version", action="version", version=__version__)
+    p.add_argument("--version", action="version", version=f"{__version__} ({(running_sha(Settings.load()) or 'unknown')[:7]})")
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("update", help="install the latest version now (it also happens at mcp/run start)").set_defaults(fn=cmd_update)
 
     s = sub.add_parser("setup", help="register the MCP server with Claude Code / Codex and log in")
     s.add_argument("--no-login", action="store_true"); s.set_defaults(fn=cmd_setup)
@@ -186,6 +226,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    global _ARGV
+    _ARGV = list(argv) if argv is not None else []
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(errors="backslashreplace")

@@ -6,7 +6,13 @@
 # to upgrade.
 set -e
 # A source archive, so Git is not required on the machine.
-SRC="${UAPPLY_AGENT_SOURCE:-uapply-agent @ https://github.com/uapply1/uapply-agent/archive/refs/heads/main.zip}"
+# The exact commit of main, so the agent's self-update knows what is installed.
+SHA="$(curl -fsSL -m 10 -H 'Accept: application/vnd.github.sha' https://api.github.com/repos/uapply1/uapply-agent/commits/main 2>/dev/null || true)"
+if [ ${#SHA} -eq 40 ]; then ARCHIVE="$SHA.zip"; else SHA=""; ARCHIVE="refs/heads/main.zip"; fi
+SRC="${UAPPLY_AGENT_SOURCE:-uapply-agent @ https://github.com/uapply1/uapply-agent/archive/$ARCHIVE}"
+# A custom source is not a known commit: record nothing, the first start installs a versioned copy.
+if [ -n "$UAPPLY_AGENT_SOURCE" ]; then UAPPLY_INSTALLED_SHA=""; else UAPPLY_INSTALLED_SHA="$SHA"; fi
+export UAPPLY_INSTALLED_SHA
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "Installing uv (Python tool manager)..."
