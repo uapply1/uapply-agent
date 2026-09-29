@@ -15,20 +15,17 @@ uApply's platform filler) and an end-of-run report.
 ## Install (production)
 
 One command installs everything: `uv` (Python tool manager), the
-**Claude Code CLI** when neither Claude Code nor Codex is on the machine, the
-`uapply-agent` CLI, the MCP registration for Claude Code and Codex, and both
-sign-ins. The only prerequisites are a uApply account and a Claude Pro/Max
-plan (or a Codex CLI already set up).
+`uapply-agent` CLI, the MCP registration for Claude Code and Codex, and the
+uApply sign-in. The only prerequisites are a uApply account and Claude Code
+(desktop app or CLI) signed in to a Claude Pro/Max plan, or Codex.
 
-Claude Code needs Windows 10 version 1809 / Windows Server 2019 or later
-(64-bit), or macOS / Linux. On an older Windows the installer still installs
-uApply but warns that local AI tasks cannot run there; the Codex CLI is no
-alternative, since on Windows it only runs inside WSL2.
-
-The Claude Code CLI is required even when the RCIC works in the Claude desktop
-app: every local AI task runs in a separate headless `claude -p` process on the
-RCIC's plan, and the desktop app does not provide that command. The CLI has its
-own sign-in, separate from the desktop app.
+In Claude Code the AI tasks run as subagents of the RCIC's own session, on the
+login and plan that session already has: there is no second Claude sign-in and
+no separate CLI to install. The Claude Code CLI is only needed for
+`uapply-agent run` in a terminal (batch mode); set `UAPPLY_INSTALL_CLAUDE_CLI=1`
+when running the installer to install it, and sign it in with
+`claude auth login`. Codex users need nothing extra: the Codex app and CLI
+share one login.
 
 macOS / Linux (Terminal):
 
@@ -48,16 +45,13 @@ Everything installs into the user profile, so elevation is never needed; an
 elevated window can fail with "Program 'powershell.exe' failed to run: Access
 is denied".
 
-The browser opens twice: first to sign in to Claude (the CLI's own login), then
-to confirm a code and sign in to uApply. Then open Claude Code (desktop app or
-terminal) or Codex in a client folder and type `/uapply:run`. The installer
-prints what it did, for example:
+The browser opens once, to confirm a code and sign in to uApply. Then open
+Claude Code (desktop app or terminal) or Codex in a client folder and type
+`/uapply:run`. The installer prints what it did, for example:
 
 ```
-Installing the Claude Code CLI (runs uApply's AI tasks on your Claude plan)...
 uapply-agent: /Users/anna/.local/bin/uapply-agent
-Runtimes: claude = /Users/anna/.local/bin/claude
-Claude Code CLI: signed in
+Runtimes: no `claude` or `codex` CLI found. Not needed: in Claude Code the tasks run inside your session. Only `uapply-agent run` in a terminal needs a CLI.
 Claude Code: registered via `claude mcp add` (user scope)
 Claude Code: commands written to /Users/anna/.claude/skills/uapply
 Codex: skipped: Codex not found (no `codex` command, no ~/.codex)
@@ -167,9 +161,10 @@ in server mode, and uApply's own models process the documents.
 
 | Symptom | Fix |
 |---|---|
-| `no runtime found` | the Claude Code CLI is missing (the desktop app is not enough): rerun the installer, which installs it; or install it with `curl -fsSL https://claude.ai/install.sh \| bash` / `irm https://claude.ai/install.ps1 \| iex`, then run `uapply-agent setup` |
+| `no runtime found` (`uapply-agent run`, or `task_runner=cli`) | batch mode needs the Claude Code CLI (the desktop app is not enough): install it with `curl -fsSL https://claude.ai/install.sh \| bash` / `irm https://claude.ai/install.ps1 \| iex`, sign in with `claude auth login`, then run `uapply-agent setup`. Claude Code sessions need no CLI |
+| `run_tasks` returns `mode: session` with tasks but nothing runs | the conversation must spawn the `uapply:task-runner` subagents; the agent comes with the plugin, so after `uapply-agent setup` start a **new** session (`claude agents` lists `uapply:task-runner`) |
 | `… is not compatible with the version of Windows you're running` / `does NOT start on this machine` | the installed `claude` cannot run on this Windows. Rerun the installer: it installs the native build and `setup` prefers whichever build starts. If Windows is older than 10 1809 / Server 2019, Claude Code cannot run there at all |
-| `whoami` says the Claude CLI is not signed in | run `claude auth login` in a terminal (Claude subscription), then start a new session |
+| `whoami` says the Claude CLI is not signed in (cli mode only) | run `claude auth login` in a terminal (Claude subscription), then start a new session |
 | `AGENT_API_UNAVAILABLE` / `agent_api: false` | the backend in use does not serve the local-agent API; the case runs in server mode (uApply's own models process the documents) |
 | Windows: `Access is denied` starting the installer, or "running as Administrator" | run it in a normal PowerShell window, not "Run as administrator"; the installer refuses elevated windows |
 | Claude sign-in: browser did not open, or `Login failed: Request failed with status code 400` | in a normal PowerShell window run `claude auth login`, open the printed link, sign in, and paste the code back; then start a new Claude session |
@@ -228,8 +223,12 @@ The MCP server exposes 24 tools, among them `case_status`, `scan_folder`,
 `sync_documents`, `start_processing`, `run_tasks`, `wait_for_stage`,
 `confirm_documents`, `autofill_forms`, `final_report`, `chat_fetch` and
 `create_case` ([docs/reference/mcp-tools.md](docs/reference/mcp-tools.md)). `run_tasks`
-never executes work in the chat: it spawns the runtime headless per task with
-the task's prompt as a real system prompt.
+never executes work in the conversation. In Claude Code (`task_runner`
+`session`) it prepares one brief per task and the conversation spawns a
+`uapply:task-runner` subagent per brief: an isolated context that reads the
+brief and its files and calls `submit_task`, on the session's own login and
+plan. Otherwise (`cli`: Codex, batch mode) it spawns the runtime headless per
+task with the task's prompt as a real system prompt.
 
 After the analysis `/uapply:run` finishes the case: `confirm_documents` (the
 dashboard's Confirm: archives + compression on uApply) and `autofill_forms`.
@@ -261,7 +260,9 @@ src/uapply_agent/
   cases.py        bind / create cases, progress
   uploads.py      upload without duplicating case documents
   folder.py       .uapply/ manifest + case.json, folder scan
-  executor.py     pull → download inputs → spawn runtime → validate → submit
+  briefs.py       task preparation shared by both runners: inputs, page images, briefs, result checks
+  session_runner.py  tasks as subagents of the Claude Code session: briefs per round, local finishes
+  executor.py     headless runner: pull → prepare → spawn runtime → validate → submit
   runners/        claude_code.py (supported), codex.py (experimental); all runtime flags live here
   local_ops.py    page rendering, pdf text, HEIC → JPEG
   autofill.py     IMM PDF auto-fill: local Acrobat Pro or uApply's platform filler

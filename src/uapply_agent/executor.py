@@ -10,20 +10,20 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import briefs
 from .api import ApiError, UApplyApi
+from .briefs import FINAL_TASK_STATUSES, schema_check
 from .constants import IMAGE_EXTENSIONS
 from .folder import WorkingFolder
-from .local_ops import pdf_page_count, pdf_pages_text, render_pdf_pages, to_image_for_model
+from .local_ops import pdf_page_count, render_pdf_pages
 from .runners import PlanLimited, Runner, RunnerError, RuntimeUnavailable
 
 logger = logging.getLogger(__name__)
 
 PROMPT_INLINE_MAX = 6000   # characters; longer prompts are passed as files
-CLASSIFY_PAGES = 3         # a PDF's first pages are enough to classify it
 ATTEMPTS_PER_TASK = 2      # model answers per task and run, the second with the rejection as feedback
 OCR_SECONDS_PER_PAGE = 30  # extra time budget per page for chunked OCR calls
 MAX_WORKERS = 4
-FINAL_TASK_STATUSES = ("failed", "cancelled", "expired")
 
 
 @dataclass
@@ -58,16 +58,6 @@ class RunStats:
         return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
 
 
-def _schema_check(schema: dict, output: dict) -> str | None:
-    """Cheap local check so an obviously wrong answer is retried before a round-trip."""
-    if not isinstance(output, dict):
-        return "output is not an object"
-    for key in schema.get("required", []):
-        if key not in output:
-            return f"missing required field {key!r}"
-    return None
-
-
 def _merge_usage(total: dict, part: dict) -> dict:
     for k in ("input_tokens", "output_tokens", "duration_s", "cost_usd"):
         if part.get(k) is not None:
@@ -87,29 +77,10 @@ class Executor:
 
     # ---- inputs ----
 
-    def _download_inputs(self, task: dict) -> list[Path]:
-        """Download each input document into the task's cache dir; return the raw files."""
-        cache = self.folder.cache / task["id"]
-        cache.mkdir(parents=True, exist_ok=True)
-        files = []
-        for inp in task["payload"].get("inputs", []):
-            name = inp.get("file_name") or f"{inp.get('document_id') or 'input'}.bin"
-            dest = cache / Path(name).name
-            if not dest.exists():
-                # llm_call inputs carry a short-lived URL; document inputs are fetched by id
-                url = inp.get("url") or self.api.document_download_url(inp["document_id"])
-                self.api.download_to(url, dest)
-            files.append(dest)
-        return files
-
     def _prompt_files(self, task: dict, cwd: Path, system_prompt: str, user_prompt: str):
         """Long prompts and documents go to files the model reads: Windows caps a command line at
         ~32 KB and section/analysis prompts embed whole documents."""
-        text_files = []
-        for tf in task["payload"].get("text_files", []) or []:
-            p = cwd / Path(tf.get("file_name") or "input.txt").name
-            p.write_text(tf.get("text", ""), encoding="utf-8")
-            text_files.append(p)
+        text_files = briefs.write_text_files(task, cwd)
         if len(system_prompt) > PROMPT_INLINE_MAX:
             p = cwd / "instructions.md"
             p.write_text(system_prompt, encoding="utf-8")
@@ -123,26 +94,15 @@ class Executor:
             user_prompt = "The task is in task.md in the current directory. Read the whole file, then answer."
         return system_prompt, user_prompt, text_files
 
-    def _for_model(self, path: Path, cache: Path) -> list[Path]:
-        """Images the model looks at: a PDF's first pages rendered locally (Read's `pages` needs poppler)."""
-        if path.suffix.lower() == ".pdf":
-            return render_pdf_pages(path, cache, 1, min(CLASSIFY_PAGES, pdf_page_count(path)))
-        return [to_image_for_model(path, cache)]
-
     # ---- generic kinds (classification, sections, ...) ----
 
     def _run_generic(self, task: dict, stats: RunStats) -> None:
         payload = task["payload"]
         schema = payload["output_schema"]
-        cwd = self.folder.cache / task["id"]
-        files = self._download_inputs(task)
-        images = [img for p in files for img in self._for_model(p, cwd)]
-        user_prompt = payload.get("user_prompt", "")
-        for t in payload.get("text_inputs", []):
-            user_prompt += f"\n\n--- document {t.get('document_id')} ---\n{t.get('text', '')}"
-        rejection = task.get("rejection") or {}
-        if rejection.get("code") == "SCHEMA_INVALID":   # handed back by the server with the reason
-            user_prompt += f"\n\nA previous answer was rejected: {rejection.get('message')}. Fix that."
+        cwd = briefs.task_dir(self.folder, task["id"])
+        files = briefs.download_inputs(self.api, self.folder, task)
+        images = briefs.images_for_classification(files, cwd)
+        user_prompt = briefs.user_prompt_with_inputs(task)
         system_prompt, user_prompt, text_files = self._prompt_files(task, cwd, payload.get("system_prompt", ""),
                                                                     user_prompt)
         note = ""
@@ -150,7 +110,7 @@ class Executor:
             rr = self.runner.run(system_prompt=system_prompt, user_prompt=user_prompt + note, schema=schema,
                                  images=images, cwd=cwd, text_files=text_files, timeout_s=self.timeout_s)
             stats.bump("model_calls")
-            local_err = _schema_check(schema, rr.output)
+            local_err = schema_check(schema, rr.output)
             if local_err:
                 note = f"\n\nYour previous answer was invalid ({local_err}). Return JSON matching the schema exactly."
                 continue
@@ -166,22 +126,20 @@ class Executor:
     def _run_extract_content(self, task: dict, stats: RunStats) -> None:
         payload = task["payload"]
         schema = payload["output_schema"]
-        cwd = self.folder.cache / task["id"]
-        src = self._download_inputs(task)[0]
+        cwd = briefs.task_dir(self.folder, task["id"])
+        src = briefs.download_inputs(self.api, self.folder, task)[0]
         ext = src.suffix.lower()
 
+        pages = briefs.text_layer_pages(src, self.force_ocr)
+        if pages is not None:
+            logger.info("task %s: %d pages from the text layer, no model call", task["id"], len(pages))
+            stats.bump("text_layer_docs")
+            self._submit(task, {"pages": pages}, "pdfplumber", {}, stats, runtime="local")
+            return
         if ext == ".pdf":
-            text_pages = pdf_pages_text(src, force_ocr=self.force_ocr)
-            if text_pages is not None:
-                # Text layer present and sane: no model call at all.
-                pages = [{"n": i, "text": t} for i, t in enumerate(text_pages, start=1)]
-                logger.info("task %s: %d pages from the text layer, no model call", task["id"], len(pages))
-                stats.bump("text_layer_docs")
-                self._submit(task, {"pages": pages}, "pdfplumber", {}, stats, runtime="local")
-                return
             pages, usage, model = self._ocr_pdf(src, payload, schema, cwd, stats)
         elif ext in IMAGE_EXTENSIONS:
-            img = to_image_for_model(src, cwd)
+            img = briefs.images_for_ocr(src, cwd)[0]
             prompt = payload["user_prompt"] + "\n\nThis is a single-page document: return pages=[{n: 1, text}]."
             rr = self.runner.run(system_prompt=payload["system_prompt"], user_prompt=prompt, schema=schema,
                                  images=[img], cwd=cwd, timeout_s=self.timeout_s)
@@ -259,8 +217,7 @@ class Executor:
             stats.note_failure({"task_id": task["id"], "kind": task["kind"],
                                 "reason": rej.get("message", out.get("task_status"))})
             return SubmitOutcome(done=True)
-        return SubmitOutcome(done=False, retry_note=f"\n\nYour previous answer was rejected: {rej.get('code')}: "
-                                                    f"{rej.get('message')}. Fix it and return JSON only.")
+        return SubmitOutcome(done=False, retry_note="\n\n" + briefs.rejection_feedback(out))
 
     # ---- one task ----
 

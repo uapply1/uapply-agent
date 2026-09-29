@@ -24,6 +24,18 @@ def ok(**data) -> dict:
     return {"ok": True, **data}
 
 
+CLAUDE_CODE_CLIENT = "Claude Code"      # what the Claude Code MCP client sends as its name
+TASK_RUNNERS = ("auto", "session", "cli")
+
+
+def runner_mode(setting: str, client_name: str | None) -> str:
+    """Where model tasks run: subagents of the connected session ("session", Claude Code only) or a
+    headless CLI ("cli")."""
+    if setting in ("session", "cli"):
+        return setting
+    return "session" if (client_name or "").startswith(CLAUDE_CODE_CLIENT) else "cli"
+
+
 NO_CASE_HINT = ("ask the RCIC: create a new case (list_application_types → confirmation → create_case) "
                 "or bind an existing one (they paste the survey id → init_case)")
 

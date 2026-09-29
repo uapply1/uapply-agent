@@ -96,10 +96,10 @@ def get_runner(name: str = "auto", model: str = "", settings=None) -> Runner:
             tried = ", ".join(str(c) for cls in RUNNERS.values() for c in known_locations(cls.binary))
             install = ("irm https://claude.ai/install.ps1 | iex" if _WIN
                        else "curl -fsSL https://claude.ai/install.sh | bash")
-            raise RunnerError("no runtime found: local tasks need the Claude Code CLI (or Codex CLI); the desktop app "
-                              f"does not provide one. Looked on PATH and at {tried}. Rerun the uApply installer (it "
-                              f"installs the CLI), or install it with `{install}`, sign in with `claude auth login`, "
-                              "then run `uapply-agent setup`.")
+            raise RunnerError("no runtime found: headless tasks need the Claude Code CLI (or Codex CLI); the desktop "
+                              f"app does not provide one. Looked on PATH and at {tried}. Install it with `{install}`, "
+                              "sign in with `claude auth login`, then run `uapply-agent setup`. In a Claude Code "
+                              "session no CLI is needed: /uapply:run runs the tasks as subagents.")
         name = found[0]["name"]
     if name not in RUNNERS:
         raise RunnerError(f"unknown runtime {name!r}; choose from {list(RUNNERS)}")

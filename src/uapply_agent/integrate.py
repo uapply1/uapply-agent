@@ -192,9 +192,10 @@ def run_setup(say: Callable[[str], None] = print, home: Path | None = None, sett
                     say("  Windows reports this build is incompatible with this Windows version: Claude Code needs "
                         "a newer Windows (see the README), or use the Codex CLI instead.")
         else:
-            say("Runtimes: neither `claude` nor `codex` found — rerun the uApply installer (it installs the Claude "
-                "Code CLI) or install Claude Code, then run `uapply-agent setup` again")
-        if (claude := out["runtimes"].get("claude")) and "claude" not in out.get("broken", {}):
+            say("Runtimes: no `claude` or `codex` CLI found. Not needed: in Claude Code the tasks run inside your "
+                "session. Only `uapply-agent run` in a terminal needs a CLI.")
+        cli_mode = getattr(settings, "task_runner", "auto") == "cli"
+        if cli_mode and (claude := out["runtimes"].get("claude")) and "claude" not in out.get("broken", {}):
             state = ensure_claude_login(claude, say, interactive=login and sys.stdin.isatty())
             out["claude_logged_in"] = state
             say({True: "Claude Code CLI: signed in",

@@ -26,7 +26,7 @@ ENV_OVERRIDES = {
     "backend_url": "UAPPLY_BACKEND_URL", "app_url": "UAPPLY_APP_URL", "runtime": "UAPPLY_RUNTIME",
     "model": "UAPPLY_MODEL", "team_id": "UAPPLY_TEAM_ID", "chat_source": "UAPPLY_CHAT_SOURCE",
     "anychat_bin": "ANYCHAT_BIN", "claude_bin": "UAPPLY_CLAUDE_BIN", "codex_bin": "UAPPLY_CODEX_BIN",
-    "force_ocr": "UAPPLY_FORCE_OCR",
+    "force_ocr": "UAPPLY_FORCE_OCR", "task_runner": "UAPPLY_TASK_RUNNER",
 }
 TRUE_WORDS = ("1", "true", "yes", "on")
 RETIRED_KEYS = {"extra"}   # written by older versions; ignored
@@ -41,7 +41,8 @@ class Settings:
     auth0_domain: str = "uapply-prod-tenant.us.auth0.com"
     auth0_client_id: str = "q5ByF8FNi6byld0JmnkW2CkcWpHuzxXd"
     auth0_audience: str = "https://uapply.io"
-    runtime: str = "auto"          # auto | claude-code | codex
+    task_runner: str = "auto"      # auto | session | cli: where model tasks run (docs/architecture/runtime-modes.md)
+    runtime: str = "auto"          # auto | claude-code | codex (headless CLI for `run` and task_runner=cli)
     model: str = ""                # runtime default when empty
     installed_sha: str = ""        # commit the installer put in ~/.local/bin (versions/<sha>/ carry their own)
     auto_update: bool = True       # at `mcp` / `run` start, switch to the newest build of main

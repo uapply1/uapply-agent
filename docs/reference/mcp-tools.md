@@ -40,7 +40,7 @@ local-agent API (`AGENT_API_UNAVAILABLE` otherwise).
 
 | Tool | Input | Output |
 |---|---|---|
-| `whoami` | none | `backend`, `logged_in`, `agent_api` (whether the backend serves the local-agent API; `null` when not logged in), `runtimes` (`name`, `path`, `logged_in` for Claude Code, `error` when the binary does not start), `acrobat` (`available`, `path`, `reason` for Adobe Acrobat Pro), `folder`, `case`; a `hint` when no runtime is installed, none starts, or the Claude Code CLI is not signed in |
+| `whoami` | none | `backend`, `logged_in`, `agent_api` (whether the backend serves the local-agent API; `null` when not logged in), `task_runner` (`session`: tasks run as subagents of this session on the RCIC's own login; `cli`: a headless Claude Code / Codex CLI), `runtimes` (`name`, `path`, `logged_in` for Claude Code, `error` when the binary does not start), `acrobat` (`available`, `path`, `reason` for Adobe Acrobat Pro), `folder`, `case`; in cli mode a `hint` when no runtime is installed, none starts, or the Claude Code CLI is not signed in |
 | `set_folder` | `path` (absolute directory) | `folder`, `case`; points the server at another client folder |
 | `case_status` | none | server-side status of the folder's case: documents by status, agent tasks, failures. On a backend without the local-agent API, the survey's own document counts. Called first in every session |
 | `init_case` | `survey_id`, `llm_mode?` (`local_agent` \| `server`, default `local_agent`) | `case` (the stored `.uapply/case.json`), `chat_uploads` (queued transcripts filed now), `warning` when the backend has no local-agent API and the case was bound in server mode |
@@ -61,7 +61,7 @@ local-agent API (`AGENT_API_UNAVAILABLE` otherwise).
 |---|---|---|
 | `start_processing` | `document_ids?` (default: every uploaded, failed or stopped top-level document of a processable type) | `started`: `document_id`, `ok`, `message` per document. Uploads alone never start processing for agent cases; this also retries failed documents |
 | `start_analysis` | none | starts the analysis, or runs it again after sections failed. `started`, `message`, `progress`; refused with `PROCESSING_NOT_DONE` while documents are still processing or not started |
-| `run_tasks` | `max_tasks?`, `workers?` (default 2, at most 4), `kinds?`, `budget_s?` (default 90, clamped to 20-300) | runs queued agent tasks in fresh headless runtime processes, then returns `runtime`, `accepted`, `rejected`, `released`, `failed`, `plan_limited`, `runtime_error`, `remaining`, `model_calls`, `text_layer_docs`, `failures`, and `progress` (per-document snapshot). Call again while `remaining` > 0 |
+| `run_tasks` | `max_tasks?`, `workers?` (default 2; at most 4 in cli mode, 8 briefs per round in session mode), `kinds?`, `budget_s?` (cli mode; default 90, clamped to 20-300) | `mode: "session"`: pulls tasks, finishes those that need no model (PDF text layers), writes one brief per remaining task and returns `tasks` (`task_id`, `kind`, `document`, `brief` path, `pages`), `submitted`, `failed`, `remaining`, `progress`; the conversation spawns one `uapply:task-runner` subagent per brief. `mode: "cli"`: runs the tasks in headless runtime processes and returns `runtime`, `accepted`, `rejected`, `released`, `failed`, `plan_limited`, `runtime_error`, `remaining`, `model_calls`, `text_layer_docs`, `failures`, `progress`. Call again while `remaining` > 0 |
 | `wait_for_stage` | `stage` (`processing` \| `analysis` \| `filling`, default `processing`), `timeout_s?` (default 45, at most 60) | the backend's stage status (including `done`) plus `progress`; returns early when the stage completes |
 | `task_stats` | none | `stats`: agent task counts by status for the case |
 | `set_llm_mode` | `llm_mode` (`local_agent` \| `server`) | `llm_mode`; only after the RCIC asked for the switch |
@@ -101,8 +101,20 @@ Optional, through the AnyChat CLI; see
 |---|---|---|
 | `chat_sources` | none | `sources`: `source`, `ok`, `state` (`ok` \| `not_installed` \| `unsupported_platform` \| `not_logged_in` \| `cli_error` \| `disabled`), `detail`, `hint` |
 | `chat_find_contact` | `name` | `candidates`: `display_name`, `kind` (`friend` \| `group`); raw chat ids are not returned |
-| `chat_fetch` | `contact`, `days?` (default: setting `chat_default_days`, 180) | saves the transcript under `.uapply/chat/`, derives intake hints with the RCIC's runtime (headless), and files the transcript on the case unless `chat_upload` is off. Returns `transcript` (`source`, `contact`, `from`, `to`, `path`, `messages`, `chars`), `intake` (hints or `null`), `upload` (the filed document, `"queued"` when no case is bound yet, or `"disabled"`), `usage`, and `intake_error` when the hint call failed. Raw WeChat ids in the result are replaced with `[id]`; message bodies are not returned |
+| `chat_fetch` | `contact`, `days?` (default: setting `chat_default_days`, 180) | saves the transcript under `.uapply/chat/` and files it on the case unless `chat_upload` is off. Intake hints: in session mode the result carries `intake_brief` (spawn the task-runner with it, then call `intake_hints`); in cli mode `intake` is derived here with the headless runtime. Returns `transcript` (`source`, `contact`, `from`, `to`, `path`, `messages`, `chars`), `intake` (hints or `null`), `intake_brief` (session mode), `upload` (the filed document, `"queued"` when no case is bound yet, or `"disabled"`), `usage`, and `intake_error` when the hint call failed. Raw WeChat ids in the result are replaced with `[id]`; message bodies are not returned |
 | `chat_upload` | `path?` | files one fetched transcript (`document_id`, `pdf`, `already_filed`) or, without `path`, every queued one (`uploads`) on the bound case as an Agent Survey PDF |
+
+## Task runner (session mode)
+
+Used by the `uapply:task-runner` subagent, never by the conversation itself. A brief (`task.md` in
+`.uapply/cache/<task id>/`) holds the task's instructions, inputs, JSON schema and how to submit.
+
+| Tool | Input | Output |
+|---|---|---|
+| `submit_task` | `task_id`, `result` (the JSON object) | checks the result against the task's schema, sends it to uApply and relays the verdict: `accepted`, `final` (the task is closed either way), `feedback` (what to fix when rejected), `task_status`. `UNKNOWN_TASK` when no brief exists for the id |
+| `release_task` | `task_id`, `reason` | gives the task back to the queue |
+| `submit_intake` | `transcript` (path), `hints` (the JSON object) | validates the intake hints (a suggested application type outside the catalog is dropped) and stores them for the transcript; `accepted` with `feedback` when invalid |
+| `intake_hints` | `transcript` (path) | the stored intake hints, with raw chat ids replaced; `NO_HINTS` before the subagent submitted them |
 
 ## Deliberately absent
 

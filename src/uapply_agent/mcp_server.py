@@ -13,9 +13,9 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 
-from . import cases, playbook, uploads
+from . import briefs, cases, playbook, uploads
 from .acrobat import detect as detect_acrobat
 from .api import NO_AGENT_API_HINT, ApiError
 from .autofill import AutoFiller
@@ -24,12 +24,14 @@ from .chat.anychat import AnyChatSource
 from .chat.base import ChatError
 from .chat.store import ChatStore, strip_chat_ids
 from .constants import DONE_ANALYSIS, HEIC_EXTENSIONS, PREVIEWABLE_IMAGES
-from .context import ServerContext, ToolError, ok
+from .context import ServerContext, ToolError, ok, runner_mode
 from .executor import Executor
 from .folder import WorkingFolder
 from .local_ops import heic_to_jpeg, pdf_page_count, render_pdf_page
-from .runners import detect_runtimes, get_runner
+from .runners import RunnerError, detect_runtimes, get_runner
 from .runners.claude_code import claude_logged_in
+from .session_runner import RUNTIME as SESSION_RUNTIME
+from .session_runner import SessionRunner
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,17 @@ def tool(requires: Literal["case", "agent_api"] | None = None):
     return decorate
 
 
+def _client_name(mcp_ctx: Context | None) -> str | None:
+    try:
+        return mcp_ctx.session.client_params.client_info.name
+    except AttributeError:
+        return None
+
+
+def _mode(mcp_ctx: Context | None) -> str:
+    return runner_mode(ctx.settings.task_runner, _client_name(mcp_ctx))
+
+
 def _with_progress(out: dict) -> dict:
     try:
         out["progress"] = cases.progress(ctx.api.survey(ctx.survey_id))
@@ -100,17 +113,21 @@ def _claude_login_state(path: str) -> bool | None:
 
 
 @tool()
-def whoami() -> dict:
-    """Backend URL, login state, whether the backend serves the local-agent API, detected runtimes
-    (name + absolute path + sign-in state), Adobe Acrobat availability, and the working folder."""
+def whoami(mcp_ctx: Context | None = None) -> dict:
+    """Backend URL, login state, whether the backend serves the local-agent API, where model tasks run
+    (`task_runner`: "session" = subagents of this session on your login, "cli" = a headless Claude Code /
+    Codex CLI), detected CLI runtimes, Adobe Acrobat availability, and the working folder."""
     api = ctx.api
+    mode = _mode(mcp_ctx)
     runtimes = detect_runtimes(ctx.settings)
     for r in runtimes:
         if r["name"] == "claude-code" and not r.get("error"):
             r["logged_in"] = _claude_login_state(r["path"])
     out = ok(backend=ctx.settings.backend_url, logged_in=api.logged_in,
-             agent_api=api.agent_api_available() if api.logged_in else None, runtimes=runtimes,
+             agent_api=api.agent_api_available() if api.logged_in else None, task_runner=mode, runtimes=runtimes,
              acrobat=detect_acrobat(probe=False), folder=str(ctx.folder.root), case=ctx.folder.case or None)
+    if mode == "session":
+        return out                       # tasks run in this session; a CLI is not needed
     if runtimes and all(r.get("error") for r in runtimes):
         out["hint"] = (f"{runtimes[0]['name']} is installed but does not start on this machine "
                        f"({runtimes[0]['error']}); local tasks cannot run — tell the RCIC, do not retry")
@@ -296,15 +313,48 @@ def final_report(download: bool = True) -> dict:
 
 @tool(requires="agent_api")
 def run_tasks(max_tasks: int | None = None, workers: int = 2, kinds: list[str] | None = None,
-              budget_s: int = 90) -> dict:
-    """Execute queued agent tasks in fresh headless runtime processes for up to `budget_s` seconds
-    (running tasks finish first), then return counts plus per-document `progress`. Call it again while
-    `remaining` > 0, reporting one progress line to the RCIC between calls."""
+              budget_s: int = 90, mcp_ctx: Context | None = None) -> dict:
+    """Run the case's queued model tasks. `mode: "session"` (Claude Code): the result lists task briefs;
+    spawn one `uapply:task-runner` subagent per brief (prompt: "Task brief: <path>"), all at once, wait
+    for them, then call again — tasks that need no model are finished here. `mode: "cli"`: tasks ran
+    in headless runtime processes for up to `budget_s` seconds. Either way: counts, `remaining` and
+    per-document `progress`; call again while `remaining` > 0, one progress line to the RCIC between calls."""
     s = ctx.settings
+    if _mode(mcp_ctx) == "session":
+        rnd = SessionRunner(ctx.api, ctx.folder, force_ocr=s.force_ocr).prepare_round(workers or s.workers, kinds)
+        out = ok(**rnd.as_dict(), remaining=_remaining())
+        return _with_progress(out)
     ex = Executor(ctx.api, ctx.folder, runner=get_runner(s.runtime, s.model, s), force_ocr=s.force_ocr,
                   timeout_s=s.task_timeout_s)
     stats = ex.run(max_tasks=max_tasks, workers=workers or s.workers, kinds=kinds, budget_s=_time_box(budget_s))
-    return _with_progress(ok(runtime=ex.runner.name, **stats.as_dict()))
+    return _with_progress(ok(mode="cli", runtime=ex.runner.name, **stats.as_dict()))
+
+
+def _remaining() -> int:
+    st = ctx.api.task_stats(ctx.survey_id)
+    return int(st.get("queued", 0)) + int(st.get("leased", 0))
+
+
+@tool(requires="agent_api")
+def submit_task(task_id: str, result: dict) -> dict:
+    """For the task-runner subagent: send a task's JSON result to uApply. Returns `accepted: true`, or
+    `accepted: false` with `feedback` to fix (submit once more), or `final: true` when the task is closed."""
+    info = briefs.read_task_file(ctx.folder, task_id)
+    if info is None:
+        raise ToolError("UNKNOWN_TASK", f"no brief for task {task_id} in this folder")
+    if err := briefs.schema_check(info["schema"], result):
+        return ok(accepted=False, final=False,
+                  feedback=f"the result is invalid ({err}); return JSON matching the schema")
+    verdict = briefs.submit(ctx.api, task_id, info["kind"], result, "session", SESSION_RUNTIME, {}, "session")
+    return ok(accepted=verdict.accepted, final=verdict.final, feedback=verdict.feedback,
+              task_status=verdict.task_status)
+
+
+@tool(requires="agent_api")
+def release_task(task_id: str, reason: str) -> dict:
+    """For the task-runner subagent: give a task back to the queue when it cannot be done, with the reason."""
+    ctx.api.release_task(task_id, reason)
+    return ok(released=True)
 
 
 @tool(requires="agent_api")
@@ -378,11 +428,13 @@ def chat_find_contact(name: str) -> dict:
 
 
 @tool()
-def chat_fetch(contact: str, days: int | None = None) -> dict:
-    """Fetch the chat history with one contact the RCIC named, derive intake hints with the local
-    runtime (headless, the RCIC's plan), and file the transcript on the case as an Agent Survey document
-    (queued until a case is bound). Message bodies never enter this conversation."""
-    from .chat.intake import run_intake
+def chat_fetch(contact: str, days: int | None = None, mcp_ctx: Context | None = None) -> dict:
+    """Fetch the chat history with one contact the RCIC named, file the transcript on the case as an
+    Agent Survey document (queued until a case is bound), and derive intake hints on the RCIC's plan:
+    in session mode the result carries `intake_brief` — spawn a `uapply:task-runner` subagent with
+    "Task brief: <path>", then call `intake_hints`; in cli mode `intake` is filled here.
+    Message bodies never enter this conversation."""
+    from .chat.intake import intake_prompts, run_intake
     src = _chat_source()
     avail = src.available()
     if not avail.ok:
@@ -391,16 +443,19 @@ def chat_fetch(contact: str, days: int | None = None) -> dict:
     transcript = src.fetch(contact, int(days or s.chat_default_days), ctx.folder.chat)
     store = ChatStore(ctx.folder)
     store.record(transcript)
-    hints, usage, intake_error = None, {}, ""
-    try:
-        runner = get_runner(s.runtime, s.model, s)
-        h, usage = run_intake(runner, transcript, ctx.api.application_types(), ctx.folder.cache / "chat",
-                              max_chars=s.chat_max_chars)
-        hints = h.model_dump()
-        store.save_intake(transcript, hints)
-    except Exception as e:  # the transcript is still useful without hints
-        logger.warning("chat intake failed", exc_info=True)
-        intake_error = f"{type(e).__name__}: {str(e)[:200]}"
+    hints, usage, intake_error, brief = None, {}, "", None
+    if _mode(mcp_ctx) == "session":
+        brief = _intake_brief(transcript, intake_prompts)
+    else:
+        try:
+            runner = get_runner(s.runtime, s.model, s)
+            h, usage = run_intake(runner, transcript, ctx.api.application_types(), ctx.folder.cache / "chat",
+                                  max_chars=s.chat_max_chars)
+            hints = h.model_dump()
+            store.save_intake(transcript, hints)
+        except (RunnerError, ApiError, ValueError) as e:  # the transcript is still useful without hints
+            logger.warning("chat intake failed", exc_info=True)
+            intake_error = f"{type(e).__name__}: {str(e)[:200]}"
     if not s.chat_upload:
         upload = "disabled"
     elif ctx.folder.survey_id:
@@ -409,9 +464,57 @@ def chat_fetch(contact: str, days: int | None = None) -> dict:
         store.queue_upload(transcript.path)
         upload = "queued"
     out = {"transcript": transcript.public(), "intake": hints, "upload": upload, "usage": usage}
+    if brief:
+        out["intake_brief"] = str(brief)
     if intake_error:
         out["intake_error"] = intake_error
     return ok(**json.loads(strip_chat_ids(json.dumps(out, ensure_ascii=False))))
+
+
+def _intake_brief(transcript, intake_prompts) -> Path:
+    """The intake call as a brief for the task-runner subagent (session mode)."""
+    from .chat.intake import IntakeHints
+    s = ctx.settings
+    cwd = ctx.folder.cache / "chat"
+    system, user, src_file = intake_prompts(transcript, ctx.api.application_types(), cwd, max_chars=s.chat_max_chars)
+    task = {"id": f"intake-{transcript.path.stem}", "kind": "chat_intake",
+            "payload": {"system_prompt": system, "user_prompt": user, "output_schema": IntakeHints.model_json_schema()}}
+    return briefs.write_brief(ctx.folder, task, [], [src_file], submit_lines=[
+        f"Call the `submit_intake` tool with `transcript: \"{transcript.path}\"` and your JSON object as `hints`.",
+        "If it answers `accepted: false` with `feedback`, fix the answer and submit once more.",
+        "Do not write files. Your final message is one line: the task id and accepted or rejected.",
+    ])
+
+
+@tool()
+def submit_intake(transcript: str, hints: dict) -> dict:
+    """For the task-runner subagent: store the intake hints derived from a fetched transcript."""
+    from .chat.base import Transcript
+    from .chat.intake import validate_hints
+    path = Path(transcript)
+    if not path.is_file():
+        raise ToolError("UNKNOWN_TRANSCRIPT", f"{transcript} is not a fetched transcript")
+    try:
+        valid = validate_hints(hints, ctx.api.application_types())
+    except ValueError as e:
+        return ok(accepted=False, feedback=f"the hints are invalid ({str(e)[:300]}); return JSON matching the schema")
+    store = ChatStore(ctx.folder)
+    row = store.row(path)
+    store.save_intake(Transcript(row.get("source", "chat"), row.get("contact", path.stem), row.get("from", ""),
+                                 row.get("to", ""), path), valid.model_dump())
+    return ok(accepted=True)
+
+
+@tool()
+def intake_hints(transcript: str) -> dict:
+    """The intake hints stored for a fetched transcript (after the task-runner subagent submitted them)."""
+    path = Path(transcript)
+    p = ChatStore(ctx.folder).dir / (path.stem + ".intake.json")
+    if not p.exists():
+        raise ToolError("NO_HINTS", f"no intake hints for {path.name} yet",
+                        "spawn the task-runner with the intake brief first")
+    return ok(**json.loads(strip_chat_ids(json.dumps({"intake": json.loads(p.read_text(encoding="utf-8"))},
+                                                        ensure_ascii=False))))
 
 
 @tool(requires="case")

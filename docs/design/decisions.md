@@ -286,6 +286,34 @@ call nobody picks up fails after 10 min (`AGENT_IDLE_TIMEOUT_S`). Dashboard
 saves on a local case need an active agent (409 `AGENT_REQUIRED` otherwise).
 The backend needs the `agent_queue` worker for local cases to progress.
 
+## D15. In Claude Code, tasks run as subagents of the RCIC's own session
+
+**Decision.** When the MCP client is Claude Code (`task_runner` `auto` →
+`session`), `run_tasks` does not spawn a headless `claude -p`. It prepares one
+brief per task (`.uapply/cache/<task id>/task.md`: instructions, task, schema,
+files, how to submit) and the conversation spawns a `uapply:task-runner`
+subagent per brief. The agent ships with the plugin `setup` writes; its tools
+are Read, `submit_task` and `release_task`, it inherits the session's model
+and it runs in the background with a fresh context. Codex and `uapply-agent
+run` keep the headless runner.
+
+**Why.** The Claude desktop app and the `claude` CLI keep separate logins
+(anthropics/claude-code#62206), so the headless runner made an RCIC sign in to
+Claude twice and the installer download the 250 MB CLI. Claude Code has no
+MCP sampling, so the server cannot ask the host to run a model call; a
+subagent is the one thing that runs on the session's login and plan with an
+isolated context. Codex's app and CLI already share one login.
+
+**Alternatives.** *Run the task in the conversation itself*: rejected, the
+prompt would be data instead of a system prompt and the conversation would
+fill with document text. *MCP sampling*: not supported by Claude Code.
+
+**Consequences.** The conversation orchestrates one more step (spawn, wait,
+call again) and must never read a brief. A subagent's requests count toward the
+same usage limits as the conversation. `submit_task` repeats the local schema
+check and relays uApply's rejection as feedback for one more attempt. The
+Claude Code CLI is optional (`UAPPLY_INSTALL_CLAUDE_CLI=1`).
+
 ## Open questions
 
 - **Billing model.** Local-token cases cost uApply almost nothing in LLM spend;

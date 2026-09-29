@@ -35,7 +35,7 @@ planned; documents that describe them say so.
 | [architecture/case-workflow.md](architecture/case-workflow.md) | End-to-end stages (intake, upload, processing, analysis, finishing) with the points where the RCIC is asked |
 | [architecture/working-folder.md](architecture/working-folder.md) | Layout of the client folder, `.uapply/` manifest and case state, idempotent sync |
 | [architecture/chat-sources.md](architecture/chat-sources.md) | Optional WeChat intake through the AnyChat CLI: fetch, local intake hints, agent_survey upload, create_case |
-| [architecture/runtime-modes.md](architecture/runtime-modes.md) | One headless executor per task; interactive (chat orchestrates) vs batch (CLI orchestrates); subscription usage limits |
+| [architecture/runtime-modes.md](architecture/runtime-modes.md) | Two task runners (session subagents in Claude Code, headless CLI otherwise) over one preparation path; interactive vs batch; subscription usage limits |
 
 ## Reference
 
@@ -72,7 +72,9 @@ uapply-agent/
     ├── cases.py             # bind a folder to a case, create cases, read progress
     ├── uploads.py           # upload folder files without duplicating case documents
     ├── folder.py            # working folder: scan, sha256, manifest.json, case.json under .uapply/
-    ├── executor.py          # pull task, resolve inputs, spawn runtime, validate, submit
+    ├── briefs.py            # task preparation shared by both runners; briefs for subagents
+    ├── session_runner.py    # tasks as subagents of the Claude Code session
+    ├── executor.py          # headless runner: pull task, prepare, spawn runtime, validate, submit
     ├── runners/             # headless runtime drivers: claude_code.py (supported), codex.py (experimental)
     ├── local_ops.py         # page rendering, PDF text layer, HEIC to JPEG (no model)
     ├── autofill.py          # IMM PDF auto-fill: local Acrobat Pro, or uApply's platform filler

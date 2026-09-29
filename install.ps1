@@ -1,12 +1,13 @@
 # uapply-agent installer for Windows. In a normal (non-administrator) PowerShell window:
 #   irm https://raw.githubusercontent.com/uapply1/uapply-agent/main/install.ps1 | iex
 #
-# Installs uv and the Claude Code CLI when missing, installs the uapply-agent CLI, registers it with
-# Claude Code and Codex, and signs in to Claude and uApply. Run it again at any time to upgrade.
+# Installs uv and the uapply-agent CLI, registers it with Claude Code and Codex, and signs in to
+# uApply. Run it again at any time to upgrade.
 #
 # Environment:
 #   UAPPLY_AGENT_SOURCE        install from this pip source instead of the latest commit of main
-#   UAPPLY_SKIP_CLAUDE_INSTALL do not install the Claude Code CLI
+#   UAPPLY_INSTALL_CLAUDE_CLI  also install the Claude Code CLI (for `uapply-agent run` in a
+#                              terminal; Claude Code sessions run tasks without it)
 #   UAPPLY_ALLOW_ADMIN         allow running in an elevated window (not recommended)
 $ErrorActionPreference = "Stop"
 
@@ -159,13 +160,13 @@ if ($claudeCmd -and -not (Test-Runs $claudeCmd)) {
 $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
 $build = [int]([Environment]::OSVersion.Version.Build)
 $tooOld = $build -lt 17763 -or -not [Environment]::Is64BitOperatingSystem
-if (-not $haveRuntime -and $tooOld) {
-  Write-Warning ("This Windows ($($os.Caption), build $build) is too old for Claude Code, which needs Windows 10 " +
-                 "version 1809 / Windows Server 2019 or later (64-bit). uApply will install, but local AI tasks cannot " +
-                 "run on this machine: use a newer PC, or have the case processed in server mode.")
+$wantCli = [bool]$env:UAPPLY_INSTALL_CLAUDE_CLI
+if ($wantCli -and -not $haveRuntime -and $tooOld) {
+  Write-Warning ("This Windows ($($os.Caption), build $build) is too old for the Claude Code CLI, which needs " +
+                 "Windows 10 version 1809 / Windows Server 2019 or later (64-bit). uApply installs without it.")
 }
-if (-not $haveRuntime -and -not $tooOld -and -not $env:UAPPLY_SKIP_CLAUDE_INSTALL) {
-  Write-Host "Installing the Claude Code CLI (runs uApply's AI tasks on your Claude plan)..."
+if ($wantCli -and -not $haveRuntime -and -not $tooOld) {
+  Write-Host "Installing the Claude Code CLI (for uapply-agent run in a terminal)..."
   try {
     Install-ClaudeCli
   } catch {

@@ -2,12 +2,13 @@
 # uapply-agent installer for macOS and Linux:
 #   curl -LsSf https://raw.githubusercontent.com/uapply1/uapply-agent/main/install.sh | sh
 #
-# Installs uv and the Claude Code CLI when missing, installs the uapply-agent CLI, registers it with
-# Claude Code and Codex, and signs in to Claude and uApply. Run it again at any time to upgrade.
+# Installs uv and the uapply-agent CLI, registers it with Claude Code and Codex, and signs in to
+# uApply. Run it again at any time to upgrade.
 #
 # Environment:
 #   UAPPLY_AGENT_SOURCE        install from this pip source instead of the latest commit of main
-#   UAPPLY_SKIP_CLAUDE_INSTALL do not install the Claude Code CLI
+#   UAPPLY_INSTALL_CLAUDE_CLI  also install the Claude Code CLI (for `uapply-agent run` in a
+#                              terminal; Claude Code sessions run tasks without it)
 #
 # Everything runs inside main(), so a download cut short by the network cannot run half a script.
 
@@ -80,11 +81,11 @@ main() {
   agent="$(uv tool dir --bin)/uapply-agent"
   [ -x "$agent" ] || fail "uapply-agent was not installed at $agent"
 
-  # uApply's AI tasks run in a headless Claude Code (or Codex) CLI on the RCIC's own plan; the
-  # desktop apps do not provide one.
-  if ! command -v claude >/dev/null 2>&1 && ! command -v codex >/dev/null 2>&1 \
-     && [ ! -x "$HOME/.local/bin/claude" ] && [ -z "${UAPPLY_SKIP_CLAUDE_INSTALL:-}" ]; then
-    say "Installing the Claude Code CLI (runs uApply's AI tasks on your Claude plan)..."
+  # In Claude Code the tasks run inside the RCIC's own session. The CLI is only for `uapply-agent run`
+  # in a terminal (or Codex users, who have their own CLI), so it is optional.
+  if [ -n "${UAPPLY_INSTALL_CLAUDE_CLI:-}" ] && ! command -v claude >/dev/null 2>&1 \
+     && [ ! -x "$HOME/.local/bin/claude" ]; then
+    say "Installing the Claude Code CLI (for uapply-agent run in a terminal)..."
     # A failure here must not undo the uApply install; setup reports a missing CLI as well.
     curl -fsSL https://claude.ai/install.sh | bash || \
       say "WARNING: the Claude Code CLI is not installed. Run this installer again, or: curl -fsSL https://claude.ai/install.sh | bash"

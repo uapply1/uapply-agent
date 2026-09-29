@@ -1,53 +1,76 @@
 # Runtime Modes
 
-`uapply-agent` has **one task executor** and two ways to drive it. Every model
-call runs on the RCIC's Claude Code or Codex plan.
+Every model call runs on the RCIC's Claude Code or Codex plan, and never inside
+the conversation. Two task runners share one preparation path; the setting
+`task_runner` (`auto` | `session` | `cli`) chooses, and `auto` picks `session`
+when the MCP client is Claude Code.
 
-## One executor: a fresh headless runtime per task
+## Preparation, shared by both runners
 
-Agent tasks are never executed inside the RCIC's chat. The MCP server (or the
-CLI) executes them itself:
+For every pulled `AgentTask` the server downloads the input documents into
+`.uapply/cache/<task id>/`, extracts PDF text layers with pdfplumber (such a
+document is submitted at once, no model), renders the pages a model has to look
+at (the first three for classification, all of them for OCR), and writes long
+text inputs to files. A result is checked against the task's `output_schema`
+locally before it goes to uApply, and uApply's rejection comes back as feedback
+for one more attempt.
+
+## Session runner — subagents of the RCIC's own session (Claude Code)
+
+```
+run_tasks()  → briefs                       the conversation then, in one message:
+  └─ for each pulled task:                    Agent(subagent_type="uapply:task-runner",
+       prepare (above); write task.md:              prompt="Task brief: <path>")   × N
+       instructions, task, schema, files,   each subagent (fresh context, Read +
+       how to submit                        submit_task/release_task only):
+                                              reads the brief and its files,
+                                              calls submit_task(task_id, result)
+```
+
+- The `uapply:task-runner` agent ships with the plugin `setup` writes; it has
+  no `model` of its own, so it runs on the session's model, login and plan.
+- One Claude sign-in: the desktop app and the CLI do not share logins, and
+  Claude Code has no MCP sampling, so this is the only way a task can run on
+  the session's credentials.
+- The conversation never reads a brief or a document; it sees a one-line
+  status per subagent and the `progress` snapshot.
+
+## CLI runner — a fresh headless runtime per task (Codex, batch mode)
 
 ```
 run_tasks()  /  uapply-agent run
   └─ for each AgentTask (N workers):
-       1. pull task from the server; download its input documents into .uapply/cache/<task id>/;
-          render pages if needed (text-layer PDFs are extracted with pdfplumber, no model)
+       1. prepare (above)
        2. spawn the runtime headless with the task's prompt as a real system prompt
             Claude Code:  claude -p --system-prompt=… --json-schema … --output-format json
                           (only the Read tool; no MCP servers, plugins or settings)
             Codex:        codex exec --output-schema … (experimental)
-          long prompts and document text are written to files the model reads
-       3. check the JSON locally against output_schema; submit; retry with the rejection reason
+       3. check the JSON locally; submit; retry once with the rejection reason
   └─ return counts: accepted / rejected / released / failed, remaining, plan_limited, runtime_error
 ```
 
-Why this is the only executor:
+Why the work never runs in the conversation itself:
 
-- **The prompt is a system prompt, not data.** Inline execution in a chat
-  hands the model a `system_prompt` string and asks it to "run" it; that is
-  role-play and measurably worse than what the hosted model gets. Headless
-  runs pass it as the actual system prompt.
-- **Fresh context per task.** Every task sees the full prompt and only its
-  own inputs; no drift from earlier documents, no context growth, nothing
-  from the case leaks into the RCIC's chat.
-- **One code path to evaluate.** Interactive and batch produce identical
-  results because they run the same executor; the eval matrix collapses to
-  runtime × case, not runtime × mode × case.
-- **Same subscription, same machine.** The spawned runtime is the RCIC's own
-  Claude Code / Codex CLI, logged in as them. Nothing is proxied.
+- **The prompt is a system prompt, not data.** Inline execution hands the model
+  a `system_prompt` string and asks it to "run" it; that is role-play and
+  measurably worse than a real system prompt.
+- **Fresh context per task.** Every task sees the full prompt and only its own
+  inputs; no drift from earlier documents, no context growth, nothing from the
+  case leaks into the RCIC's conversation.
+- **Same subscription, same machine.** Subagent or headless process, it is the
+  RCIC's own Claude Code / Codex, logged in as them. Nothing is proxied.
 
-`--workers N` (default 2, max 4) runs N runtimes concurrently. Plan rate
-limits, not CPU, are the bottleneck. When the runtime reports a usage limit
-the executor releases its leases, reports `plan_limited` and stops; the case
-resumes on the next `run_tasks` / `run`. When the runtime cannot work at all
-(e.g. the Claude Code CLI is not signed in) it reports `runtime_error` and
-stops the same way.
+`--workers N` (default 2, max 4 headless processes; up to 8 briefs per round)
+bounds the parallelism. Plan rate limits, not CPU, are the bottleneck. When a
+headless runtime reports a usage limit the executor releases its leases,
+reports `plan_limited` and stops; the case resumes on the next `run_tasks` /
+`run`. When it cannot work at all (e.g. the Claude Code CLI is not signed in)
+it reports `runtime_error` and stops the same way.
 
-The MCP server finds the runtime's CLI by the absolute path `setup` recorded,
+The MCP server finds a runtime's CLI by the absolute path `setup` recorded,
 then `PATH`, then the installers' usual locations (desktop apps start the
-server with a minimal `PATH`). `whoami` reports which runtimes were detected,
-whether they start and whether Claude Code is signed in.
+server with a minimal `PATH`). `whoami` reports the task runner in use, which
+CLIs were detected, whether they start and whether Claude Code is signed in.
 
 ## Interactive — the RCIC orchestrates from a chat
 
@@ -81,8 +104,10 @@ $ uapply-agent run --follow --workers 3        # execute tasks until processing 
 $ uapply-agent run --folder ~/Clients/Li_Na    # one pass over the queued tasks of another folder
 ```
 
-- The CLI runs the same executor over the bound folder's queued tasks. No chat
-  model is involved except inside each spawned task.
+- The CLI runs the headless runner over the bound folder's queued tasks. No
+  chat model is involved except inside each spawned task. It needs the Claude
+  Code or Codex CLI installed and signed in (`UAPPLY_INSTALL_CLAUDE_CLI=1` for
+  the installer, or `claude auth login`).
 - It does not upload or start stages: the folder must already be bound
   (`uapply-agent init --survey <id>`) and processing or analysis started, e.g.
   from a chat session or the dashboard. `--follow` keeps going until
@@ -96,7 +121,7 @@ $ uapply-agent run --folder ~/Clients/Li_Na    # one pass over the queued tasks 
 | Situation | Mode |
 |---|---|
 | New case, intake decisions, uploads | Interactive |
-| Processing and analysis tasks | Either: same executor; interactive also starts the stages and shows progress |
+| Processing and analysis tasks | Either: same preparation and checks; interactive also starts the stages and shows progress |
 | Overnight, long task queue | Batch, `uapply-agent run --follow` |
 | Finishing (archives, forms, report) | Interactive |
 | Plan limit reached mid-run | Either: executor releases leases; running again later resumes |

@@ -269,10 +269,12 @@ class UApplyApi:
         return self._req("POST", f"{AGENT_PREFIX}surveys/{survey_id}/llm_mode/", json={"llm_mode": mode})
 
     def pull_tasks(self, survey_ids: list, n: int, session_id: str, runtime: str,
-                   kinds: list | None = None) -> list:
+                   kinds: list | None = None, lease_s: int | None = None) -> list:
         body = {"survey_ids": survey_ids, "n": n, "session_id": session_id, "runtime": runtime}
         if kinds:
             body["kinds"] = kinds
+        if lease_s:
+            body["lease_s"] = lease_s
         return self._req("POST", f"{AGENT_PREFIX}tasks/pull/", json=body)["tasks"]
 
     def submit_result(self, task_id: str, result: dict, model: str, runtime: str,

@@ -65,9 +65,10 @@ def cap_transcript(md_path: Path, max_chars: int, cwd: Path) -> Path:
     return out
 
 
-def run_intake(runner: Runner, transcript: Transcript, application_types: list[dict], cwd: Path,
-               max_chars: int = 200_000) -> tuple[IntakeHints, dict]:
-    """Returns (hints, usage). The catalog goes in the prompt; the transcript as a file to read."""
+def intake_prompts(transcript: Transcript, application_types: list[dict], cwd: Path,
+                   max_chars: int = 200_000) -> tuple[str, str, Path]:
+    """(system prompt, user prompt, transcript file to read). The catalog goes in the prompt; the
+    transcript is a file the model reads."""
     src = cap_transcript(transcript.path, max_chars, cwd)
     catalog = "\n".join(
         f"- id={t.get('id')} | {t.get('name')} | program={t.get('program')} visa_type={t.get('visa_type')} "
@@ -81,10 +82,22 @@ def run_intake(runner: Runner, transcript: Transcript, application_types: list[d
         f"quotes or options are not client facts.\n\n"
         f"Application type catalog (choose suggested_application_type_id from these ids only):\n{catalog}"
     )
-    rr = runner.run(system_prompt=system_prompt(), user_prompt=user_prompt, schema=IntakeHints.model_json_schema(),
-                    images=[], cwd=cwd, text_files=[src])
-    hints = IntakeHints.model_validate(rr.output)
-    if hints.application.suggested_application_type_id and hints.application.suggested_application_type_id not in {
-            str(t.get("id")) for t in application_types}:
+    return system_prompt(), user_prompt, src
+
+
+def validate_hints(raw: dict, application_types: list[dict]) -> IntakeHints:
+    """Hints as the model returned them, with a suggested type outside the catalog dropped."""
+    hints = IntakeHints.model_validate(raw)
+    known = {str(t.get("id")) for t in application_types}
+    if hints.application.suggested_application_type_id not in known:
         hints.application.suggested_application_type_id = None
-    return hints, rr.usage or {}
+    return hints
+
+
+def run_intake(runner: Runner, transcript: Transcript, application_types: list[dict], cwd: Path,
+               max_chars: int = 200_000) -> tuple[IntakeHints, dict]:
+    """One headless call (task_runner=cli). Returns (hints, usage)."""
+    system, user, src = intake_prompts(transcript, application_types, cwd, max_chars)
+    rr = runner.run(system_prompt=system, user_prompt=user, schema=IntakeHints.model_json_schema(),
+                    images=[], cwd=cwd, text_files=[src])
+    return validate_hints(rr.output, application_types), rr.usage or {}
