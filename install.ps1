@@ -85,7 +85,7 @@ if ($running) {
 }
 
 Write-Host "Installing uapply-agent from $Src ..."
-uv tool install --force --quiet $Src
+uv tool install --force --quiet --compile-bytecode $Src
 if ($LASTEXITCODE -ne 0) {
   $tools = "$env:APPDATA\uv\tools\uapply-agent"
   throw "uv tool install failed (exit $LASTEXITCODE). If it reported 'Access is denied' on $tools, close Claude Code / Codex, " +

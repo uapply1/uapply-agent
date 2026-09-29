@@ -75,7 +75,7 @@ main() {
   fi
 
   say "Installing uapply-agent from $src ..."
-  uv tool install --force --quiet "$src"
+  uv tool install --force --quiet --compile-bytecode "$src"
   uv tool update-shell >/dev/null 2>&1 || say "Note: add $(uv tool dir --bin) to your PATH."
   agent="$(uv tool dir --bin)/uapply-agent"
   [ -x "$agent" ] || fail "uapply-agent was not installed at $agent"

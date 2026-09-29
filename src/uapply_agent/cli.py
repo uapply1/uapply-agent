@@ -152,7 +152,7 @@ def _refresh_plugin() -> None:
 
 
 def cmd_mcp(args, settings):
-    maybe_delegate(args.argv, settings)
+    maybe_delegate(args.argv, settings, wait_s=0)   # never keep the client waiting for an install
     _refresh_plugin()
     if args.folder:
         os.environ["UAPPLY_FOLDER"] = str(Path(args.folder).resolve())

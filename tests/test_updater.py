@@ -39,7 +39,7 @@ def test_offline_starts_current(home, monkeypatch):
 
 def test_newer_already_installed_is_used_without_reinstalling(home, monkeypatch):
     cache_latest(B)
-    monkeypatch.setattr(up, "works", lambda exe: exe == up.version_exe(B))
+    monkeypatch.setattr(up, "works", lambda exe, *a: exe == up.version_exe(B))
     monkeypatch.setattr(up, "start_install", lambda sha: pytest.fail("must not reinstall"))
     assert up.resolve_target(settings(A)) == (up.version_exe(B), f"updated to {B[:7]}")
 
@@ -53,7 +53,7 @@ def test_newer_is_installed_then_used(home, monkeypatch):
             installed.append(B)
             return 0
     monkeypatch.setattr(up, "start_install", lambda sha: Proc())
-    monkeypatch.setattr(up, "works", lambda exe: bool(installed) and exe == up.version_exe(B))
+    monkeypatch.setattr(up, "works", lambda exe, *a: bool(installed) and exe == up.version_exe(B))
     target, reason = up.resolve_target(settings(A))
     assert target == up.version_exe(B) and installed == [B]
 
@@ -66,7 +66,7 @@ def test_slow_install_keeps_current_and_finishes_later(home, monkeypatch):
         def wait(self, timeout):
             raise subprocess.TimeoutExpired("uv", timeout)
     monkeypatch.setattr(up, "start_install", lambda sha: Slow())
-    monkeypatch.setattr(up, "works", lambda exe: False)
+    monkeypatch.setattr(up, "works", lambda exe, *a: False)
     target, reason = up.resolve_target(settings(A), wait_s=1)
     assert target is None and "next start" in reason
 
@@ -84,3 +84,39 @@ def test_running_sha_from_version_folder(home, monkeypatch):
     assert up.running_sha(settings(A)) == B
     monkeypatch.setattr(up.sys, "prefix", "/usr")
     assert up.running_sha(settings(A)) == A
+
+
+def test_mcp_start_never_waits_for_an_install(home, monkeypatch):
+    """MCP clients give the server ~30 s: the update is started in the background instead."""
+    cache_latest(B)
+    started = []
+
+    class Proc:
+        def wait(self, timeout):
+            pytest.fail("the MCP start must not wait for the install")
+    monkeypatch.setattr(up, "start_install", lambda sha: started.append(sha) or Proc())
+    monkeypatch.setattr(up, "works", lambda exe, *a: False)
+    target, reason = up.resolve_target(settings(A), wait_s=0)
+    assert target is None and started == [B] and "next start" in reason
+
+
+def test_an_install_in_progress_is_not_started_twice(home, monkeypatch):
+    cache_latest(B)
+    marker = up.versions_dir() / B / up.INSTALLING
+    marker.parent.mkdir(parents=True)
+    marker.write_text("now")
+    monkeypatch.setattr(up, "works", lambda exe, *a: False)
+    monkeypatch.setattr(up, "start_install", lambda sha: pytest.fail("already installing"))
+    target, reason = up.resolve_target(settings(A), wait_s=0)
+    assert target is None and "installing" in reason
+
+
+def test_a_verified_version_is_not_started_again_to_check_it(home, monkeypatch):
+    cache_latest(B)
+    exe = up.version_exe(B)
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    (up.versions_dir() / B / up.READY).write_text("now")
+    monkeypatch.setattr(up, "works", lambda exe, *a: pytest.fail("must not spawn --version"))
+    assert up.resolve_target(settings(A), wait_s=0) == (exe, f"updated to {B[:7]}")
+

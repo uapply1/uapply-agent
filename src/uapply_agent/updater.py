@@ -26,6 +26,8 @@ BRANCH = "main"
 ARCHIVE = "https://github.com/{repo}/archive/{sha}.zip"
 DELEGATED = "UAPPLY_AGENT_DELEGATED"      # set in the child so it does not check again
 CHECK_CACHE_S = 300
+READY, INSTALLING = ".ready", ".installing"   # markers in versions/<sha>/
+INSTALL_GRACE_S = 900                          # an install older than this is assumed to have died
 _WIN = sys.platform.startswith("win")
 
 
@@ -76,14 +78,35 @@ def latest_sha(timeout_s: float = 4.0) -> str | None:
     return sha
 
 
-def works(exe: Path) -> bool:
+def works(exe: Path, timeout_s: float = 60) -> bool:
     if not exe.exists():
         return False
     try:
-        r = subprocess.run([str(exe), "--version"], stdin=subprocess.DEVNULL, capture_output=True, timeout=60,
-                           check=False, env={**os.environ, DELEGATED: "1"})
+        r = subprocess.run([str(exe), "--version"], stdin=subprocess.DEVNULL, capture_output=True,
+                           timeout=timeout_s, check=False, env={**os.environ, DELEGATED: "1"})
         return r.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def ready(sha: str, check_timeout_s: float = 60) -> bool:
+    """Is that version installed and able to start? Checked once, then remembered with a marker."""
+    marker = versions_dir() / sha / READY
+    if marker.exists() and version_exe(sha).exists():
+        return True
+    if works(version_exe(sha), check_timeout_s):
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(str(time.time()), encoding="utf-8")
+        return True
+    return False
+
+
+def installing(sha: str) -> bool:
+    """An install of that version was started recently (by this or another session)."""
+    marker = versions_dir() / sha / INSTALLING
+    try:
+        return time.time() - marker.stat().st_mtime < INSTALL_GRACE_S
+    except OSError:
         return False
 
 
@@ -105,12 +128,14 @@ def start_install(sha: str) -> subprocess.Popen | None:
         return None
     root = versions_dir() / sha
     root.mkdir(parents=True, exist_ok=True)
+    (root / INSTALLING).write_text(str(time.time()), encoding="utf-8")
     source = os.environ.get("UAPPLY_AGENT_ARCHIVE", ARCHIVE).format(repo=REPO, sha=sha)
     env = {**os.environ, "UV_TOOL_DIR": str(root / "tools"), "UV_TOOL_BIN_DIR": str(root / "bin"),
            "UV_NO_MODIFY_PATH": "1"}
     detach = {"creationflags": subprocess.CREATE_NO_WINDOW} if _WIN else {"start_new_session": True}
     with open(root / "install.log", "ab") as log:   # the child keeps its own handle
-        return subprocess.Popen([uv, "tool", "install", "--force", "--quiet", f"uapply-agent @ {source}"],
+        return subprocess.Popen([uv, "tool", "install", "--force", "--quiet", "--compile-bytecode",
+                                 f"uapply-agent @ {source}"],
                                 stdin=subprocess.DEVNULL, stdout=log, stderr=log, env=env, **detach)
 
 
@@ -127,7 +152,9 @@ def prune(keep: set[str], max_versions: int = 3) -> None:
 
 
 def resolve_target(settings=None, wait_s: float = 25.0, say=None) -> tuple[Path | None, str]:
-    """Which executable should serve this start, and a one-line reason (for stderr / `update`)."""
+    """Which executable should serve this start, and a one-line reason (for stderr / `update`).
+    With wait_s=0 nothing waits for an install: a new version is used from the start after it is
+    ready (MCP clients give a server about 30 s to answer)."""
     say = say or (lambda _m: None)
     mine = running_sha(settings)
     latest = latest_sha()
@@ -135,20 +162,23 @@ def resolve_target(settings=None, wait_s: float = 25.0, say=None) -> tuple[Path 
         return None, "update check unavailable (offline?); starting the installed version"
     if latest == mine:
         return None, f"up to date ({latest[:7]})"
-    exe = version_exe(latest)
-    if works(exe):
-        return exe, f"updated to {latest[:7]}"
+    if ready(latest, check_timeout_s=max(wait_s, 10)):
+        return version_exe(latest), f"updated to {latest[:7]}"
+    if installing(latest) and not wait_s:
+        return None, f"update to {latest[:7]} is installing; it is used from the next start"
     say(f"uapply-agent: updating to {latest[:7]}...")
     proc = start_install(latest)
     if proc is None:
         return None, "update needs uv; starting the installed version"
+    if not wait_s:
+        return None, f"update to {latest[:7]} started; it is used from the next start"
     try:
         code = proc.wait(timeout=wait_s)
     except subprocess.TimeoutExpired:
         return None, f"update to {latest[:7]} is still installing; it is used from the next start"
-    if code == 0 and works(exe):
+    if code == 0 and ready(latest):
         prune({latest, mine or ""})
-        return exe, f"updated to {latest[:7]}"
+        return version_exe(latest), f"updated to {latest[:7]}"
     log = versions_dir() / latest / "install.log"
     return None, f"update to {latest[:7]} failed (see {log}); starting the installed version"
 
