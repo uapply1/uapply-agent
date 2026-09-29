@@ -138,3 +138,18 @@ def test_not_signed_in_stops_as_runtime_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(ClaudeCodeRunner, "_exec_env", lambda self, cmd, cwd, t, env, prompt: _completed(stdout=json.dumps(envelope)))
     with pytest.raises(RuntimeUnavailable, match="claude auth login"):
         ClaudeCodeRunner().run(system_prompt="s", user_prompt="u", schema={}, images=[], cwd=tmp_path)
+
+
+def test_schema_drops_2020_12_meta_schema_for_claude(monkeypatch, tmp_path):
+    """Claude Code's draft-07 Ajv rejects a 2020-12 `$schema` ("--json-schema is not a valid JSON Schema")."""
+    seen = {}
+    envelope = {"type": "result", "is_error": False, "structured_output": {"a": 1}, "result": "{}", "usage": {}}
+
+    def fake_exec(self, cmd, cwd, timeout_s, env, prompt):
+        seen["schema"] = json.loads(cmd[cmd.index("--json-schema") + 1])
+        return _completed(stdout=json.dumps(envelope))
+    monkeypatch.setattr(ClaudeCodeRunner, "_exec_env", fake_exec)
+    schema = {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+              "properties": {"langs": {"type": "array", "items": {"$ref": "#/$defs/L"}}}, "$defs": {"L": {"type": "string"}}}
+    ClaudeCodeRunner().run(system_prompt="s", user_prompt="u", schema=schema, images=[], cwd=tmp_path)
+    assert seen["schema"] == {"type": "object", "properties": {"langs": {"type": "array", "items": {"type": "string"}}}}

@@ -31,7 +31,8 @@ class RunResult:
 
 
 def inline_schema_refs(schema: dict) -> dict:
-    """Resolve local `$ref`s into place and drop `$defs`, for runtimes that only take flat schemas."""
+    """Resolve local `$ref`s into place and drop `$defs` and `$schema`, for runtimes that only take flat
+    schemas. Claude Code checks schemas with a draft-07 Ajv, which rejects a 2020-12 `$schema`."""
     defs = schema.get("$defs") or {}
 
     def walk(node, depth=0):
@@ -43,7 +44,7 @@ def inline_schema_refs(schema: dict) -> dict:
                 target = defs.get(ref.split("/")[-1], {})
                 merged = {**target, **{k: v for k, v in node.items() if k != "$ref"}}
                 return walk(merged, depth + 1)
-            return {k: walk(v, depth + 1) for k, v in node.items() if k != "$defs"}
+            return {k: walk(v, depth + 1) for k, v in node.items() if k not in ("$defs", "$schema")}
         if isinstance(node, list):
             return [walk(v, depth + 1) for v in node]
         return node
