@@ -32,12 +32,14 @@ class ClaudeCodeRunner(Runner):
         # Not --bare: bare mode only accepts ANTHROPIC_API_KEY, so a Claude Pro/Max sign-in is "Not logged
         # in". The isolation it gave comes from explicit flags: no MCP servers (else each task would start
         # the uapply server again), no skills/plugins, no user/project settings or hooks, Read only.
+        # The prompt goes on stdin and the system prompt as --system-prompt=…: text starting with "-"
+        # (e.g. "- Family Name: …") is otherwise parsed as an unknown option.
         cmd = [
-            self.binary, "-p", prompt,
+            self.binary, "-p",
             "--no-session-persistence",
             "--output-format", "json",
             "--json-schema", json.dumps(inline_schema_refs(schema)),
-            "--system-prompt", system_prompt,
+            f"--system-prompt={system_prompt}",
             "--tools", "Read",
             "--allowedTools", "Read",
             "--permission-mode", "dontAsk",
@@ -52,7 +54,7 @@ class ClaudeCodeRunner(Runner):
         env.update({"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
                     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_AUTOUPDATER": "1",
                     "UAPPLY_NO_UPDATE": "1"})
-        proc = self._exec_env(cmd, cwd, timeout_s, env)
+        proc = self._exec_env(cmd, cwd, timeout_s, env, prompt)
         raw = proc.stdout.strip()
         if proc.returncode != 0 and not raw:
             self._raise_if_limited(proc.stderr)
@@ -80,12 +82,11 @@ class ClaudeCodeRunner(Runner):
                                 "cost_usd": data.get("total_cost_usd")},
                          raw=raw)
 
-    def _exec_env(self, cmd, cwd, timeout_s, env):
+    def _exec_env(self, cmd, cwd, timeout_s, env, prompt):
         import subprocess
         try:
-            # stdin closed: `claude -p` otherwise waits 3 s on a non-TTY stdin and reads whatever arrives,
-            # which under the MCP server is the server's own protocol pipe.
-            return subprocess.run(cmd, cwd=str(cwd), stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            # Our own stdin pipe carries only the prompt: inherited, it would be the MCP server's protocol pipe.
+            return subprocess.run(cmd, cwd=str(cwd), input=prompt, capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", timeout=timeout_s, env=env)
         except FileNotFoundError as e:
             raise RunnerError(f"claude not found: {e}")
