@@ -51,7 +51,7 @@ local-agent API (`AGENT_API_UNAVAILABLE` otherwise).
 |---|---|---|
 | `scan_folder` | `include_manifested?` (default `false`) | `files`: `path`, `size`, `sha256`, `kind` (`pdf` \| `image` \| `office`), `applicant_hint` (first subfolder), `manifested`, `document_id` |
 | `preview_document` | `path`, `pages?` (`"1"` or a range such as `"1-3"`, at most 3 pages; default `"1"`) | PDF: `kind`, `page_count`, `pages`, `images` (PNG paths under `.uapply/cache/preview/`). Image: `kind`, `images` (HEIC converted to JPEG). Rendered locally; nothing is uploaded |
-| `list_document_types` | `query?` | `document_types` the case accepts: `id`, `name`, `file_name`, `category`, `requirement`, `can_process`; the generic Agent Survey row (`generic: true`, `use_for`) is for filled IMM forms only |
+| `list_document_types` | `query?` | `document_types` the case accepts: `id`, `name`, `file_name`, `category`, `requirement`, `can_process`, `description` (what belongs under the type, from the case checklist); the generic Agent Survey row (`generic: true`, `use_for`) is for filled IMM forms only |
 | `sync_documents` | `document_type_id`, `document_category?` (default: the type's category), `paths?` (default: every file not yet uploaded), `applicant?` (default `principal`), `archive_name?` (default: the type's own archive) | `uploaded` (count), `documents` (`path`, `document_id`, `file_name`), `skipped` (already uploaded), `already_on_server` (a case document of the same type, name and size, recorded instead of uploaded again), `failed` (`path`, `reason`) |
 | `list_documents` | none | `documents`: `id`, `file_name`, `status`, `document_type_id`, `page_of` (parent document of a page), `error` |
 

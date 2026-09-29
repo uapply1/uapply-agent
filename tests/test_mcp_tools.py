@@ -321,3 +321,17 @@ def test_confirm_refuses_after_failed_sections_unless_the_rcic_continues(bound, 
     assert m.confirm_documents(continue_with_failed_sections=True) == {"ok": True, "archives": 2,
                                                                        "failed_documents": [], "status": "ok"}
 
+
+
+def test_document_types_carry_their_description(bound, monkeypatch):
+    rel = {"id": "dt-rel", "name": "Proof of Relationship", "file_name": "proof_of_relationship",
+           "category": "inviter", "description": "", "description_cn": "与被访问者的关系证明:  配偶的结婚证公证\r\n等"}
+    monkeypatch.setattr(bound, "survey_document_types", lambda sid: [rel])
+    row = m.list_document_types()["document_types"][0]
+    assert row["description"] == "与被访问者的关系证明: 配偶的结婚证公证 等"
+
+
+def test_playbook_treats_folder_names_as_hints():
+    from uapply_agent import playbook
+    rules = playbook.instructions()
+    assert "Subfolder names" in rules and "Proof of Relationship" in rules

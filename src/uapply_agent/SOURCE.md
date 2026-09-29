@@ -30,6 +30,13 @@ Always:
   local-agent API: say so, tell the RCIC the case runs in server mode (uApply's
   own models process the documents), upload what is classified, and stop — do
   not call `run_tasks` or `wait_for_stage`.
+- Subfolder names are the RCIC's own grouping and only a hint. File each
+  document under the type whose name and `description` fit its content; one
+  folder can hold documents of several types. For an inviter's or sponsor's
+  documents pick the specific type: relationship proof (marriage or birth
+  certificates) under Proof of Relationship, their finances under Financial
+  Proof, their status (PR card, citizenship) under Current Status in Canada.
+  Ask the RCIC only when no type fits.
 - When a file's type is not obvious from its name, call `preview_document` and
   look at page 1 before asking the RCIC. Never guess a type from a filename.
 - IMM forms the client or a previous consultant filled (intake, draft or earlier

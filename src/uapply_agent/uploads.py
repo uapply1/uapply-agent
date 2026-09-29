@@ -10,6 +10,7 @@ from .folder import WorkingFolder
 from .local_ops import heic_to_jpeg
 
 AGENT_SURVEY_FILE_NAME = "agent_survey"
+DESCRIPTION_MAX = 300
 AGENT_SURVEY_USE = ("IMM forms only: filled intake, draft or previous IMM forms (e.g. IMM 5709, 5257, 5645, 5406), "
                     "including screenshots or scans. Not for other unmatched documents: ask the RCIC.")
 DOCUMENT_CATEGORIES = ("identity", "school", "financial", "spouse", "parent", "child", "language",
@@ -19,7 +20,8 @@ DOCUMENT_CATEGORIES = ("identity", "school", "financial", "spouse", "parent", "c
 def document_types(api: UApplyApi, survey_id: str, query: str = "") -> list[dict]:
     """The case's document types, plus the generic Agent Survey type for IMM forms."""
     rows = [{"id": t["id"], "name": t["name"], "file_name": t.get("file_name"), "category": t.get("category"),
-             "requirement": t.get("requirement"), "can_process": t.get("can_process")}
+             "requirement": t.get("requirement"), "can_process": t.get("can_process"),
+             "description": _description(t)}
             for t in api.survey_document_types(survey_id)]
     if not any(r["file_name"] == AGENT_SURVEY_FILE_NAME for r in rows):
         try:
@@ -31,6 +33,12 @@ def document_types(api: UApplyApi, survey_id: str, query: str = "") -> list[dict
             pass                        # the backend has no Agent Survey type; the case types still apply
     q = query.lower()
     return [r for r in rows if not q or q in f"{r['name']} {r['file_name']}".lower()]
+
+
+def _description(doc_type: dict) -> str:
+    """What the RCIC's checklist says belongs under the type (English, else Chinese)."""
+    text = (doc_type.get("description") or doc_type.get("description_cn") or "").strip()
+    return " ".join(text.split())[:DESCRIPTION_MAX]
 
 
 def _resolve_type(api: UApplyApi, survey_id: str, document_type_id: str) -> dict:
