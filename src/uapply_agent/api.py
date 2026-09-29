@@ -205,6 +205,28 @@ class UApplyApi:
         with open(pdf, "rb") as f:
             return self._req("POST", path, data=data, files={"file": (pdf.name, f, "application/pdf")}, timeout=300)
 
+    def report(self, survey_id: str) -> dict:
+        return self._req("GET", f"{AGENT_PREFIX}surveys/{survey_id}/report/", timeout=180)
+
+    def download_submit_package(self, survey_id: str, dest: Path) -> Path:
+        """The dashboard's "Build Final Package" zip, streamed to `dest`."""
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_name(dest.name + ".part")
+        path = f"/api/survey/surveys/{survey_id}/download_zip_submit_files/"
+        for attempt in range(2):
+            with self._client.stream("POST", path, json={}, timeout=httpx.Timeout(60, read=900)) as r:
+                if r.status_code == 401 and attempt == 0 and self._refresh_token():
+                    continue
+                if r.status_code >= 400:
+                    r.read()
+                    raise ApiError(r.status_code, r.text[:300])
+                with open(tmp, "wb") as f:
+                    for chunk in r.iter_bytes():
+                        f.write(chunk)
+            tmp.replace(dest)
+            return dest
+        raise ApiError(401, "not logged in", "log in with `uapply-agent login`")
+
     def autofill_finish(self, survey_id: str) -> dict:
         return self._req("POST", f"{AGENT_PREFIX}surveys/{survey_id}/autofill/finish/", json={})
 

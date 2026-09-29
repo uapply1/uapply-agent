@@ -113,6 +113,7 @@ the stage is done.
 | Tool | Input | Output |
 |---|---|---|
 | `autofill_forms` | `budget_s?` (default 90, 20–300) | fills the IMM PDFs: with Acrobat Pro on Windows locally (`mode: local`, `filled` / `failed` / `skipped`, `remaining` — call again while > 0), otherwise `mode: platform` (uApply's filler; loop `wait_for_stage("filling")`) |
+| `final_report` | `download?: bool` (default true) | `report_markdown` (show as is), `report_path`, `links` {case, ai_check, submit, online_portal}, `files` {package, forms}, `status`, `ai_check`, `online_portal` {eligible, ready} |
 | `autofill_preflight` | — | ok: bool, blockers: [{code, detail}], summary: {filled, missing, assumed} |
 | `request_autofill` | — | `approval_id`, `approval_url` — page shows the preflight summary; on approval the server starts auto-fill itself; fails if preflight blockers exist |
 | `autofill_status` | — | automation_status, imm pdf statuses |

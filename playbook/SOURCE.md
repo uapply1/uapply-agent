@@ -48,7 +48,10 @@ Always:
   `autofill_forms` until `remaining` is 0. It fills the IMM PDFs with Adobe
   Acrobat Pro on this PC when installed; otherwise it returns `mode: platform`
   (uApply fills them, no AI) and you loop `wait_for_stage("filling")` until
-  done. Report filled / failed forms by name.
+  done. Then call `final_report` and show its `report_markdown` as is: it has
+  the AI Check counts, the forms, where the final package was saved, and the
+  links to the Submit step and to start the online portal (the portal starts
+  from the dashboard, one click).
 - For processing (and analysis), loop: `run_tasks` (returns within about 90 s) →
   `wait_for_stage("processing")` (or `"analysis"`) until `done` is true and
   `remaining` is 0.
@@ -100,9 +103,8 @@ settle it, all unclear files in one question call. Upload with `sync_documents`,
 unless `agent_api` is false — `start_processing`, loop `run_tasks` /
 `wait_for_stage("processing")` until processing is done, then `start_analysis`
 and loop `run_tasks` / `wait_for_stage("analysis")` until the analysis is done,
-then `confirm_documents` and `autofill_forms` as above. Finish with a short
-summary: documents by status, tasks accepted, IMM forms filled (here or on
-uApply), anything waiting on the RCIC.
+then `confirm_documents`, `autofill_forms` and `final_report` as above. End
+with the report, then one line on anything waiting on the RCIC.
 
 ## prompt: intake-from-chat
 
@@ -121,3 +123,5 @@ completes automatically and starts processing. Then loop `run_tasks` →
 Call `case_status` and summarise it for the RCIC in five lines or fewer:
 case name and mode, documents by status, documents waiting on the agent, open
 agent tasks, failures.
+Once the analysis is done, call `final_report(download=false)` instead and show
+its `report_markdown`.

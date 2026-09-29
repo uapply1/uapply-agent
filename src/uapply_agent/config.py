@@ -22,6 +22,7 @@ class Settings:
     # Production defaults: the same Auth0 native client the desktop app uses
     # (Device Code + Refresh Token grants enabled). `config --set` switches tenants.
     backend_url: str = "https://api.uapply.io"
+    app_url: str = ""              # dashboard; empty = derived from backend_url (api.x → app.x)
     auth0_domain: str = "uapply-prod-tenant.us.auth0.com"
     auth0_client_id: str = "q5ByF8FNi6byld0JmnkW2CkcWpHuzxXd"
     auth0_audience: str = "https://uapply.io"
@@ -51,7 +52,8 @@ class Settings:
                 if hasattr(s, k):
                     setattr(s, k, v)
         # Environment overrides make CI and tests easy.
-        for k, env in (("backend_url", "UAPPLY_BACKEND_URL"), ("runtime", "UAPPLY_RUNTIME"), ("model", "UAPPLY_MODEL")):
+        for k, env in (("backend_url", "UAPPLY_BACKEND_URL"), ("app_url", "UAPPLY_APP_URL"), ("runtime", "UAPPLY_RUNTIME"),
+                       ("model", "UAPPLY_MODEL")):
             if os.environ.get(env):
                 setattr(s, k, os.environ[env])
         for k, env in (("team_id", "UAPPLY_TEAM_ID"), ("anychat_bin", "ANYCHAT_BIN"), ("chat_source", "UAPPLY_CHAT_SOURCE"),
@@ -62,6 +64,19 @@ class Settings:
             s.force_ocr = os.environ["UAPPLY_FORCE_OCR"].lower() in ("1", "true", "yes")
         s.backend_url = s.backend_url.rstrip("/")
         return s
+
+    @property
+    def dashboard_url(self) -> str:
+        if self.app_url:
+            return self.app_url.rstrip("/")
+        from urllib.parse import urlsplit
+        u = urlsplit(self.backend_url)
+        host = u.hostname or ""
+        if host in ("localhost", "127.0.0.1"):
+            return f"{u.scheme}://{host}:8080"
+        if host.startswith("api."):
+            return f"{u.scheme}://app.{host[4:]}"
+        return f"{u.scheme}://{host}"
 
     def save(self) -> None:
         d = config_dir()

@@ -209,6 +209,15 @@ Acrobat's IAC automation and uploads the result; copies land in
 failing — uApply's own filler does it (no AI). `uapply-agent acrobat` checks the
 PC; `uapply-agent acrobat --pdf IMM5709.pdf` test-fills one field.
 
+The run ends with `final_report`: the dashboard's Submit step in the chat — status,
+AI Check conflicts / doubtful / missing, documents, IMM forms with fill rate,
+archives — saved as `uApply output/report.md` next to the final package zip
+(forms unpacked in `uApply output/Forms/`). Its links open the dashboard on the
+right step (`?step=ai_check`, `?step=submit`) and, for PR cases, on a one-click
+"Start online portal" (`?step=submit&portal=1`): the IRCC portal automation runs
+through the uApply Chrome extension, which only the dashboard page can talk to.
+The dashboard host comes from `app_url` (default: `api.` → `app.` of the backend).
+
 ## Layout
 
 ```

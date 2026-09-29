@@ -439,6 +439,21 @@ def autofill_forms(budget_s: int = 90) -> dict:
 
 
 @server.tool()
+def final_report(download: bool = True) -> dict:
+    """The case's end-of-run report — what the dashboard's Submit step shows: status, AI Check
+    conflicts/doubtful/missing, documents, IMM forms with fill rate, archives, and links to the Submit
+    step and to start the online portal. With `download` the final package is saved to
+    "uApply output/" in the client folder. Show `report_markdown` to the RCIC as is."""
+    if e := _need_agent_api():
+        return e
+
+    def go():
+        from .report import build
+        return _ok(**build(api(), _folder, _settings, download=bool(download)))
+    return _wrap(go)
+
+
+@server.tool()
 def run_tasks(max_tasks: Optional[int] = None, workers: int = 2, kinds: Optional[list[str]] = None,
               budget_s: int = 90) -> dict:
     """Execute queued agent tasks in fresh headless runtime processes for up to `budget_s` seconds
