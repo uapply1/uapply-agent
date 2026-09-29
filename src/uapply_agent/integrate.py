@@ -99,9 +99,16 @@ def ensure_claude_login(claude: str, say: Callable[[str], None] = print, interac
     """The CLI has its own login, separate from the desktop app; headless tasks fail without it."""
     state = claude_logged_in(claude)
     if state is False and interactive:
-        say("Claude Code CLI: not signed in. Opening the Claude sign-in page (use your Claude Pro/Max account)...")
+        say("Claude Code CLI: not signed in. Opening the Claude sign-in (use your Claude Pro/Max account)...")
+        kw = {}
+        if os.name == "nt":
+            # Own console window: under `irm | iex` the child's stdin is not the keyboard, so the
+            # "Paste code here" prompt read an empty line and the token exchange failed with 400.
+            kw["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+            say("  A new window opens for the Claude sign-in. If no browser appears, open the link shown "
+                "there, sign in, and paste the code into that window.")
         try:
-            subprocess.run([claude, "auth", "login"], check=False, timeout=900)  # interactive: inherits the terminal
+            subprocess.run([claude, "auth", "login"], check=False, timeout=900, **kw)
         except (OSError, subprocess.TimeoutExpired):
             pass
         state = claude_logged_in(claude)

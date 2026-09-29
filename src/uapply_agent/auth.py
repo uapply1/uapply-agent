@@ -34,7 +34,14 @@ def device_login(settings: Settings, say: Callable[[str], None] = print, timeout
         if r is None or r.status_code != 200:
             raise LoginError(f"device code request failed: {r.status_code} {r.text[:200]}")
         d = r.json()
-        say(f"Open {d.get('verification_uri_complete') or d['verification_uri']} and confirm code {d['user_code']}")
+        url = d.get("verification_uri_complete") or d["verification_uri"]
+        say(f"Open {url} and confirm code {d['user_code']}")
+        try:  # best effort; the printed link is the fallback
+            import webbrowser
+            if webbrowser.open(url):
+                say("(opened in your browser)")
+        except Exception:
+            pass
         interval = int(d.get("interval", 5))
         deadline = time.monotonic() + min(timeout_s, int(d.get("expires_in", timeout_s)))
         while time.monotonic() < deadline:

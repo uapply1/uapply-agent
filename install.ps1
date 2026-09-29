@@ -4,6 +4,14 @@
 # it with Claude Code and Codex, and signs in to Claude and uApply. Re-run any time
 # to upgrade.
 $ErrorActionPreference = "Stop"
+
+# Elevated windows break this install: files end up owned by the administrator ("Access is denied" on
+# upgrade) and elevated programs often cannot open the browser for sign-in.
+$me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+if ($me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -and -not $env:UAPPLY_ALLOW_ADMIN) {
+  throw ("This PowerShell window is running as Administrator. Close it, open PowerShell normally " +
+         "(not 'Run as administrator'), and run the installer again.")
+}
 # A source archive, so Git is not required on the machine.
 $Src = if ($env:UAPPLY_AGENT_SOURCE) { $env:UAPPLY_AGENT_SOURCE } else { "uapply-agent @ https://github.com/uapply1/uapply-agent/archive/refs/heads/main.zip" }
 

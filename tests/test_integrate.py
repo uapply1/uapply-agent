@@ -123,3 +123,14 @@ def test_record_runtimes_prefers_a_build_that_starts(tmp_path, monkeypatch):
     runners.runtime_error.cache_clear()
     found = it.record_runtimes(Settings(), which=lambda n: str(broken) if n == "claude" else None)
     assert found == {"claude": str(native)}
+
+
+def test_claude_login_gets_its_own_console_on_windows(tmp_path, monkeypatch):
+    calls = []
+    states = iter([False, True])
+    monkeypatch.setattr(it, "claude_logged_in", lambda exe: next(states))
+    monkeypatch.setattr(it.os, "name", "nt")
+    monkeypatch.setattr(it.subprocess, "CREATE_NEW_CONSOLE", 0x10, raising=False)
+    monkeypatch.setattr(it.subprocess, "run", lambda cmd, **kw: calls.append((cmd, kw)))
+    assert it.ensure_claude_login("C:/claude.exe", say=lambda _: None) is True
+    assert calls[0][0][1:] == ["auth", "login"] and calls[0][1]["creationflags"] == 0x10
