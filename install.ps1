@@ -7,10 +7,40 @@ $ErrorActionPreference = "Stop"
 # A source archive, so Git is not required on the machine.
 $Src = if ($env:UAPPLY_AGENT_SOURCE) { $env:UAPPLY_AGENT_SOURCE } else { "uapply-agent @ https://github.com/uapply1/uapply-agent/archive/refs/heads/main.zip" }
 
+function Install-Uv {
+  # The official uv zip, checksum-verified, straight into ~\.local\bin. Not astral's install.ps1:
+  # under `irm | iex` its `exit 1` (e.g. on the default Restricted execution policy) closes this window.
+  [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+  $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "aarch64" } else { "x86_64" }
+  $name = "uv-$arch-pc-windows-msvc.zip"
+  $base = "https://github.com/astral-sh/uv/releases/latest/download"
+  $tmp = Join-Path ([IO.Path]::GetTempPath()) ("uv-" + [guid]::NewGuid())
+  New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+  try {
+    $zip = Join-Path $tmp $name
+    $prev = $ProgressPreference; $ProgressPreference = "SilentlyContinue"   # PS 5.1 progress bar slows downloads 10x
+    try {
+      for ($i = 1; $i -le 3; $i++) {
+        try { Invoke-WebRequest -Uri "$base/$name" -OutFile $zip -UseBasicParsing; break }
+        catch { if ($i -eq 3) { throw "could not download uv: $_" }; Start-Sleep -Seconds 3 }
+      }
+      $expected = ("$(Invoke-RestMethod -Uri "$base/$name.sha256")" -split "\s+")[0].ToLower()
+    } finally { $ProgressPreference = $prev }
+    if ((Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower() -ne $expected) { throw "uv download failed its checksum" }
+    Expand-Archive -Path $zip -DestinationPath $tmp -Force
+    $bin = Join-Path $env:USERPROFILE ".local\bin"
+    New-Item -ItemType Directory -Force -Path $bin | Out-Null
+    Get-ChildItem -Path $tmp -Recurse -Include "uv.exe", "uvx.exe", "uvw.exe" | Copy-Item -Destination $bin -Force
+    if (-not (Test-Path (Join-Path $bin "uv.exe"))) { throw "uv.exe not found in $name" }
+  } finally {
+    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+  }
+}
+
+$env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
   Write-Host "Installing uv (Python tool manager)..."
-  irm https://astral.sh/uv/install.ps1 | iex
-  $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
+  Install-Uv
 }
 
 # A running MCP server (an open Claude Code / Codex session) locks the exe on Windows.
