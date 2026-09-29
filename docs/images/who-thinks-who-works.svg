@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="700" viewBox="0 0 680 700" role="img">
+<title>uApply agent workflow: who thinks and who works</title>
+<desc>Four swimlanes: the RCIC decides; the chat model plans, reads pages and asks; the local agent renders, uploads, pulls tasks and runs headless Claude for OCR, sections and analysis; the uApply backend stores files, builds tasks, validates answers and saves values with no AI.</desc>
+<style>.th{font:500 14px -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}.ts{font:400 12px -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}</style>
+<rect x="0" y="0" width="680" height="700" fill="#FFFFFF"/>
+<rect x="30" y="30" width="140" height="610" rx="12" fill="none" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="4 4"/>
+<text x="100" y="52" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">RCIC</text>
+<text x="100" y="70" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">decides</text>
+<rect x="180" y="30" width="140" height="610" rx="12" fill="none" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="4 4"/>
+<text x="250" y="52" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">Chat model</text>
+<text x="250" y="70" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">Claude app, plans</text>
+<rect x="330" y="30" width="140" height="610" rx="12" fill="none" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="4 4"/>
+<text x="400" y="52" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">Local agent</text>
+<text x="400" y="70" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">RCIC's machine</text>
+<rect x="480" y="30" width="170" height="610" rx="12" fill="none" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="4 4"/>
+<text x="565" y="52" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">uApply backend</text>
+<text x="565" y="70" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">rules, no AI</text>
+<rect x="40" y="90" width="120" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/><text x="100" y="109" text-anchor="middle" dominant-baseline="central" class="th" fill="#085041">Starts run</text><text x="100" y="127" text-anchor="middle" dominant-baseline="central" class="ts" fill="#0F6E56">/uapply:run</text>
+<rect x="190" y="90" width="120" height="56" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="250" y="109" text-anchor="middle" dominant-baseline="central" class="th" fill="#3C3489">Plans the run</text><text x="250" y="127" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">which step next</text>
+<rect x="190" y="170" width="120" height="56" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="250" y="189" text-anchor="middle" dominant-baseline="central" class="th" fill="#3C3489">Reads pages</text><text x="250" y="207" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">picks doc types</text>
+<rect x="340" y="170" width="120" height="56" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="400" y="189" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">Renders pages</text><text x="400" y="207" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">PDF to image</text>
+<rect x="190" y="250" width="120" height="56" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="250" y="269" text-anchor="middle" dominant-baseline="central" class="th" fill="#3C3489">Asks RCIC</text><text x="250" y="287" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">create case?</text>
+<rect x="40" y="250" width="120" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/><text x="100" y="269" text-anchor="middle" dominant-baseline="central" class="th" fill="#085041">Clicks answer</text><text x="100" y="287" text-anchor="middle" dominant-baseline="central" class="ts" fill="#0F6E56">Create case</text>
+<rect x="340" y="330" width="120" height="56" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="400" y="349" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">Uploads files</text><text x="400" y="367" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">sync_documents</text>
+<rect x="490" y="330" width="150" height="56" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="565" y="349" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">Stores files</text><text x="565" y="367" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">starts nothing</text>
+<rect x="490" y="410" width="150" height="56" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="565" y="429" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">Builds tasks</text><text x="565" y="447" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">prompts + rules</text>
+<rect x="340" y="410" width="120" height="56" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="400" y="429" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">Pulls tasks</text><text x="400" y="447" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">run_tasks</text>
+<rect x="340" y="490" width="120" height="56" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="400" y="509" text-anchor="middle" dominant-baseline="central" class="th" fill="#3C3489">Claude runs</text><text x="400" y="527" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">OCR, analysis</text>
+<rect x="490" y="490" width="150" height="56" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/><text x="565" y="509" text-anchor="middle" dominant-baseline="central" class="th" fill="#2C2C2A">Validates</text><text x="565" y="527" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">saves values</text>
+<rect x="190" y="570" width="120" height="56" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/><text x="250" y="589" text-anchor="middle" dominant-baseline="central" class="th" fill="#3C3489">Reports</text><text x="250" y="607" text-anchor="middle" dominant-baseline="central" class="ts" fill="#534AB7">progress lines</text>
+<rect x="40" y="570" width="120" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/><text x="100" y="589" text-anchor="middle" dominant-baseline="central" class="th" fill="#085041">Reviews</text><text x="100" y="607" text-anchor="middle" dominant-baseline="central" class="ts" fill="#0F6E56">in dashboard</text>
+<text x="565" y="566" text-anchor="middle" dominant-baseline="central" class="ts" fill="#5F5E5A">↻ until all done</text>
+<path d="M162 118 L188 118" fill="none" stroke="#5F5E5A" stroke-width="1.5"/><path d="M182 122 L188 118 L182 114" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M250 148 L250 168" fill="none" stroke="#5F5E5A" stroke-width="1.5"/><path d="M246 162 L250 168 L254 162" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M312 198 L338 198" fill="none" stroke="#5F5E5A" stroke-width="1.5"/><path d="M332 202 L338 198 L332 194" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M250 228 L250 248" fill="none" stroke="#5F5E5A" stroke-width="1.5"/><path d="M246 242 L250 248 L254 242" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M188 278 L162 278" fill="none" stroke="#5F5E5A" stroke-width="1.5"/><path d="M168 274 L162 278 L168 282" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M250 308 L250 358 L338 358" fill="none" stroke="#5F5E5A" stroke-width="1.5"/><path d="M332 362 L338 358 L332 354" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M462 358 L488 358" fill="none" stroke="#5F5E5A" stroke-width="1.5"/><path d="M482 362 L488 358 L482 354" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M565 388 L565 408" fill="none" stroke="#5F5E5A" stroke-width="1.5"/><path d="M561 402 L565 408 L569 402" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M488 438 L462 438" fill="none" stroke="#5F5E5A" stroke-width="1.5"/><path d="M468 434 L462 438 L468 442" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M400 468 L400 488" fill="none" stroke="#5F5E5A" stroke-width="1.5"/><path d="M396 482 L400 488 L404 482" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M462 518 L488 518" fill="none" stroke="#5F5E5A" stroke-width="1.5"/><path d="M482 522 L488 518 L482 514" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M400 548 L400 598 L312 598" fill="none" stroke="#5F5E5A" stroke-width="1.5"/><path d="M318 594 L312 598 L318 602" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M188 598 L162 598" fill="none" stroke="#5F5E5A" stroke-width="1.5"/><path d="M168 594 L162 598 L168 602" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="40" y="662" width="14" height="14" rx="3" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="62" y="669" dominant-baseline="central" class="ts" fill="#444441">Thinks: AI on RCIC's plan</text>
+<rect x="270" y="662" width="14" height="14" rx="3" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="292" y="669" dominant-baseline="central" class="ts" fill="#444441">Decides: the RCIC</text>
+<rect x="440" y="662" width="14" height="14" rx="3" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+<text x="462" y="669" dominant-baseline="central" class="ts" fill="#444441">Works: code, no AI</text>
+</svg>

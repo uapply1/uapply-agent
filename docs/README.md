@@ -24,7 +24,7 @@ Everything from Phase 2 on is still a plan.
 
 | Document | Contents |
 |---|---|
-| [overview.md](overview.md) | Goals, non-goals, one-page architecture, how a case flows through the system |
+| [overview.md](overview.md) | Goals, non-goals, one-page architecture, who thinks and who works (diagram), how a case flows through the system |
 
 ## Architecture
 

@@ -64,6 +64,21 @@ Three parts:
 | **`uapply-agent`** | new package, RCIC machine | CLI + stdio MCP server. Owns the working folder, does the non-LLM local work, and is the **task executor**: it pulls tasks and runs each in a fresh headless Claude Code / Codex process. Exposes coarse orchestration tools to the chat model. See [mcp-tools.md](reference/mcp-tools.md). |
 | **Playbook** | new, ships with the package | The operator instructions: when to call which tool, where the gates are, how to reason about conflicts. Delivered as MCP prompts and server instructions, so it works in Claude Code, Claude Desktop and Codex from one source. See [playbook.md](reference/playbook.md). |
 
+## Who thinks, who works
+
+![uApply agent workflow: who thinks and who works](images/who-thinks-who-works.svg)
+
+| Who | Thinks (AI) | Works (no AI) |
+|---|---|---|
+| **RCIC** | decides: starts the run, answers questions, approves creating a case, reviews in the dashboard | — |
+| **Chat model** (Claude Code / Claude desktop / Codex) | plans the run, reads pages to pick document types, asks the RCIC, reports progress | — |
+| **Local agent** (`uapply-agent`) | the headless Claude runs it starts: one per task (OCR, section extraction, analysis, survey values), each with the backend's prompt and none of the chat | renders pages, uploads files, pulls tasks, submits answers |
+| **uApply backend** | none for agent cases (D14) | stores files (upload starts nothing), turns each pipeline step into a task with its prompt and answer format, validates every answer, saves the results |
+
+All AI runs on the RCIC's own Claude plan: the chat model orchestrates, the headless runs do the
+document work. The backend keeps the rules — prompts, section routing, validation, the data
+model — and never calls a model for these cases.
+
 ## How a case flows
 
 ```
@@ -84,10 +99,12 @@ Detailed stage contracts: [case-workflow.md](architecture/case-workflow.md).
 
 ## Key properties
 
-- **The server never waits on a worker slot for the agent.** A Celery stage
-  creates the agent's tasks and exits; the API resumes the pipeline when the
-  answers arrive. A case can pause for hours (plan limits, RCIC away) and
-  resume where it left off.
+- **Waiting on the agent never blocks other customers.** OCR and classification
+  hand their tasks to the agent and exit, and the API resumes the pipeline when
+  the answers arrive. Every other model call of an agent case waits on the
+  dedicated `agent_queue` thread-pool worker (D14), never on a slot other
+  customers' documents need. A call nobody picks up fails after 10 minutes;
+  re-running `/uapply:run` carries on from the current state.
 - **Everything is idempotent.** Re-running `/uapply:run` on the same folder
   uploads nothing twice, re-creates nothing, and returns current state for
   already-resolved values.
