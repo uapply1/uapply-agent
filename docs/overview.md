@@ -12,6 +12,15 @@ client's documents in a folder on disk. The agent turns that folder into a
 finished case, from the tool they already use, on the plan they already pay
 for.
 
+## Before and after
+
+![Before: the RCIC opens each image, reads it, types the data in and checks it. After: the RCIC tells their own Claude to prepare the case, and uApply's agent reads the documents, fills the forms and flags doubts for the RCIC to decide before they submit.](images/poster-before-after.png)
+
+The RCIC moves from operator to commander: they give the instruction and make the decisions,
+and their own Claude, working through uApply, does the reading and data entry. The agent never
+submits anything; the RCIC reviews, signs and submits. (Poster version: 12 × 6 in; the editable
+design is the "uApply Agent poster" canvas.)
+
 ## Goals
 
 1. **Folder in, case out.** `cd ~/Clients/Zhang_Wei && claude` (or `codex`),
