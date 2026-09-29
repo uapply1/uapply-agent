@@ -18,22 +18,24 @@ for.
 
 The RCIC moves from operator to commander: they give the instruction and make the decisions,
 and their own Claude, working through uApply, does the reading and data entry. The agent never
-submits anything; the RCIC reviews, signs and submits. (Poster version: 12 × 6 in; the editable
-design is the "uApply Agent poster" canvas.)
+submits anything; the RCIC reviews, signs and submits.
 
 ## Goals
 
 1. **Folder in, case out.** `cd ~/Clients/Zhang_Wei && claude` (or `codex`),
-   ask for `/uapply:run`, and the agent creates the case, uploads, classifies,
-   extracts, reconciles and prepares auto-fill.
+   ask for `/uapply:run`, and the agent binds or creates the case, picks the
+   document types, uploads, runs processing and analysis, fills the IMM forms
+   and reports what is left for the RCIC.
 2. **Local tokens.** Every LLM call — vision OCR, classification, section
    extraction, analysis, conflict reasoning — runs on the RCIC's Claude Code or
    Codex plan. uApply's servers make no model calls for that case.
 3. **Same results as the web app.** One pipeline, one set of prompts, one data
    model. The agent is an alternative *executor*, not an alternative product.
 4. **Works in both Claude Code and Codex** from one codebase.
-5. **RCIC stays in control.** Legally significant decisions and anything that
-   leaves the machine are gated behind explicit approval.
+5. **RCIC stays in control.** Creating a case (which charges the account)
+   needs the RCIC's confirmation; the agent never deletes, contacts a client or
+   submits; the RCIC reviews the AI Check and submits from the dashboard.
+   Approval of legally significant values is planned.
 
 ## Non-goals
 
@@ -48,30 +50,31 @@ design is the "uApply Agent poster" canvas.)
 ## Architecture in one picture
 
 ```
-RCIC machine                                                uApply cloud
-┌─────────────────────────────────────────────┐            ┌─────────────────────────────────┐
+RCIC machine                                               uApply cloud
+┌─────────────────────────────────────────────┐            ┌──────────────────────────────────┐
 │ Claude Code / Codex  (the LLM)              │            │ Django API + Celery workers      │
-│   ├─ uApply playbook (MCP prompts+instr.)  │            │                                  │
-│   └─ uapply-agent  (stdio MCP server + CLI) │            │  Survey · Document · SurveyValue │
-│        ├─ folder scan / hash / manifest     │── HTTPS ──▶│  PromptTemplate · Section routing│
-│        ├─ local ops: render pages, text     │            │  AgentTask queue (new)           │
-│        ├─ executor: pull → spawn CLI → submit│◀───────────│  prepare/continue stages (new)   │
-│        └─ device-code auth (keychain)       │            │  validation · audit · auto-fill  │
-│                                             │            └─────────────────────────────────┘
+│   ├─ uApply playbook (MCP prompts + instr.) │            │                                  │
+│   └─ uapply-agent  (stdio MCP server + CLI) │            │ Survey · Document · SurveyValue  │
+│        ├─ folder scan / hash / manifest     │── HTTPS ──▶│ PromptTemplate · section routing │
+│        ├─ local ops: render pages, text     │            │ AgentTask queue                  │
+│        ├─ executor: pull → run → submit     │◀───────────│ prepare/continue + llm_call      │
+│        ├─ auto-fill via Acrobat Pro (Win)   │            │ validation · archives · auto-fill│
+│        └─ device-code auth (keychain)       │            └──────────────────────────────────┘
+│                                             │
 │ ~/Clients/Zhang_Wei/                        │
-│   passport.pdf  bank_2025.pdf  …            │            ┌─────────────────────────────────┐
-│   .uapply/case.json  manifest.json          │            │ uapply-desktop (existing)        │
-│   .uapply/review.md                         │            │ Selenium IMM-form filler         │
-└─────────────────────────────────────────────┘            └─────────────────────────────────┘
+│   passport.pdf  bank_2025.pdf  …            │
+│   .uapply/case.json  manifest.json          │
+│   uApply output/report.md, final package    │
+└─────────────────────────────────────────────┘
 ```
 
 Three parts:
 
 | Part | Where | Responsibility |
 |---|---|---|
-| **Backend changes** | `uapply-backend` | Prepare/continue split of every LLM-calling step so local-mode cases emit `AgentTask`s; task pull/submit endpoints; result validation; per-value evidence; review-queue, resolve and approval endpoints with actor + audit; auto-fill preflight. See [local-llm-task-queue.md](architecture/local-llm-task-queue.md). |
-| **`uapply-agent`** | new package, RCIC machine | CLI + stdio MCP server. Owns the working folder, does the non-LLM local work, and is the **task executor**: it pulls tasks and runs each in a fresh headless Claude Code / Codex process. Exposes coarse orchestration tools to the chat model. See [mcp-tools.md](reference/mcp-tools.md). |
-| **Playbook** | new, ships with the package | The operator instructions: when to call which tool, where the gates are, how to reason about conflicts. Delivered as MCP prompts and server instructions, so it works in Claude Code, Claude Desktop and Codex from one source. See [playbook.md](reference/playbook.md). |
+| **Backend** | uApply backend | Local-mode cases emit `AgentTask`s (prepare/continue stages for OCR and classification, intercepted `llm_call`s for everything else, D14); task pull/submit endpoints; result validation; status, long-poll, auto-fill and report endpoints for the agent. Review-queue, resolve and approval endpoints with actor + audit, and an auto-fill preflight, are planned. See [local-llm-task-queue.md](architecture/local-llm-task-queue.md). |
+| **`uapply-agent`** | Python package, RCIC machine | CLI + stdio MCP server. Owns the working folder, does the non-LLM local work, and is the **task executor**: it pulls tasks and runs each in a fresh headless Claude Code / Codex process. Exposes coarse orchestration tools to the chat model. See [mcp-tools.md](reference/mcp-tools.md). |
+| **Playbook** | ships with the package (`src/uapply_agent/SOURCE.md`) | The operator instructions: when to call which tool, where the gates are, how to reason about conflicts. Delivered as MCP prompts and server instructions, so it works in Claude Code, Claude Desktop and Codex from one source. See [playbook.md](reference/playbook.md). |
 
 ## Who thinks, who works
 
@@ -117,16 +120,19 @@ starts the work.
 
 ```
 RCIC: "/uapply:run"
-  1. intake     scan folder → propose application type + family → 🧑 confirm → create Survey (+ dependents)
-  2. upload     hash files → bulk_upload new ones → manifest
-  3. classify   start_document_processing(llm_mode=local_agent)
-                  server creates AgentTasks (content extraction, classification)
-                  executor runs each task in a fresh headless Claude Code / Codex → server validates
-                  low-confidence types → agent double-checks against the file → reclassify
-  4. extract    start_analysis(force=true) → AgentTasks per section → SurveyValues (CONFIRMED/DOUBTFUL/CONFLICT/MISSING)
-  5. resolve    review queue → agent resolves with evidence (tiered) → 🧑 approve legally significant ones
-                  MISSING → client questions drafted in .uapply/review.md (never sent)
-  6. auto-fill  preflight (no open CONFLICT) → 🧑 approve → start_auto_filling → desktop filler / L3 JSON
+  1. intake      case_status → no case: preview identity documents → propose name + application type
+                   → [RCIC] "Create case" (create_case) or an existing survey id (init_case)
+  2. upload      scan_folder → preview unclear files → pick types ([RCIC] only when the pages do not settle it)
+                   → sync_documents (hash, skip known files, bulk_upload, manifest)
+  3. processing  start_processing → loop run_tasks / wait_for_stage("processing")
+                   executor runs each task (OCR, classification, sections) in a fresh headless runtime
+                   → server validates
+  4. analysis    start_analysis → loop run_tasks / wait_for_stage("analysis")
+                   → SurveyValues (CONFIRMED / DOUBTFUL / CONFLICT / MISSING)
+  5. finishing   confirm_documents (archives + compression on uApply)
+                   → autofill_forms (Acrobat Pro locally, or uApply's platform filler)
+                   → final_report (AI Check counts, forms, final package, dashboard links)
+  6. RCIC        reviews the AI Check in the dashboard and submits
 ```
 
 Detailed stage contracts: [case-workflow.md](architecture/case-workflow.md).
@@ -139,12 +145,13 @@ Detailed stage contracts: [case-workflow.md](architecture/case-workflow.md).
   dedicated `agent_queue` thread-pool worker (D14), never on a slot other
   customers' documents need. A call nobody picks up fails after 10 minutes;
   re-running `/uapply:run` carries on from the current state.
-- **Everything is idempotent.** Re-running `/uapply:run` on the same folder
-  uploads nothing twice, re-creates nothing, and returns current state for
-  already-resolved values.
-- **Guardrails live in the API.** Token scope, actor tagging, audit log,
-  auto-fill preflight, evidence verification — enforced server-side regardless
-  of which coding agent is driving. See [guardrails.md](design/guardrails.md).
+- **Re-runs are safe.** Re-running `/uapply:run` on the same folder uploads
+  nothing twice, re-creates nothing, and carries on from the server's current
+  state.
+- **Guardrails live in code, not in the prompt.** Result validation and
+  evidence checks run server-side; the case-creation confirmation and the
+  folder boundary are enforced by the MCP server, regardless of which coding
+  agent is driving. See [guardrails.md](design/guardrails.md).
 - **Tool results are small.** Evidence snippets and summaries, not raw OCR
   dumps; long jobs are long-polled server-side so the agent's context isn't
   spent on polling.
@@ -155,8 +162,9 @@ Discussed fully in [decisions.md](design/decisions.md):
 
 - Quality will differ between Gemini (server), Claude and GPT (local); an eval
   set per runtime is mandatory before release.
-- Prompt templates become visible on the RCIC's machine; keep the most
-  sensitive steps server-side if needed (`llm_mode` is per task kind).
+- Prompt templates become visible on the RCIC's machine (in task payloads,
+  never in the chat); a case whose prompts must stay on uApply runs in server
+  mode.
 - Local execution is more sequential than the server's parallel sections; the
   executor's 2–4 concurrent workers recover most of it, within plan limits.
 - Client documents are processed under the RCIC's own Anthropic / OpenAI

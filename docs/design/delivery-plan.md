@@ -1,7 +1,14 @@
 # Delivery Plan
 
 Phased so that each phase ships something usable and de-risks the next.
-Estimates are relative (S/M/L), not dates.
+Estimates are relative (S/M/L), not dates. Each phase ends with a status note.
+
+Summary: the agent now runs a case end to end (intake, upload, processing and
+analysis on the RCIC's plan, archives, auto-fill, final report). The order
+differed from this plan: D14 moved every model call of a local case to the
+agent at once, and auto-fill and the final report came before the review
+queue. The review queue, value resolution, approval pages, the agent token
+scope and the audit log are not built.
 
 ## Phase 0 — Prerequisites (backend)
 
@@ -11,9 +18,13 @@ Must land before anything else; most are needed regardless of the agent.
 |---|---|---|
 | Prepare/continue refactor of the LLM-calling steps in `process_document` and analysis (`run_llm_stage` helper; server mode behaviour-identical) | L | D2; must land and be verified in server mode before any local-mode work |
 | `AgentTaskBatch` / `AgentTask` models, `expire_agent_tasks` beat task, `waiting_on_agent` flag honoured by the stale sweep | M | the wait mechanism |
-| Fix the [known issues](known-issues.md): auto-fill `STARTED` stuck, `force` on re-analysis, stale-job auto-fail interplay | S | an agent will loop on them |
 | `Document.sha256` + dedup in `bulk_upload`; `Idempotency-Key` middleware | S | idempotency everywhere |
 | Auth0 native client for the agent (device grant) + `agent:cases` scope in the DRF permission class | S | everything else needs auth |
+
+Status: the prepare/continue path (for OCR and classification), the task
+models and the expiry beat task are built, and the agent logs in with an
+Auth0 native client. `Document.sha256`, `Idempotency-Key` and the `agent:cases`
+scope are not built; the agent deduplicates uploads on its side.
 
 ## Phase 1 — Vertical slice: classification on local tokens
 
@@ -39,6 +50,10 @@ of model calls and (where reported) tokens per document per runtime,
 replacing the estimates in [runtime-modes.md](../architecture/runtime-modes.md).
 Scanned documents still use server OCR in this phase.
 
+Status: built, with two changes. The package installs with `uv` from the
+repository (one-command installers) instead of single-binary builds, and
+Codex support is experimental. The measured call table is not published yet.
+
 ## Phase 2 — Full pipeline on local tokens
 
 | Item | Size |
@@ -52,9 +67,15 @@ Scanned documents still use server OCR in this phase.
 | Cancellation + mode-switch handling for open tasks | S |
 | Dashboard: "processing on RCIC machine" badge, open-task count | S |
 
-Exit criterion: `run --stages classify,extract` on a 40-document family case
-completes overnight on a Pro-tier plan without manual intervention, or pauses
-cleanly at plan limits and resumes.
+Exit criterion: a 40-document family case completes processing and analysis
+overnight on a Pro-tier plan without manual intervention, or pauses cleanly
+at plan limits and resumes.
+
+Status: the whole document is the processing unit in local mode, and every
+other model call runs on the agent through intercepted `llm_call` tasks (D14)
+rather than separate task kinds. `uapply-agent run` executes queued tasks
+(`--follow`, `--kinds`) but does not sequence stages. Per-value evidence and
+the dashboard badge are not built.
 
 ## Phase 3 — Intake and review
 
@@ -71,6 +92,10 @@ Exit criterion: on the eval set, ≥ 90 % of agent resolutions on
 non-significant fields match the RCIC gold answer; 100 % of significant-field
 changes are proposals.
 
+Status: `list_application_types` and `create_case` exist; case creation uses
+a confirmation phrase instead of an approval page (D13). The rest of this
+phase is not built.
+
 ## Phase 4 — Auto-fill and polish
 
 | Item | Size |
@@ -83,9 +108,17 @@ changes are proposals.
 Exit criterion: an RCIC with no developer help completes a study-permit case
 from folder to downloaded L3/IMM output using only `/uapply:run`.
 
+Status: built in a different form. `confirm_documents` (archives and
+compression), `autofill_forms` (Acrobat Pro locally or uApply's platform
+filler, without an approval step) and `final_report` (report plus final
+package in `uApply output/`) finish the case in `/uapply:run`;
+`uapply-agent clean` exists. The preflight, approval and rate limits are not
+built.
+
 ## Evaluation
 
-Built in Phase 1, grown every phase. Lives in `evals/`.
+Planned to start with the first slice and grow every phase, in an `evals/`
+directory (not in this repository yet).
 
 - **Golden folders.** 10–20 anonymised or synthetic client folders with:
   expected application type and family; expected document types; expected

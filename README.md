@@ -3,11 +3,14 @@
 Run a uApply case from Claude Code, Codex or the desktop apps, on the RCIC's own
 subscription. Design docs are in [docs/](docs/README.md).
 
-Phase 1 scope (this code): bind a client folder to a survey, upload documents,
-execute the pipeline's local-agent tasks (OCR / content extraction and the
-passport/visa/permit sub-type classification) in fresh headless `claude -p` /
-`codex exec` processes, and — optionally — pull a client's WeChat history
-through the AnyChat CLI to draft the intake and create the case.
+What it does today: bind a client folder to an existing uApply case, or
+create one after the RCIC confirms (optionally drafting the intake from the
+client's WeChat history through the AnyChat CLI); upload the folder's
+documents; run every model call of the case's processing and analysis in fresh
+headless `claude -p` processes on the RCIC's plan (`codex exec` is
+experimental); then finish the case with archives and compression on uApply,
+IMM PDF auto-fill (Adobe Acrobat Pro on the RCIC's Windows PC, otherwise
+uApply's platform filler) and an end-of-run report.
 
 ## Install (production)
 
@@ -56,6 +59,7 @@ uapply-agent: /Users/anna/.local/bin/uapply-agent
 Runtimes: claude = /Users/anna/.local/bin/claude
 Claude Code CLI: signed in
 Claude Code: registered via `claude mcp add` (user scope)
+Claude Code: commands written to /Users/anna/.claude/skills/uapply
 Codex: skipped: Codex not found (no `codex` command, no ~/.codex)
 Logged in; token stored in keyring
 Done. Open Claude Code or Codex in a client folder and type /uapply:run
@@ -87,9 +91,9 @@ PyPI name once published, or a local checkout).
    plain slash commands.
 3. `uapply-agent login`: Auth0 Device Code flow against production
    (`https://api.uapply.io`); the token goes to the OS keychain, or a `0600`
-   file under `~/.config/uapply-agent/` when no keychain exists. Until "Allow
-   Offline Access" is enabled on the uApply API in Auth0, no refresh token is
-   issued; re-run `uapply-agent login` when a command reports `401`.
+   file under `~/.config/uapply-agent/` when no keychain exists. A refresh
+   token renews the sign-in when the Auth0 tenant issues one; otherwise re-run
+   `uapply-agent login` when a command reports `401`.
 
 The commands need the `uapply` MCP server connected in the session (the
 tools they call come from it), and both the server and the plugin load at
@@ -107,8 +111,9 @@ running program's files); versions live in `~/.local/share/uapply-agent/versions
 (`%LOCALAPPDATA%\uapply-agent\versions\` on Windows) and the three newest are kept.
 
 - The check takes about a second; a normal update a few seconds. If an update takes longer than
-  25 s (a first-time dependency download on a slow link), this session starts with the installed
-  version and the update finishes in the background for the next one.
+  25 s at a session start (3 min for `uapply-agent run`), for example a first-time dependency
+  download on a slow link, the installed version starts and the update finishes in the background
+  for the next one.
 - Offline, the installed version starts as usual.
 - `uapply-agent update` updates immediately and prints the result; `uapply-agent --version` shows
   the commit. `uapply-agent config --set auto_update=false` (or `UAPPLY_NO_UPDATE=1`) turns it off.
@@ -120,21 +125,27 @@ running program's files); versions live in `~/.local/share/uapply-agent/versions
 
 | Key | Default | Meaning |
 |---|---|---|
-| `backend_url` | `https://api.uapply.io` | uApply API; change only for staging |
+| `backend_url` | `https://api.uapply.io` | uApply API; change only to use another uApply environment |
+| `app_url` | derived | dashboard used in report links; empty means `backend_url` with `api.` replaced by `app.` |
 | `auto_update` | `true` | install and switch to the latest `main` at session / run start |
-| `auth0_domain` / `auth0_client_id` / `auth0_audience` | production tenant | change only for staging |
+| `auth0_domain` / `auth0_client_id` / `auth0_audience` | production tenant | change only together with `backend_url` |
 | `runtime` | `auto` | `claude-code` or `codex` when both are installed |
 | `model` | runtime default | model passed to the headless runtime |
-| `workers` | `2` | parallel headless processes |
+| `claude_bin` / `codex_bin` | recorded by `setup` | absolute paths of the runtime CLIs |
+| `workers` | `2` | parallel headless processes (at most 4) |
+| `task_timeout_s` | `300` | time limit for one headless model call |
 | `force_ocr` | `false` | ignore PDF text layers and always OCR with the model |
 | `team_id` | auto | team for created cases (business accounts with several teams) |
 | `chat_source` | `anychat` | `none` disables chat intake |
+| `anychat_bin` | auto | AnyChat CLI location |
 | `chat_default_days` | `180` | how far back `chat_fetch` reads |
-| `chat_upload` | `true` | `false` keeps transcripts local (hints only) |
+| `chat_upload` | `true` | file fetched transcripts on the case; `false` keeps them in the client folder (hints only) |
+| `chat_max_chars` | `200000` | transcript length sent to the intake call (the most recent part is kept) |
 
-Environment overrides: `UAPPLY_BACKEND_URL`, `UAPPLY_RUNTIME`, `UAPPLY_MODEL`,
-`UAPPLY_TOKEN`, `UAPPLY_TEAM_ID`, `UAPPLY_FORCE_OCR`, `UAPPLY_CHAT_SOURCE`,
-`ANYCHAT_BIN`.
+Environment overrides: `UAPPLY_BACKEND_URL`, `UAPPLY_APP_URL`, `UAPPLY_RUNTIME`,
+`UAPPLY_MODEL`, `UAPPLY_TEAM_ID`, `UAPPLY_FORCE_OCR`, `UAPPLY_CHAT_SOURCE`,
+`UAPPLY_CLAUDE_BIN`, `UAPPLY_CODEX_BIN`, `ANYCHAT_BIN`; `UAPPLY_TOKEN` overrides
+the stored access token and `UAPPLY_FOLDER` the client folder.
 
 ### Uninstall
 
@@ -142,16 +153,15 @@ Environment overrides: `UAPPLY_BACKEND_URL`, `UAPPLY_RUNTIME`, `UAPPLY_MODEL`,
 uv tool uninstall uapply-agent && claude mcp remove --scope user uapply && rm -r ~/.claude/skills/uapply
 ```
 
-### Server side (uApply operations)
+### Backend requirements
 
-The agent needs the backend branch that adds the local-agent task queue:
-`ai_parse/agent/` with migrations `survey.0058` and `ai_parse.0008`, the
-`AGENT_*` settings, the `expire_agent_tasks` Celery beat entry, and Celery
-workers on `document_queue` / `analysis_queue`. Endpoints live under
+Local processing needs a uApply backend that serves the local-agent API under
 `/api/ai-parse/agent/` (see [docs/reference/backend-api.md](docs/reference/backend-api.md)).
-The document-queue container also starts an `agent_queue` worker (thread pool, server-side AI switched off) that runs every job of an agent case: every model call of those cases is answered by the RCIC's agent, and nothing starts on upload (D14).
-In Auth0, the native client must have the Device Code grant and the API should
-have "Allow Offline Access" enabled so refresh tokens are issued.
+For a `local_agent` case the backend starts nothing on upload and runs no AI
+itself: every model call is answered by the RCIC's agent (decision D14 in
+[docs/design/decisions.md](docs/design/decisions.md)). Against a backend without
+that API, `whoami` and `case_status` report `agent_api: false`, cases are bound
+in server mode, and uApply's own models process the documents.
 
 ### Troubleshooting
 
@@ -160,16 +170,16 @@ have "Allow Offline Access" enabled so refresh tokens are issued.
 | `no runtime found` | the Claude Code CLI is missing (the desktop app is not enough): rerun the installer, which installs it; or install it with `curl -fsSL https://claude.ai/install.sh \| bash` / `irm https://claude.ai/install.ps1 \| iex`, then run `uapply-agent setup` |
 | `… is not compatible with the version of Windows you're running` / `does NOT start on this machine` | the installed `claude` cannot run on this Windows. Rerun the installer: it installs the native build and `setup` prefers whichever build starts. If Windows is older than 10 1809 / Server 2019, Claude Code cannot run there at all |
 | `whoami` says the Claude CLI is not signed in | run `claude auth login` in a terminal (Claude subscription), then start a new session |
-| `AGENT_API_UNAVAILABLE` / `agent_api: false` | the backend in use does not have the agent branch deployed; the case runs in server mode until it is |
+| `AGENT_API_UNAVAILABLE` / `agent_api: false` | the backend in use does not serve the local-agent API; the case runs in server mode (uApply's own models process the documents) |
 | Windows: `Access is denied` starting the installer, or "running as Administrator" | run it in a normal PowerShell window, not "Run as administrator"; the installer refuses elevated windows |
 | Claude sign-in: browser did not open, or `Login failed: Request failed with status code 400` | in a normal PowerShell window run `claude auth login`, open the printed link, sign in, and paste the code back; then start a new Claude session |
 | Windows: `failed to remove directory …\uv\tools\uapply-agent` | the exe is in use or owned by an elevated install: close Claude Code / Codex sessions, delete `%APPDATA%\uv\tools\uapply-agent`, rerun the installer |
 | `Unknown command: /uapply:run` | run `uapply-agent setup` (writes the plugin and registers the server), then start a **new** session; `claude plugin list` should show `uapply@skills-dir` and `/mcp` the connected server |
 | `401` from the API | `uapply-agent login` again (no refresh token yet) |
-| `404` on `/api/ai-parse/agent/...` | the backend in use does not have the agent branch deployed |
 | `chat sources` → `not_installed` / `not_logged_in` | install the AnyChat plugin and run its own login; the agent never handles that token |
 | `whoami` → `acrobat.available: false` although Acrobat is installed | Reader, or Acrobat without a Pro licence, has no automation; forms are filled on uApply instead. `uapply-agent acrobat` shows the reason |
-| headless run hits the plan's usage limit | the executor stops with `PlanLimited`; resume with `uapply-agent run --follow` later |
+| headless run hits the plan's usage limit | `run_tasks` reports `plan_limited` (`uapply-agent run` exits with code 4); run again after the limit resets, e.g. `uapply-agent run --follow` |
+| `run_tasks` reports `runtime_error` (`uapply-agent run` exits with code 5) | the runtime cannot work, e.g. the Claude Code CLI is not signed in: fix the reported cause, then run again |
 
 ## Install (dev)
 
@@ -188,15 +198,36 @@ cd ~/Clients/Zhang_Wei
 uapply-agent init --survey <survey-id>    # sets the case to llm_mode=local_agent
 uapply-agent status
 uapply-agent run --follow                 # execute tasks until processing is done
+uapply-agent chat sources                 # AnyChat installed and signed in?
 uapply-agent chat find "张伟"              # AnyChat: candidates
-uapply-agent chat fetch "张伟" --days 365  # transcript → intake hints → agent_survey upload
+uapply-agent chat fetch "张伟" --days 365  # saves the transcript under .uapply/chat/ (no hints, no upload)
+uapply-agent acrobat                      # can this PC fill IMM forms with Acrobat Pro?
+uapply-agent clean                        # delete .uapply/cache/ and .uapply/output/ files
+uapply-agent config --set chat_upload=false
 ```
+
+`chat fetch` on the command line only saves the transcript; the `chat_fetch`
+MCP tool also derives intake hints and files it on the case, and `chat_upload`
+files a transcript saved earlier.
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | success |
+| 1 | the command ran and reports a negative result (e.g. `acrobat` finds no usable Acrobat Pro) |
+| 2 | usage error (bad arguments, folder has no case) |
+| 3 | backend, login, runtime, setup or chat-source error |
+| 4 | `run` stopped at the runtime's plan limit; run again later |
+| 5 | `run` stopped because the runtime cannot work (e.g. not signed in) |
+| 130 | interrupted (Ctrl+C) |
 
 Interactive, from Claude Code or Codex: `cd` into the client folder, start the
 runtime, and use `/uapply:run`, `/uapply:status` or `/uapply:intake-from-chat`.
-The MCP server exposes `case_status`, `scan_folder`, `sync_documents`,
-`run_tasks`, `wait_for_stage`, `chat_fetch`, `create_case` and friends
-([docs/reference/mcp-tools.md](docs/reference/mcp-tools.md)). `run_tasks`
+The MCP server exposes 24 tools, among them `case_status`, `scan_folder`,
+`sync_documents`, `start_processing`, `run_tasks`, `wait_for_stage`,
+`confirm_documents`, `autofill_forms`, `final_report`, `chat_fetch` and
+`create_case` ([docs/reference/mcp-tools.md](docs/reference/mcp-tools.md)). `run_tasks`
 never executes work in the chat: it spawns the runtime headless per task with
 the task's prompt as a real system prompt.
 
@@ -222,16 +253,26 @@ The dashboard host comes from `app_url` (default: `api.` → `app.` of the backe
 
 ```
 src/uapply_agent/
-  updater.py      self-update at start: versions/<commit>/, hand-over to the newest
-  cli.py          update | setup | login | logout | init | status | run | mcp | chat | clean | config
-  integrate.py    MCP registration for Claude Code / Codex (used by `setup`)
+  cli.py          update | setup | login | logout | init | status | run | mcp | chat | clean | acrobat | config
   mcp_server.py   stdio MCP server (tools, prompts, instructions)
+  SOURCE.md       the playbook: server instructions + /uapply:* prompts (single source)
+  playbook.py     reads SOURCE.md; generates the Claude Code plugin commands
+  context.py      ServerContext and ToolError (the {ok: false, error} result)
+  cases.py        bind / create cases, progress
+  uploads.py      upload without duplicating case documents
+  folder.py       .uapply/ manifest + case.json, folder scan
   executor.py     pull → download inputs → spawn runtime → validate → submit
-  runners/        claude_code.py, codex.py (all runtime flags live here)
+  runners/        claude_code.py (supported), codex.py (experimental); all runtime flags live here
+  local_ops.py    page rendering, pdf text, HEIC → JPEG
+  autofill.py     IMM PDF auto-fill: local Acrobat Pro or uApply's platform filler
+  acrobat.py      Adobe Acrobat Pro automation (Windows)
+  report.py       end-of-run report + final package download
   api.py          typed backend client
   auth.py         Auth0 device login / pasted token
-  folder.py       .uapply/ manifest + case.json
-  local_ops.py    page rendering, pdf text, HEIC → JPEG
-  chat/           AnyChat source, transcript store, PDF render, intake call
-playbook/SOURCE.md   instructions + prompts (copied into the package)
+  config.py       settings + credential storage
+  integrate.py    MCP registration for Claude Code / Codex (used by `setup`)
+  updater.py      self-update at start: versions/<commit>/, hand-over to the newest
+  constants.py    document statuses, supported file types
+  util.py         small file helpers
+  chat/           AnyChat source, transcript store, PDF render, intake call, filing
 ```

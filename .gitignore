@@ -1,5 +1,20 @@
+# Python
 .venv/
 __pycache__/
 *.egg-info/
+build/
 dist/
+
+# Tooling
 .pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# A client folder used for manual testing
+.uapply/
+uApply output/
+
+# OS
+.DS_Store
+Thumbs.db

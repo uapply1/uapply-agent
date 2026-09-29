@@ -23,7 +23,7 @@ Common payload fields:
 |---|---|
 | `system_prompt`, `user_prompt` | Resolved from `PromptTemplate` at task creation; already include section/field definitions |
 | `output_schema` | JSON Schema from the pipeline's Pydantic `response_format`. The result **must** validate against it |
-| `inputs[]` | `{document_id, local_path, sha256, pages?: int[], mime}`; the MCP server resolves `local_path` (downloads from S3 into `cache/` if missing or hash mismatch) |
+| `inputs[]` | input files: a `document_id` (the executor fetches a presigned download URL) or, for `llm_call`, a short-lived `url`; downloaded into `.uapply/cache/<task id>/` |
 | `text_inputs[]` | `{document_id, text}` for kinds that operate on already-extracted text (server includes the `RawMemo` slice it would have sent to Gemini) |
 | `evidence_required` | If true, quoted spans in the result are verified verbatim server-side |
 | `language_hint` | e.g. `zh`, `en` — mirrors what the pipeline passes today |
@@ -44,24 +44,29 @@ chat model.
 | `extract_values` | extract | analysis output | `{values: [{field_key, value}]}` | — |
 | `infer_family_relationships` | extract | identity docs text | as today | yes |
 | `financial_extract` | classify | bank statement text | Financial Proof Tier-1 schema (facts + transactions) | yes (already verified today) |
+| `llm_call` | any | `system_prompt`, `user_prompt`, `output_mode` (`text` \| `json`), `output_schema`, `inputs` (`{blob, url, mime}`), `text_files` (`{file_name, text}`) | the caller's JSON schema, or `{"text": "..."}` in text mode | — |
 
-Kinds not listed (web-search assisted steps, embeddings) stay server-side;
-`AGENT_LOCAL_TASK_KINDS` controls the split.
+Status: the backend creates `extract_content` and `classify_document` tasks
+(prepare/continue, selected by `AGENT_LOCAL_TASK_KINDS`) and `llm_call` tasks
+for every other model call of a local case (D14). The section, analysis,
+family and Financial Proof kinds above are the original design; those calls
+arrive as `llm_call` today.
 
 ## Result envelope (agent → server)
 
 ```json
 {
   "result": { … matches output_schema … },
-  "model": "claude-fable-5-1",
+  "model": "<model name reported by the runtime>",
   "runtime": "claude-code",
   "usage": {"input_tokens": 8123, "output_tokens": 611},
-  "notes": "optional free text for the audit log (e.g. 'page 2 rotated; read after local rotation')"
+  "session_id": "claude-code-1a2b3c4d"
 }
 ```
 
 `usage` is best-effort; hosted-plan runtimes may not expose it. It feeds
-`LLMTokenLog` so the existing monitoring stays whole.
+`LLMTokenLog` so the existing monitoring stays whole. Text-layer PDFs are
+submitted with `"model": "pdfplumber"` and `"runtime": "local"`.
 
 ## Rejection codes
 
@@ -69,9 +74,9 @@ Kinds not listed (web-search assisted steps, embeddings) stay server-side;
 |---|---|---|
 | `SCHEMA_INVALID` | result fails `output_schema` | fix and resubmit (attempt+1) |
 | `EVIDENCE_UNVERIFIED` | all quotes for a required-evidence field missing from text | re-read the page; if the text truly lacks it, return the field with `value: null` |
-| `TYPE_NOT_ALLOWED` | classification outside allowed document types | pick from `payload.allowed_types` |
-| `LEASE_LOST` | another worker completed it | drop |
-| `TASK_CANCELLED` | processing stopped or mode switched | drop |
+| `TYPE_NOT_ALLOWED` | classification outside the allowed values | pick from `payload.allowed_values` |
+| `PAGE_COUNT_MISMATCH` | an OCR result does not cover every page of the document | return every page |
+| `TASK_CANCELLED` / `TASK_FAILED` | the task is no longer open | drop |
 
 After `max_attempts` (3) the server marks the task `failed`, ends its batch
 with `failed=True`, and the continuation marks the document/analysis job
@@ -83,9 +88,10 @@ that case.
 | Task | Local step |
 |---|---|
 | `extract_content` on a PDF with a text layer (pdfplumber yields > N chars/page) | submit pdfplumber text directly; no model call |
-| `extract_content` on scanned PDF / image | Claude Code: hand the PDF path to the runtime, which reads it in ≤ 20-page chunks (API limit 100 pages / 32 MB — split above that); Codex: render pages to images |
-| Any task on HEIC | convert to JPEG first (uploaded file is the JPEG) |
-| DOCX / XLSX | python-docx / openpyxl text; no model call for content extraction |
+| `extract_content` on a scanned PDF | render the pages to PNG locally (PyMuPDF) and send them in chunks (20 pages per call for Claude Code, 10 for Codex) |
+| `extract_content` on an image | one model call on the image (HEIC converted to JPEG first) |
+| Any upload of a HEIC file | convert to JPEG first (the uploaded file is the JPEG) |
+| DOCX / XLSX | no local extraction; the server's transcription call arrives as an `llm_call` task (D14) |
 
-These mirror the server's `content_loader` cascade minus the hosted-model
+These mirror the server's content-loading cascade minus the hosted-model
 strategies (Gemini vision, LlamaParse), which are replaced by the local model.

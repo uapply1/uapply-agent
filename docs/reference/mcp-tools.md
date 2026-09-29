@@ -1,146 +1,132 @@
 # MCP Tool Reference
 
-Tools exposed by `uapply-agent mcp` (stdio) to Claude Code / Codex. Design
-rules for every tool:
+Tools exposed by `uapply-agent mcp` (stdio) to Claude Code, Codex and the
+desktop apps. They are defined in `src/uapply_agent/mcp_server.py`. Design
+rules:
 
-- **Coarse.** One tool ≈ one thing the RCIC would click. No raw CRUD.
-- **Small outputs.** Summaries, ids, evidence snippets. Never raw OCR text
-  unless explicitly asked (`get_document_text`, capped).
-- **Idempotent.** Calling twice is safe; the second call returns current state.
-- **Folder-relative paths.** All paths are relative to the working folder; the
-  server refuses anything outside it.
-- **No side effects the RCIC hasn't sanctioned.** Tools that create a case,
-  approve legally significant values, or start auto-fill do not act directly.
-  They create a **pending approval** on the server and return an
-  `approval_url`; the RCIC opens it (already logged in to uApply) and clicks
-  Approve or Reject; the agent then calls `wait_for_approval`. A model cannot
-  fake the click, so nothing the model passes as an argument is treated as
-  consent (see [guardrails.md § Approval channel](../design/guardrails.md#approval-channel)).
+- **Coarse.** One tool is roughly one thing the RCIC would click in the
+  dashboard. There is no raw CRUD and no generic HTTP tool.
+- **Small outputs.** Counts, ids, paths and summaries. Task prompts, task
+  inputs and chat message bodies never enter the conversation.
+- **Safe to repeat.** Uploads skip files already recorded in the manifest or
+  already on the case; `create_case` refuses a folder that already has a case.
+- **Folder-relative paths.** File paths are relative to the working folder;
+  paths that resolve outside it are refused. Only `set_folder` takes an
+  absolute path.
 
-All tools return `{ok, data?, error?: {code, message, hint}}`. `hint` is
-written for the model ("run `wait_for_stage` before calling this again").
+## Result shape and errors
 
-## Session
+Every tool returns either `{ok: true, ...fields}` or
+`{ok: false, error: {code, message, hint}}`. `hint` is written for the model
+(for example "loop run_tasks / wait_for_stage('analysis') until done, then
+confirm_documents"). Codes are UPPER_SNAKE:
 
-| Tool | Input | Output |
-|---|---|---|
-| `whoami` | — | backend URL, login state, `agent_api` (does the backend serve the local-agent API), runtimes as `{name, path, logged_in}`, a `hint` when no CLI is installed or signed in, folder, case |
-| `case_status` | — | server-truth status of the folder's case: stage, document counts by status, open review items, automation status, open agent tasks, blockers. First call in every session. |
+| Code | When |
+|---|---|
+| `NO_CASE` | the tool needs a bound case and the folder has none |
+| `AGENT_API_UNAVAILABLE` | the tool needs the backend's local-agent API (`/api/ai-parse/agent/`) and the backend does not serve it |
+| `HTTP_<status>` | the backend answered with an error, e.g. `HTTP_401` (hint: `uapply-agent login`) |
+| tool-specific | e.g. `CONFIRMATION_REQUIRED`, `CASE_EXISTS`, `BAD_APPLICATION_TYPE`, `UNKNOWN_TYPE`, `BAD_CATEGORY`, `BAD_MODE`, `BAD_PAGES`, `NO_FILE`, `NO_FOLDER`, `UNSUPPORTED`, `PROCESSING_NOT_DONE`, `ANALYSIS_NOT_DONE`, `CHAT_DISABLED` |
+| chat source | `NOT_INSTALLED`, `NOT_LOGGED_IN`, `UNSUPPORTED_PLATFORM`, `CLI_ERROR` (from the AnyChat CLI) |
+| other | any unexpected exception, reported as its class name in upper case with a short message |
 
-## Intake
+Tools that act on the case need a bound folder (`NO_CASE` otherwise). The
+pipeline and finishing tools, except `start_processing`, also need the
+local-agent API (`AGENT_API_UNAVAILABLE` otherwise).
 
-| Tool | Input | Output |
-|---|---|---|
-| `scan_folder` | `include_manifested?: bool` | files: path, size, sha256, kind, applicant hint (from subfolder), manifested (bool) |
-| `preview_document` | `path`, `pages?: "1" \| "1-3"` (≤ 3) | PNG paths under `.uapply/cache/preview/` for the chat model to Read before classifying; images returned as-is (HEIC converted). Local only. |
-| `list_application_types` | `query?: string` | id, program, visa_type, visa_location, label |
-| `propose_case` | `application_type_id`, `principal: {name, …}`, `dependents: [{name, relationship, folder?}]` | `approval_id`, `approval_url` — the page shows the proposed setup with Approve / Edit / Reject |
-| `add_dependent` | `name`, `relationship`, `folder?` | same approval flow as `propose_case` |
+## Tools
 
-## Approvals
-
-| Tool | Input | Output |
-|---|---|---|
-| `wait_for_approval` | `approval_id`, `timeout_s?` (≤ 60) | `status: pending \| approved \| rejected \| edited`, plus the (possibly edited) payload; used for case creation, proposal batches and auto-fill. On an approved `propose_case` the server has already created the case and the tool writes `case.json` |
-| `list_approvals` | `status?` | pending approvals for this case with their URLs — so a resumed session can re-surface them |
-
-The MCP server prints the URL in the tool result **and** attempts to open it
-in the RCIC's default browser. Approval pages are ordinary dashboard routes
-that require the RCIC's normal login.
-
-## Upload
+### Session
 
 | Tool | Input | Output |
 |---|---|---|
-| `sync_documents` | `document_type_id` (a case type, or the generic Agent Survey type for filled IMM forms; anything else is refused with `UNKNOWN_TYPE`), `paths?: string[]` (default: all unmanifested), `applicant?`, `document_category?` (default: the type's), `archive_name?` (default: the type's own archive, i.e. the dashboard's default folder) | uploaded: n, skipped (already manifested), already_on_server: [{path, document_id}] (a case document of the same type, name and size — recorded, not re-uploaded), failed: [{path, reason}] |
-| `list_documents` | `applicant?`, `status?` | id, path, applicant, document_type, confidence, status, pages |
-| `get_document_text` | `document_id`, `pages?: int[]`, `max_chars?` (default 4000) | page-marked text excerpt from `RawMemo` |
-| `render_pages` | `document_id` or `path`, `pages: int[]`, `dpi?` | local image paths in `.uapply/cache/` (for the model to look at) |
+| `whoami` | none | `backend`, `logged_in`, `agent_api` (whether the backend serves the local-agent API; `null` when not logged in), `runtimes` (`name`, `path`, `logged_in` for Claude Code, `error` when the binary does not start), `acrobat` (`available`, `path`, `reason` for Adobe Acrobat Pro), `folder`, `case`; a `hint` when no runtime is installed, none starts, or the Claude Code CLI is not signed in |
+| `set_folder` | `path` (absolute directory) | `folder`, `case`; points the server at another client folder |
+| `case_status` | none | server-side status of the folder's case: documents by status, agent tasks, failures. On a backend without the local-agent API, the survey's own document counts. Called first in every session |
+| `init_case` | `survey_id`, `llm_mode?` (`local_agent` \| `server`, default `local_agent`) | `case` (the stored `.uapply/case.json`), `chat_uploads` (queued transcripts filed now), `warning` when the backend has no local-agent API and the case was bound in server mode |
 
-## Pipeline
-
-| Tool | Input | Output |
-|---|---|---|
-| `start_processing` | `document_ids?: string[]` | job ids; count of agent tasks expected |
-| `run_analysis` | `force?: bool` (default **true**) | analysis job id |
-| `wait_for_stage` | `stage: processing \| analysis \| filling \| formulas`, `timeout_s?` (default 45, ≤ 60) | done: bool, progress: {completed, failed, pending, open_agent_tasks}, failures: [{document_id, reason}]; includes the same `progress` snapshot |
-| `stop_processing` / `stop_analysis` | — | ack |
-| `confirm_documents` | — | after the analysis: the dashboard's Confirm — archives merged to PDFs and compression queued on uApply (no AI); `archives`, `failed_documents`. Refused with `ANALYSIS_NOT_DONE` before that |
-
-`wait_for_stage` is a server long-poll: it returns early on completion, else at
-`timeout_s`. It is capped at 60 s because MCP tool calls have runtime-imposed
-timeouts (Claude Code and Codex differ, and the defaults are well under five
-minutes). The playbook calls it in a loop with a task-loop in between.
-
-## Task execution (local tokens)
+### Files and upload
 
 | Tool | Input | Output |
 |---|---|---|
-| `run_tasks` | `max_tasks?`, `workers?`, `kinds?`, `budget_s?` (default 90, 20–300) | runs local tasks for up to `budget_s`, then returns counts (`accepted`, `rejected`, `remaining`, …) and `progress`: documents total/finished, by status, in progress, failed. Call again while `remaining` > 0 |
-| `task_stats` | — | queued / leased / submitted / failed counts for the case |
+| `scan_folder` | `include_manifested?` (default `false`) | `files`: `path`, `size`, `sha256`, `kind` (`pdf` \| `image` \| `office`), `applicant_hint` (first subfolder), `manifested`, `document_id` |
+| `preview_document` | `path`, `pages?` (`"1"` or a range such as `"1-3"`, at most 3 pages; default `"1"`) | PDF: `kind`, `page_count`, `pages`, `images` (PNG paths under `.uapply/cache/preview/`). Image: `kind`, `images` (HEIC converted to JPEG). Rendered locally; nothing is uploaded |
+| `list_document_types` | `query?` | `document_types` the case accepts: `id`, `name`, `file_name`, `category`, `requirement`, `can_process`; the generic Agent Survey row (`generic: true`, `use_for`) is for filled IMM forms only |
+| `sync_documents` | `document_type_id`, `document_category?` (default: the type's category), `paths?` (default: every file not yet uploaded), `applicant?` (default `principal`), `archive_name?` (default: the type's own archive) | `uploaded` (count), `documents` (`path`, `document_id`, `file_name`), `skipped` (already uploaded), `already_on_server` (a case document of the same type, name and size, recorded instead of uploaded again), `failed` (`path`, `reason`) |
+| `list_documents` | none | `documents`: `id`, `file_name`, `status`, `document_type_id`, `page_of` (parent document of a page), `error` |
 
-`run_tasks` is the **only** way tasks are executed. The MCP server pulls each
-task, resolves inputs to local files, spawns the RCIC's runtime headless with
-the task's prompt as a real system prompt, validates the JSON locally, and
-submits — see [runtime-modes.md](../architecture/runtime-modes.md). The chat
-model never receives a task payload. Pull / submit / release exist as backend
-endpoints for the executor, not as MCP tools.
-
-`run_tasks` returns within the MCP timeout by processing tasks in slices; the
-playbook calls it in a loop with `wait_for_stage` until `remaining == 0` and
-the stage is done.
-
-## Classification review
+### Pipeline
 
 | Tool | Input | Output |
 |---|---|---|
-| `reclassify_document` | `document_id`, `document_type_id`, `reason` | ack; audited |
-| `missing_documents` | — | required document types with no document, per applicant |
+| `start_processing` | `document_ids?` (default: every uploaded, failed or stopped top-level document of a processable type) | `started`: `document_id`, `ok`, `message` per document. Uploads alone never start processing for agent cases; this also retries failed documents |
+| `start_analysis` | none | `started`, `message`, `progress`; refused with `PROCESSING_NOT_DONE` while documents are still processing or not started |
+| `run_tasks` | `max_tasks?`, `workers?` (default 2, at most 4), `kinds?`, `budget_s?` (default 90, clamped to 20-300) | runs queued agent tasks in fresh headless runtime processes, then returns `runtime`, `accepted`, `rejected`, `released`, `failed`, `plan_limited`, `runtime_error`, `remaining`, `model_calls`, `text_layer_docs`, `failures`, and `progress` (per-document snapshot). Call again while `remaining` > 0 |
+| `wait_for_stage` | `stage` (`processing` \| `analysis` \| `filling`, default `processing`), `timeout_s?` (default 45, at most 60) | the backend's stage status (including `done`) plus `progress`; returns early when the stage completes |
+| `task_stats` | none | `stats`: agent task counts by status for the case |
+| `set_llm_mode` | `llm_mode` (`local_agent` \| `server`) | `llm_mode`; only after the RCIC asked for the switch |
 
-## Review queue
+`run_tasks` is the only way tasks are executed. The MCP server pulls each
+task, resolves its inputs to local files, spawns the RCIC's runtime headless
+with the task's prompt as a real system prompt, validates the JSON locally and
+submits it (see [runtime-modes.md](../architecture/runtime-modes.md)). The
+chat model never receives a task payload; pull, submit and release are
+backend endpoints used by the executor, not MCP tools.
 
-| Tool | Input | Output |
-|---|---|---|
-| `get_review_queue` | `status?: doubtful \| conflict \| missing`, `applicant?`, `significant_only?` | items: [{value_id, field, description, applicant, status, significant, candidates: [{value, document_id, path, page, quote, status}], proposal?}] |
-| `resolve_value` | `value_id`, `value`, `rationale`, `evidence: [{document_id, page, quote}]`, `expected_updated_at` (from the review-queue item) | new status; **rejected with `SIGNIFICANT_FIELD`** if the field is on the allow-list — use `propose_resolution`; **rejected with `STALE_VALUE`** if the RCIC edited it since the queue was read — re-fetch and reconsider |
-| `propose_resolution` | same as above | proposal id; status stays CONFLICT/DOUBTFUL |
-| `request_approval` | `proposal_ids: string[]` | `approval_id`, `approval_url` — one page listing every proposal with value, rationale, evidence and per-row Approve / Reject; then `wait_for_approval` |
-| `withdraw_proposal` | `proposal_id`, `reason` | ack (the agent changed its mind; RCIC rejection happens on the approval page) |
-| `add_client_question` | `field`, `question`, `why`, `satisfying_documents?` | appended to `review.md`; also stored server-side *(new)* so the dashboard shows it |
+`wait_for_stage` is a server long-poll capped at 60 s because runtimes impose
+their own MCP tool-call timeouts. The playbook alternates `run_tasks` and
+`wait_for_stage` until `remaining` is 0 and the stage is done.
 
-## Auto-fill
-
-| Tool | Input | Output |
-|---|---|---|
-| `autofill_forms` | `budget_s?` (default 90, 20–300) | fills the IMM PDFs: with Acrobat Pro on Windows locally (`mode: local`, `filled` / `failed` / `skipped`, `remaining` — call again while > 0), otherwise `mode: platform` (uApply's filler; loop `wait_for_stage("filling")`) |
-| `final_report` | `download?: bool` (default true) | `report_markdown` (show as is), `report_path`, `links` {case, ai_check, submit, online_portal}, `files` {package, forms}, `status`, `ai_check`, `online_portal` {eligible, ready} |
-| `autofill_preflight` | — | ok: bool, blockers: [{code, detail}], summary: {filled, missing, assumed} |
-| `request_autofill` | — | `approval_id`, `approval_url` — page shows the preflight summary; on approval the server starts auto-fill itself; fails if preflight blockers exist |
-| `autofill_status` | — | automation_status, imm pdf statuses |
-| `download_output` | `what: l3 \| imm_pdfs \| all` | paths under `.uapply/output/` |
-
-## Chat history (optional, AnyChat)
+### Finishing the case
 
 | Tool | Input | Output |
 |---|---|---|
-| `chat_sources` | — | per-source availability: `ok`, `state` (ok \| not_installed \| unsupported_platform \| not_logged_in \| cli_error \| disabled), hint |
-| `chat_find_contact` | `name` | candidates as display names only |
-| `chat_fetch` | `contact`, `days?` (default 365) | transcript summary (path, messages, range), redacted `intake` hints, `upload` (document id or `"queued"`), usage |
-| `chat_upload` | `path?` | uploads one transcript or every queued one as an agent_survey PDF |
-| `list_application_types` | `query?` | id, code, name, program, visa_type, visa_location |
-| `create_case` | `name`, `application_type_id`, `confirmation` | refused unless `confirmation` is "create case" / "确认创建"; creates the survey (charges the account), binds the folder, flushes queued uploads |
+| `confirm_documents` | none | the dashboard's Confirm step: each archive merged into one PDF and compression queued on uApply (no AI). Returns `archives` (count), `failed_documents`, `status`; refused with `ANALYSIS_NOT_DONE` before the analysis is done |
+| `autofill_forms` | `budget_s?` (default 90, clamped to 20-300) | fills the case's IMM PDFs. With Adobe Acrobat Pro on this PC (Windows): `mode: local`, `filled`, `failed`, `skipped`, `remaining` (call again while > 0), copies in `.uapply/output/imm_pdfs/`, and `automation_status` / `imm_pdfs` when finished. Otherwise: `mode: platform` with a `reason`; uApply's platform filler fills the forms (no AI) and the caller loops `wait_for_stage("filling")` |
+| `final_report` | `download?` (default `true`) | `report_markdown` (shown to the RCIC as is), `report_path` (`uApply output/report.md`), `links` (`case`, `ai_check`, `submit`, `online_portal`), `files` (`package`, `forms`, or an `error`), `status`, `ai_check` (`conflict`, `doubtful`, `missing`), `online_portal`. With `download` the final package zip is saved in `uApply output/` and its forms unpacked into `uApply output/Forms/` |
 
-See [architecture/chat-sources.md](../architecture/chat-sources.md).
-
-## Report
+### Case creation
 
 | Tool | Input | Output |
 |---|---|---|
-| `write_review_report` | — | path of `review.md`; the MCP server assembles it from server state + local notes so the model doesn't hand-write it |
+| `list_application_types` | `query?` | `application_types`: `id`, `code`, `name`, `program`, `visa_type`, `visa_location`, `applicant_type`, `default_imm_pdf_types` |
+| `create_case` | `name`, `application_type_id`, `confirmation` | creates the survey (charges the RCIC's account) with the type's default IMM forms, sets `llm_mode=local_agent`, binds the folder and files queued chat transcripts. Returns `survey_id`, `team_id`, `case`, `chat_uploads`, and `warning` when the backend has no local-agent API. Refused with `CONFIRMATION_REQUIRED` unless `confirmation` is exactly `create case` or `确认创建`, with `CASE_EXISTS` when the folder already has a case, and with `BAD_APPLICATION_TYPE` for an unknown type |
+
+### Chat history
+
+Optional, through the AnyChat CLI; see
+[architecture/chat-sources.md](../architecture/chat-sources.md).
+
+| Tool | Input | Output |
+|---|---|---|
+| `chat_sources` | none | `sources`: `source`, `ok`, `state` (`ok` \| `not_installed` \| `unsupported_platform` \| `not_logged_in` \| `cli_error` \| `disabled`), `detail`, `hint` |
+| `chat_find_contact` | `name` | `candidates`: `display_name`, `kind` (`friend` \| `group`); raw chat ids are not returned |
+| `chat_fetch` | `contact`, `days?` (default: setting `chat_default_days`, 180) | saves the transcript under `.uapply/chat/`, derives intake hints with the RCIC's runtime (headless), and files the transcript on the case unless `chat_upload` is off. Returns `transcript` (`source`, `contact`, `from`, `to`, `path`, `messages`, `chars`), `intake` (hints or `null`), `upload` (the filed document, `"queued"` when no case is bound yet, or `"disabled"`), `usage`, and `intake_error` when the hint call failed. Raw WeChat ids in the result are replaced with `[id]`; message bodies are not returned |
+| `chat_upload` | `path?` | files one fetched transcript (`document_id`, `pdf`, `already_filed`) or, without `path`, every queued one (`uploads`) on the bound case as an Agent Survey PDF |
 
 ## Deliberately absent
 
 - No `delete_*` tools. Deletion stays in the dashboard.
-- No `send_email` / `notify_client`. Questions go to `review.md`.
-- No `submit_to_portal`.
-- No raw `http_request`. The typed client is the only path to the API.
+- No `send_email` / `notify_client`. The agent never contacts a client.
+- No `submit_to_portal`. The online portal is started by the RCIC from the
+  dashboard.
+- No raw `http_request`. The typed client in `api.py` is the only path to the
+  API.
+
+## Planned (not implemented)
+
+These tools appear in the design documents but do not exist in the server
+today:
+
+- `propose_case` / `add_dependent`: case setup and dependents through a dashboard approval page.
+- `wait_for_approval` / `list_approvals`: poll and list pending dashboard approvals.
+- `get_document_text`: capped, page-marked text excerpt of a processed document.
+- `render_pages`: render pages of an uploaded document for the model to look at.
+- `stop_processing` / `stop_analysis`: cancel a running stage and its open tasks.
+- `reclassify_document`: change a document's type with an audited reason.
+- `missing_documents`: required document types with no document, per applicant.
+- `get_review_queue`: DOUBTFUL / CONFLICT / MISSING values with evidence.
+- `resolve_value` / `propose_resolution` / `withdraw_proposal`: resolve or propose values with evidence.
+- `request_approval`: one approval page for a batch of proposals.
+- `add_client_question`: record a question for the client, shown in the dashboard.
+- `autofill_preflight` / `request_autofill`: auto-fill blockers and an approval page before auto-fill starts.

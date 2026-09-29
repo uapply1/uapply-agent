@@ -106,3 +106,13 @@ def test_state_file_in_a_legacy_code_page_is_still_read(tmp_path, monkeypatch):
     f.state.mkdir()
     (f.state / "case.json").write_bytes('{"name": "李天毅"}'.encode("gbk"))   # older build on Chinese Windows
     assert f.case["name"] == "李天毅"
+
+
+def test_scan_skips_the_agents_output_folder(case_folder):
+    from uapply_agent.folder import OUTPUT_DIR
+    out = case_folder.root / OUTPUT_DIR / "Forms"
+    out.mkdir(parents=True)
+    (out / "IMM5709.pdf").write_bytes(b"%PDF")
+    (case_folder.root / "passport.pdf").write_bytes(b"%PDF")
+    assert [f.path for f in case_folder.scan()] == ["passport.pdf"]
+

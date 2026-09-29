@@ -1,37 +1,38 @@
 # uApply Agent — Design Documentation
 
 `uapply-agent` lets an RCIC run a uApply case from **Claude Code or Codex**,
-pointed at a client's working folder on their own machine. The agent creates
-the case, uploads and classifies the documents, extracts and reconciles the
-data, and prepares auto-fill — while every LLM call runs on the **RCIC's own
-Claude Code / Codex plan ("local tokens")**, not on uApply's API keys.
+pointed at a client's working folder on their own machine. The agent binds or
+creates the case, uploads the documents, drives the pipeline's processing and
+analysis, and finishes the case with archives, IMM form auto-fill and a
+report, while every LLM call of the case runs on the **RCIC's own Claude Code /
+Codex plan ("local tokens")**, not on uApply's API keys.
 
 The uApply backend keeps the pipeline logic, prompts, validation and the data
 model. It hands each model call to the local agent as a task and validates
 what comes back.
 
-Status (2026-09-25): **Phase 1 vertical slice implemented** — backend task
-queue (`ai_parse/agent/`, migrations `survey.0058` / `ai_parse.0008`) and the
-`uapply-agent` package (`src/uapply_agent/`). The stage wired to local tokens
-is the passport/visa/permit **sub-type classifier**
-(`DocumentProcessor._classify_document_subtype`), which is the only
-classification LLM call the pipeline has today — documents are uploaded with
-a document type already chosen. Agent endpoints live under
-`/api/ai-parse/agent/` (the docs' `/api/agent/` prefix reads as that).
-Everything from Phase 2 on is still a plan.
+Status: the agent runs a case end to end. It covers intake (binding a folder
+to an existing case, or creating one after the RCIC confirms, optionally from
+the client's WeChat history), upload, local processing and analysis (every
+model call of a `local_agent` case runs in a headless Claude Code or Codex
+process on the RCIC's plan; Codex support is experimental), archives and
+compression on uApply, IMM PDF auto-fill (with Adobe Acrobat Pro on the RCIC's
+Windows PC, otherwise uApply's platform filler), and an end-of-run report. The
+review queue, value resolution by the agent and dashboard approval pages are
+planned; documents that describe them say so.
 
 ## Start here
 
 | Document | Contents |
 |---|---|
-| [overview.md](overview.md) | Before/after poster, goals, non-goals, one-page architecture, who thinks and who works, platform mode vs agent mode (diagrams), how a case flows through the system |
+| [overview.md](overview.md) | Before/after illustration, goals, non-goals, one-page architecture, who thinks and who works, platform mode vs agent mode (diagrams), how a case flows through the system |
 
 ## Architecture
 
 | Document | Contents |
 |---|---|
 | [architecture/local-llm-task-queue.md](architecture/local-llm-task-queue.md) | The core mechanism: prepare/continue stages on Celery, `AgentTask` queue, API-driven continuation, result validation |
-| [architecture/case-workflow.md](architecture/case-workflow.md) | End-to-end stages — intake, upload, classify, extract, resolve, auto-fill — with the RCIC gates |
+| [architecture/case-workflow.md](architecture/case-workflow.md) | End-to-end stages (intake, upload, processing, analysis, finishing) with the points where the RCIC is asked |
 | [architecture/working-folder.md](architecture/working-folder.md) | Layout of the client folder, `.uapply/` manifest and case state, idempotent sync |
 | [architecture/chat-sources.md](architecture/chat-sources.md) | Optional WeChat intake through the AnyChat CLI: fetch, local intake hints, agent_survey upload, create_case |
 | [architecture/runtime-modes.md](architecture/runtime-modes.md) | One headless executor per task; interactive (chat orchestrates) vs batch (CLI orchestrates); subscription usage limits |
@@ -41,9 +42,9 @@ Everything from Phase 2 on is still a plan.
 | Document | Contents |
 |---|---|
 | [reference/mcp-tools.md](reference/mcp-tools.md) | MCP tool inventory exposed by `uapply-agent` to the coding agent |
-| [reference/backend-api.md](reference/backend-api.md) | Backend endpoints the agent uses — existing ones, and the new ones this project adds |
+| [reference/backend-api.md](reference/backend-api.md) | Backend endpoints the agent uses, and the ones planned for later stages |
 | [reference/agent-task-schema.md](reference/agent-task-schema.md) | `AgentTask` kinds, payload and result JSON contracts |
-| [reference/playbook.md](reference/playbook.md) | The operator instructions, shipped as MCP prompts + server instructions (`/uapply:*` on every runtime); optional plugin / `AGENTS.md` wrappers |
+| [reference/playbook.md](reference/playbook.md) | The operator instructions, shipped as MCP prompts + server instructions (`/uapply:*` on every runtime) and a generated Claude Code plugin |
 
 ## Design
 
@@ -51,37 +52,50 @@ Everything from Phase 2 on is still a plan.
 |---|---|
 | [design/decisions.md](design/decisions.md) | Decisions and alternatives considered (why local tokens, why a task queue, why MCP + stdio, why not a fork of the pipeline) |
 | [design/guardrails.md](design/guardrails.md) | Security, privacy, prompt-IP, and behavioural guardrails — enforced by the API, not by prompts |
-| [design/delivery-plan.md](design/delivery-plan.md) | Phased build order, first vertical slice (classification), evaluation plan |
-| [design/known-issues.md](design/known-issues.md) | Backend behaviours an agent will trip over that must be fixed first |
+| [design/delivery-plan.md](design/delivery-plan.md) | Build order with status, evaluation plan, rollout |
 
-## Repository orientation (planned)
+## Repository layout
 
 ```
 uapply-agent/
+├── README.md                # install, settings, CLI, troubleshooting
+├── install.sh / install.ps1 # one-command installers (macOS / Linux, Windows)
+├── pyproject.toml
 ├── docs/                    # this documentation
-├── src/uapply_agent/
-│   ├── cli.py               # `uapply-agent login | init | run | status`
-│   ├── mcp_server.py        # stdio MCP server: tools, prompts, instructions
-│   ├── api/                 # typed client for the uApply backend
-│   ├── folder/              # scan, hash, manifest, case.json
-│   ├── local_ops/           # page rendering, pdfplumber/docx text, HEIC → JPEG (no LLM)
-│   ├── executor/            # pull task → spawn headless runtime → validate → submit
-│   └── runners/             # per-runtime spawn/flags/limit detection: claude_code.py, codex.py
-├── playbook/
-│   ├── SOURCE.md            # instructions, prompts, resolution policy (single source)
-│   └── wrappers/            # optional plugin / AGENTS.md, generated
-└── evals/                   # golden client folders + scoring
+├── tests/
+└── src/uapply_agent/
+    ├── cli.py               # `uapply-agent` command: update, setup, login, logout, init, status, run, mcp, chat, clean, acrobat, config
+    ├── mcp_server.py        # stdio MCP server: the tools, the /uapply:* prompts, server instructions
+    ├── SOURCE.md            # the playbook: server instructions and prompts (single source)
+    ├── playbook.py          # reads SOURCE.md; generates the Claude Code plugin commands
+    ├── context.py           # ServerContext (settings, folder, API client) and ToolError
+    ├── cases.py             # bind a folder to a case, create cases, read progress
+    ├── uploads.py           # upload folder files without duplicating case documents
+    ├── folder.py            # working folder: scan, sha256, manifest.json, case.json under .uapply/
+    ├── executor.py          # pull task, resolve inputs, spawn runtime, validate, submit
+    ├── runners/             # headless runtime drivers: claude_code.py (supported), codex.py (experimental)
+    ├── local_ops.py         # page rendering, PDF text layer, HEIC to JPEG (no model)
+    ├── autofill.py          # IMM PDF auto-fill: local Acrobat Pro, or uApply's platform filler
+    ├── acrobat.py           # Adobe Acrobat Pro automation on Windows (IAC through pywin32)
+    ├── report.py            # end-of-run report and final package download
+    ├── api.py               # typed client for the uApply backend
+    ├── auth.py              # Auth0 device login, or a pasted token
+    ├── config.py            # settings (config.json) and credential storage
+    ├── integrate.py         # MCP registration for Claude Code / Codex, used by `setup`
+    ├── updater.py           # self-update at start: versions/<commit>/, hand-over to the newest
+    ├── constants.py         # document statuses and supported file types
+    ├── util.py              # small file helpers (atomic writes, hashing, JSON)
+    └── chat/                # optional chat intake: AnyChat source, transcript store, PDF render, intake call, filing
 ```
 
 ## Related documentation
 
-- Backend: `uapply-backend/docs/` — [architecture overview](../../uapply-backend/docs/architecture/overview.md),
-  [document pipeline](../../uapply-backend/docs/architecture/document-pipeline.md),
-  [AI analysis](../../uapply-backend/docs/architecture/ai-analysis.md).
-- Desktop auto-fill app: `uapply-desktop/` (Selenium IMM-form filler driven by L3 JSON).
+The backend's own documentation (document pipeline, AI analysis, API
+inventory) lives in the uApply backend repository.
 
 ## Contributing to these docs
 
-- `architecture/` and `reference/` describe the intended build; once code
-  lands, update them in the same change and drop the *(new)* markers.
-- `design/` records *why*; append status notes rather than rewriting decisions.
+- `architecture/` and `reference/` describe what the code does; mark anything
+  not built as planned, and update the documents in the same change as the
+  code.
+- `design/` records *why*; add status notes rather than rewriting decisions.

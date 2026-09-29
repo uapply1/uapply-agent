@@ -1,9 +1,24 @@
 # uapply-agent installer for Windows. In a normal (non-administrator) PowerShell window:
 #   irm https://raw.githubusercontent.com/uapply1/uapply-agent/main/install.ps1 | iex
-# Installs uv and the Claude Code CLI (if missing), the uapply-agent CLI, registers
-# it with Claude Code and Codex, and signs in to Claude and uApply. Re-run any time
-# to upgrade.
+#
+# Installs uv and the Claude Code CLI when missing, installs the uapply-agent CLI, registers it with
+# Claude Code and Codex, and signs in to Claude and uApply. Run it again at any time to upgrade.
+#
+# Environment:
+#   UAPPLY_AGENT_SOURCE        install from this pip source instead of the latest commit of main
+#   UAPPLY_SKIP_CLAUDE_INSTALL do not install the Claude Code CLI
+#   UAPPLY_ALLOW_ADMIN         allow running in an elevated window (not recommended)
 $ErrorActionPreference = "Stop"
+
+function Invoke-WithRetry([scriptblock]$Action, [string]$What, [int]$Attempts = 3) {
+  for ($i = 1; $i -le $Attempts; $i++) {
+    try { return & $Action }
+    catch {
+      if ($i -eq $Attempts) { throw "could not $What`: $_" }
+      Start-Sleep -Seconds 3
+    }
+  }
+}
 
 # Elevated windows break this install: files end up owned by the administrator ("Access is denied" on
 # upgrade) and elevated programs often cannot open the browser for sign-in.
@@ -12,8 +27,8 @@ if ($me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -and -n
   throw ("This PowerShell window is running as Administrator. Close it, open PowerShell normally " +
          "(not 'Run as administrator'), and run the installer again.")
 }
-# A source archive, so Git is not required on the machine.
-# The exact commit of main, so the agent's self-update knows what is installed.
+# A source archive of the exact commit of main: Git is not needed, and the agent's self-update knows
+# which version is installed.
 $Sha = ""
 try {
   $Sha = "$(Invoke-RestMethod -Uri https://api.github.com/repos/uapply1/uapply-agent/commits/main -Headers @{ Accept = "application/vnd.github.sha" } -TimeoutSec 10)".Trim()
@@ -24,8 +39,8 @@ $Src = if ($env:UAPPLY_AGENT_SOURCE) { $env:UAPPLY_AGENT_SOURCE } else { "uapply
 $env:UAPPLY_INSTALLED_SHA = if ($env:UAPPLY_AGENT_SOURCE) { "" } else { $Sha }
 
 function Install-Uv {
-  # The official uv zip, checksum-verified, straight into ~\.local\bin. Not astral's install.ps1:
-  # under `irm | iex` its `exit 1` (e.g. on the default Restricted execution policy) closes this window.
+  # The official release zip, checksum-verified, into ~\.local\bin. (astral's install.ps1 ends with
+  # `exit 1` on some failures, which closes the RCIC's window under `irm | iex`.)
   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
   $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "aarch64" } else { "x86_64" }
   $name = "uv-$arch-pc-windows-msvc.zip"
@@ -40,7 +55,8 @@ function Install-Uv {
         try { Invoke-WebRequest -Uri "$base/$name" -OutFile $zip -UseBasicParsing; break }
         catch { if ($i -eq 3) { throw "could not download uv: $_" }; Start-Sleep -Seconds 3 }
       }
-      $expected = ("$(Invoke-RestMethod -Uri "$base/$name.sha256")" -split "\s+")[0].ToLower()
+      $sum = Invoke-WithRetry { Invoke-RestMethod -Uri "$base/$name.sha256" } "download the uv checksum"
+      $expected = ("$sum" -split "\s+")[0].ToLower()
     } finally { $ProgressPreference = $prev }
     if ((Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower() -ne $expected) { throw "uv download failed its checksum" }
     Expand-Archive -Path $zip -DestinationPath $tmp -Force
@@ -59,10 +75,11 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
   Install-Uv
 }
 
-# A running MCP server (an open Claude Code / Codex session) locks the exe on Windows.
+# An open Claude Code / Codex session runs the uapply-agent MCP server, and Windows locks its exe.
 $running = Get-Process uapply-agent -ErrorAction SilentlyContinue
 if ($running) {
-  Write-Host "Stopping the running uapply-agent MCP server for the upgrade (open sessions reconnect on restart)..."
+  Write-Warning ("uapply-agent is running in $(@($running).Count) open Claude Code / Codex session(s). It is stopped " +
+                 "for the upgrade: afterwards start a NEW session (or run /mcp and reconnect uapply) to use it again.")
   $running | Stop-Process -Force
   Start-Sleep -Seconds 1
 }
@@ -75,21 +92,24 @@ if ($LASTEXITCODE -ne 0) {
         "delete that folder (it may have been created by an elevated install), then run this installer again in a normal window."
 }
 uv tool update-shell | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Warning "Could not add uv's tool folder to PATH; new terminals may not find uapply-agent." }
+$agentExe = Join-Path "$(uv tool dir --bin)".Trim() "uapply-agent.exe"
+if (-not (Test-Path $agentExe)) { throw "uapply-agent was not installed at $agentExe" }
 
 # Local tasks run in a headless Claude Code (or Codex) CLI process on the RCIC's plan;
 # the desktop apps do not provide one. Git for Windows is not required.
 function Install-ClaudeCli {
-  # Same source and checksum check as https://claude.ai/install.ps1, but the ~250 MB binary is
-  # fetched with resume + retries: a single Invoke-WebRequest fails on flaky links with
-  # "unexpected EOF or 0 bytes from the transport stream".
+  # Same source and checksum as https://claude.ai/install.ps1, but the ~250 MB binary is downloaded
+  # with resume and retries, which slow or unstable connections need.
   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
   $base = "https://downloads.claude.ai/claude-code-releases"
   $platform = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "win32-arm64" } else { "win32-x64" }
-  $version = "$(Invoke-RestMethod -Uri "$base/latest")".Trim()
+  $version = "$(Invoke-WithRetry { Invoke-RestMethod -Uri "$base/latest" } "look up the Claude Code version")".Trim()
   if ($version -notmatch '^\d+\.\d+\.\d+') {
     throw "downloads.claude.ai returned no version (unreachable, or Claude Code is not available in this region)"
   }
-  $entry = (Invoke-RestMethod -Uri "$base/$version/manifest.json").platforms.$platform
+  $manifest = Invoke-WithRetry { Invoke-RestMethod -Uri "$base/$version/manifest.json" } "download the Claude Code manifest"
+  $entry = $manifest.platforms.$platform
   if (-not $entry) { throw "platform $platform not in the Claude Code manifest" }
   $dir = "$env:USERPROFILE\.claude\downloads"
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -156,5 +176,5 @@ if (-not $haveRuntime -and -not $tooOld -and -not $env:UAPPLY_SKIP_CLAUDE_INSTAL
 }
 $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
 
-& "$env:USERPROFILE\.local\bin\uapply-agent.exe" setup
+& $agentExe setup
 if ($LASTEXITCODE -ne 0) { throw "uapply-agent setup failed (exit $LASTEXITCODE)" }

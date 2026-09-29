@@ -2,8 +2,8 @@
 
 The client folder is the agent's unit of work and its only local state. The
 design goal is that **re-running on the same folder is always safe**: nothing
-is uploaded twice, nothing is re-created, and the agent resumes from the first
-incomplete stage.
+is uploaded twice, nothing is re-created, and the agent carries on from the
+server's current state.
 
 ## Layout
 
@@ -14,45 +14,49 @@ incomplete stage.
 ├── IMG_2041.HEIC
 ├── spouse/
 │   └── passport_li_na.pdf
-└── .uapply/                       # created by `uapply-agent init` or first run
-    ├── case.json                  # survey ids, application type, family map, stage
-    ├── manifest.json              # sha256 → {document_id, applicant, path, uploaded_at}
-    ├── review.md                  # human-readable run report + client questions
-    ├── cache/                     # rendered pages, converted HEICs, preview/ PNGs (safe to delete)
-    └── output/                    # L3 JSON, filled IMM PDFs (from auto-fill)
+├── uApply output/                 # written by final_report
+│   ├── report.md                  # the end-of-run report
+│   ├── <case>_final_package.zip   # the dashboard's final package
+│   └── Forms/                     # filled forms unpacked from the package
+└── .uapply/                       # created when the folder is bound to a case
+    ├── .gitignore                 # ignores everything under .uapply/
+    ├── case.json                  # survey id, name, LLM mode, dependents
+    ├── manifest.json              # sha256 → {path, document_id, applicant, uploaded_at, uploaded_path}
+    ├── autofill.json              # auto-fill progress between autofill_forms calls
+    ├── chat/                      # chat transcripts, their PDFs, intake hints (optional)
+    ├── cache/                     # task inputs, rendered pages, converted HEICs, preview/ PNGs
+    └── output/                    # imm_pdfs/: forms filled locally with Acrobat Pro
 ```
 
-Subfolders are allowed and carry a hint: a folder named like a dependent
-(`spouse/`, `child_1/`, or the person's name) maps to that applicant. The hint
-is a proposal at intake, confirmed by the RCIC, and then recorded in
-`case.json` so later files in that folder are attributed automatically.
+Supported files are PDF, JPEG, PNG, HEIC/HEIF, DOCX/DOC and XLSX/XLS.
+Folders and files whose names start with `.`, Office lock files (`~$…`) and
+`.tmp` files are ignored. A file in a subfolder carries the subfolder's name as
+an `applicant_hint` in `scan_folder`; the model uses it when choosing the
+`applicant` for `sync_documents`.
 
 ## `case.json`
+
+Written by `init_case`, `create_case` and `uapply-agent init`:
 
 ```json
 {
   "schema": 1,
   "backend": "https://api.uapply.io",
-  "team_id": "…",
-  "principal": {"survey_id": "f7ee9c66-…", "name": "Zhang Wei"},
-  "dependents": [
-    {"survey_id": "…", "name": "Li Na", "relationship": "spouse", "folder": "spouse/"}
-  ],
-  "application_type_id": "…",
+  "survey_id": "…",
+  "name": "Zhang Wei",
   "llm_mode": "local_agent",
-  "stage": "resolve",
+  "dependents": [
+    {"survey_id": "…", "name": "Li Na", "relationship": "spouse"}
+  ],
   "stage_history": [
-    {"stage": "intake", "at": "2026-09-25T14:02:11Z", "by": "claude-code"},
-    {"stage": "upload", "at": "…"},
-    {"stage": "classify", "at": "…"},
-    {"stage": "extract", "at": "…"}
+    {"stage": "init", "at": "…"}
   ]
 }
 ```
 
-`stage` is advisory: the agent asks the server for the real state
-(`case_status` tool) and reconciles — the server is the source of truth,
-`case.json` is a pointer.
+`case.json` is a pointer, not the source of truth: the agent calls
+`case_status` first and trusts the server. The executor pulls tasks for the
+principal and every dependent listed here.
 
 ## `manifest.json`
 
@@ -61,9 +65,9 @@ is a proposal at intake, confirmed by the RCIC, and then recorded in
   "schema": 1,
   "files": {
     "3a7f…e1": {"path": "passport_zhang_wei.pdf", "document_id": "…", "applicant": "principal",
-                "size": 1048576, "uploaded_at": "…", "converted_from": null},
+                "uploaded_at": "…", "uploaded_path": null},
     "9c02…b4": {"path": "IMG_2041.HEIC", "document_id": "…", "applicant": "principal",
-                "converted_from": "heic", "uploaded_path": ".uapply/cache/IMG_2041.jpg"}
+                "uploaded_at": "…", "uploaded_path": ".uapply/cache/IMG_2041.jpg"}
   }
 }
 ```
@@ -71,37 +75,29 @@ is a proposal at intake, confirmed by the RCIC, and then recorded in
 Rules:
 
 - Keyed by **sha256 of the original file**, not the path. Renaming a file does
-  not re-upload it; editing it does (the new hash is a new document, and the
-  agent tells the RCIC the old one still exists on the server).
-- A file present in the manifest but missing from disk is not an error; the
-  agent can still complete tasks for it by downloading from S3.
-- Files under `.uapply/`, dotfiles, and `~$`/`.tmp` office lock files are
-  ignored.
-
-## `review.md`
-
-Written by the agent, meant for the RCIC. Regenerated at the end of every run
-(previous versions kept in `.uapply/review-<timestamp>.md`). It contains the
-run summary, agent-resolved values with rationale, pending proposals, client
-questions and missing documents — see the end of
-[case-workflow.md](case-workflow.md).
-
-It is the only place the agent "sends" anything: questions for the client are
-written here for the RCIC to forward, never emailed.
+  not re-upload it; editing it does (the new hash is a new file).
+- `uploaded_path` is set when the uploaded file differs from the original
+  (HEIC converted to JPEG, a chat transcript's PDF).
+- Before uploading, `sync_documents` also checks the case's documents: one of
+  the same type, name and size is recorded in the manifest instead of being
+  uploaded again (for example after a lost local record).
 
 ## Privacy of local state
 
-- `.uapply/` contains ids and a report, not copies of documents (except
-  `cache/`, which holds derived images of files already in the folder).
-- `cache/` and `output/` may contain personal data; the CLI offers
-  `uapply-agent clean` and the playbook tells the agent to run it at the end
-  of a batch run if the RCIC asked for it.
-- Nothing under `.uapply/` should be committed if the RCIC happens to keep the
-  folder in git; `init` writes a `.gitignore` there.
+- `.uapply/cache/` holds task inputs downloaded from uApply and rendered
+  pages; `.uapply/output/` holds forms filled locally. Both may contain
+  personal data; `uapply-agent clean` deletes the files in both.
+- `.uapply/chat/` holds chat transcripts and is not removed by `clean` (it is
+  the record of what was filed); see
+  [chat-sources.md](chat-sources.md#data-flow-and-consent).
+- `uApply output/` holds the final package and the report for the RCIC; it is
+  not removed by `clean`.
+- `.uapply/.gitignore` keeps the state out of git if the RCIC keeps the folder
+  in a repository.
 
 ## Multiple machines
 
-The manifest is per-machine. If a colleague runs the agent on the same case
-from another laptop, `init --survey <id>` rebuilds the manifest from the
-server's document list (matching on the stored sha256). This is why the backend
-must store `sha256` on `Document` *(new field)*.
+The manifest is per machine. On another machine, `uapply-agent init --survey
+<id>` (or `init_case`) binds the folder again; `sync_documents` then records
+files already on the case (same type, name and size) instead of uploading
+them twice.

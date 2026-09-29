@@ -1,42 +1,101 @@
 #!/bin/sh
-# uapply-agent installer for macOS / Linux:
+# uapply-agent installer for macOS and Linux:
 #   curl -LsSf https://raw.githubusercontent.com/uapply1/uapply-agent/main/install.sh | sh
-# Installs uv and the Claude Code CLI (if missing), the uapply-agent CLI, registers
-# it with Claude Code and Codex, and signs in to Claude and uApply. Re-run any time
-# to upgrade.
-set -e
-# A source archive, so Git is not required on the machine.
-# The exact commit of main, so the agent's self-update knows what is installed.
-SHA="$(curl -fsSL -m 10 -H 'Accept: application/vnd.github.sha' https://api.github.com/repos/uapply1/uapply-agent/commits/main 2>/dev/null || true)"
-if [ ${#SHA} -eq 40 ]; then ARCHIVE="$SHA.zip"; else SHA=""; ARCHIVE="refs/heads/main.zip"; fi
-SRC="${UAPPLY_AGENT_SOURCE:-uapply-agent @ https://github.com/uapply1/uapply-agent/archive/$ARCHIVE}"
-# A custom source is not a known commit: record nothing, the first start installs a versioned copy.
-if [ -n "$UAPPLY_AGENT_SOURCE" ]; then UAPPLY_INSTALLED_SHA=""; else UAPPLY_INSTALLED_SHA="$SHA"; fi
-export UAPPLY_INSTALLED_SHA
+#
+# Installs uv and the Claude Code CLI when missing, installs the uapply-agent CLI, registers it with
+# Claude Code and Codex, and signs in to Claude and uApply. Run it again at any time to upgrade.
+#
+# Environment:
+#   UAPPLY_AGENT_SOURCE        install from this pip source instead of the latest commit of main
+#   UAPPLY_SKIP_CLAUDE_INSTALL do not install the Claude Code CLI
+#
+# Everything runs inside main(), so a download cut short by the network cannot run half a script.
 
-if ! command -v uv >/dev/null 2>&1; then
-  echo "Installing uv (Python tool manager)..."
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-fi
-export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+set -eu
 
-echo "Installing uapply-agent from $SRC ..."
-uv tool install --force --quiet "$SRC"
-uv tool update-shell >/dev/null 2>&1 || true
+REPO="uapply1/uapply-agent"
 
-# Local tasks run in a headless Claude Code (or Codex) CLI process on the RCIC's plan;
-# the desktop apps do not provide one.
-if ! command -v claude >/dev/null 2>&1 && ! command -v codex >/dev/null 2>&1 \
-   && [ ! -x "$HOME/.local/bin/claude" ] && [ -z "$UAPPLY_SKIP_CLAUDE_INSTALL" ]; then
-  echo "Installing the Claude Code CLI (runs uApply's AI tasks on your Claude plan)..."
-  # Never lose the uApply install over this; setup below reports the missing CLI too.
-  curl -fsSL https://claude.ai/install.sh | bash || \
-    echo "WARNING: Claude Code CLI not installed. Run this installer again, or: curl -fsSL https://claude.ai/install.sh | bash"
-fi
+say() { printf '%s\n' "$*"; }
+fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-# Sign-in prompts need the keyboard; under `curl | sh` stdin is the script itself.
-if (exec </dev/tty) 2>/dev/null; then
-  "$HOME/.local/bin/uapply-agent" setup </dev/tty
-else
-  "$HOME/.local/bin/uapply-agent" setup
-fi
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+uv_target() {
+  case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) echo "x86_64-unknown-linux-gnu" ;;
+    Linux-aarch64 | Linux-arm64) echo "aarch64-unknown-linux-gnu" ;;
+    Darwin-x86_64) echo "x86_64-apple-darwin" ;;
+    Darwin-arm64) echo "aarch64-apple-darwin" ;;
+    *) echo "" ;;
+  esac
+}
+
+install_uv() {
+  # The official release archive, checksum-verified, into ~/.local/bin.
+  target="$(uv_target)"
+  if [ -z "$target" ]; then
+    say "No prebuilt uv for $(uname -s) $(uname -m); using astral's installer."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    return
+  fi
+  base="https://github.com/astral-sh/uv/releases/latest/download"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  curl -fsSL --retry 3 -o "$tmp/uv.tar.gz" "$base/uv-$target.tar.gz" || fail "could not download uv"
+  expected="$(curl -fsSL --retry 3 "$base/uv-$target.tar.gz.sha256" | cut -d' ' -f1)"
+  [ "$(sha256_of "$tmp/uv.tar.gz")" = "$expected" ] || fail "the uv download failed its checksum"
+  tar -xzf "$tmp/uv.tar.gz" -C "$tmp"
+  mkdir -p "$HOME/.local/bin"
+  cp "$tmp/uv-$target/uv" "$tmp/uv-$target/uvx" "$HOME/.local/bin/"
+}
+
+main() {
+  # A source archive of the exact commit of main: Git is not needed, and the agent's self-update
+  # knows which version is installed.
+  sha="$(curl -fsSL -m 10 -H 'Accept: application/vnd.github.sha' \
+    "https://api.github.com/repos/$REPO/commits/main" 2>/dev/null || true)"
+  if [ "${#sha}" -eq 40 ]; then archive="$sha.zip"; else sha=""; archive="refs/heads/main.zip"; fi
+  if [ -n "${UAPPLY_AGENT_SOURCE:-}" ]; then
+    src="$UAPPLY_AGENT_SOURCE"
+    UAPPLY_INSTALLED_SHA=""          # not a known commit: the first start installs a versioned copy
+  else
+    src="uapply-agent @ https://github.com/$REPO/archive/$archive"
+    UAPPLY_INSTALLED_SHA="$sha"
+  fi
+  export UAPPLY_INSTALLED_SHA
+
+  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  if ! command -v uv >/dev/null 2>&1; then
+    say "Installing uv (Python tool manager)..."
+    install_uv
+  fi
+
+  say "Installing uapply-agent from $src ..."
+  uv tool install --force --quiet "$src"
+  uv tool update-shell >/dev/null 2>&1 || say "Note: add $(uv tool dir --bin) to your PATH."
+  agent="$(uv tool dir --bin)/uapply-agent"
+  [ -x "$agent" ] || fail "uapply-agent was not installed at $agent"
+
+  # uApply's AI tasks run in a headless Claude Code (or Codex) CLI on the RCIC's own plan; the
+  # desktop apps do not provide one.
+  if ! command -v claude >/dev/null 2>&1 && ! command -v codex >/dev/null 2>&1 \
+     && [ ! -x "$HOME/.local/bin/claude" ] && [ -z "${UAPPLY_SKIP_CLAUDE_INSTALL:-}" ]; then
+    say "Installing the Claude Code CLI (runs uApply's AI tasks on your Claude plan)..."
+    # A failure here must not undo the uApply install; setup reports a missing CLI as well.
+    curl -fsSL https://claude.ai/install.sh | bash || \
+      say "WARNING: the Claude Code CLI is not installed. Run this installer again, or: curl -fsSL https://claude.ai/install.sh | bash"
+  fi
+
+  # Sign-in prompts need the keyboard; under `curl | sh` stdin is the script itself.
+  if (exec </dev/tty) 2>/dev/null; then
+    "$agent" setup </dev/tty
+  else
+    "$agent" setup
+  fi
+}
+
+main "$@"

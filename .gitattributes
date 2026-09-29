@@ -1,2 +1,11 @@
-# Auto detect text files and perform LF normalization
+# Normalise text files to LF in the repository.
 * text=auto
+
+# Shell scripts must keep LF line endings.
+*.sh  text eol=lf
+
+# Binary documentation assets.
+*.png  binary
+*.jpg  binary
+*.pdf  binary
+*.docx binary

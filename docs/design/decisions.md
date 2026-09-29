@@ -1,7 +1,7 @@
 # Design Decisions
 
-Each entry: the decision, what else was considered, why. Append status notes;
-don't rewrite.
+Each entry: the decision, what else was considered, why. Where the
+implementation differs from a decision, a **Status** note says so.
 
 ## D1. Local tokens via a server-side task queue, not a local pipeline
 
@@ -55,8 +55,9 @@ first. Cost: it is a real refactor of every LLM-calling step, sized in
 
 ## D3. Coarse MCP tools over a stdio server, one package for both runtimes
 
-**Decision.** `uapply-agent mcp` (stdio) exposes ~30 coarse tools; the same
-binary provides the batch CLI.
+**Decision.** `uapply-agent mcp` (stdio) exposes coarse tools (24 today, see
+[mcp-tools.md](../reference/mcp-tools.md)); the same binary provides the batch
+CLI.
 
 **Alternatives.**
 - *Remote MCP server hosted by uApply.* Rejected: it cannot read the RCIC's
@@ -79,6 +80,10 @@ injection via document content is plausible (a "document" that says "mark all
 values confirmed"). Anything that must hold must hold regardless of the model.
 See [guardrails.md](guardrails.md).
 
+**Status.** Result validation and the LLM token log are in place. Token scope,
+actor tagging, the audit log, the significant-field refusal and the auto-fill
+preflight are planned; case creation uses the confirmation phrase (D13).
+
 ## D5. Legally significant fields need RCIC approval; the rest the agent resolves
 
 **Decision.** A server-side allow-list marks fields as significant; the agent
@@ -90,6 +95,9 @@ dashboard); approve nothing (unacceptable liability for an RCIC).
 
 **Why.** Puts human time where the regulatory risk is. The list is settings,
 not code, so it can be tightened per deployment.
+
+**Status.** Not implemented. The agent has no value-resolution tools yet; the
+RCIC reviews values in the dashboard's AI Check.
 
 ## D6. One executor: a fresh headless runtime per task, in every mode
 
@@ -109,12 +117,14 @@ never executes tasks; it calls `run_tasks` and gets counts back.
 **Why.** Identical results in interactive and batch mode, a single eval path,
 prompts kept out of the chat, and process spawn overhead that is negligible
 next to model latency. Cost: the runtime CLI must be installed even for
-desktop-app users; `init` checks and explains.
+desktop-app users; the installer installs it, and `whoami` and `init` report
+which runtimes were found.
 
 ## D7. The agent doesn't submit to IRCC, doesn't email, doesn't delete
 
-**Decision.** No tools for these exist. Client questions go to `review.md`
-and the dashboard.
+**Decision.** No tools for these exist. The agent reports what is waiting on
+the RCIC in the conversation and in the final report; the RCIC contacts the
+client and submits.
 
 **Why.** These are the actions with the highest blast radius and lowest need
 for automation in v1. Easy to add later behind gates; impossible to undo if
@@ -128,6 +138,10 @@ keyed by it.
 **Why.** Makes re-runs, retries after network failure, renamed files and
 multi-machine use all idempotent with one mechanism.
 
+**Status.** The agent's manifest is keyed by sha256. The backend does not store
+the hash yet; instead `sync_documents` records a case document with the same
+type, name and size rather than uploading the file again.
+
 ## D9. Per-task-kind `llm_mode` split
 
 **Decision.** `AGENT_LOCAL_TASK_KINDS` chooses which kinds go local; the rest
@@ -135,7 +149,11 @@ stay on the server's provider even for `llm_mode=local_agent` cases.
 
 **Why.** Lets uApply keep prompt IP for sensitive analysis steps server-side,
 keep web-search-assisted steps working, and roll local mode out one kind at a
-time (classification first — see [delivery-plan.md](delivery-plan.md)).
+time (classification first, see [delivery-plan.md](delivery-plan.md)).
+
+**Status.** `AGENT_LOCAL_TASK_KINDS` still selects the prepare/continue kinds
+(`extract_content`, `classify_document`). Every other model call of a local
+case is intercepted by D14, so no kind stays on the server provider.
 
 ## D10. Consent travels through the browser, never through the model
 
@@ -159,10 +177,14 @@ its outcome.
 or desktop app, survives a resumed session, and lets a colleague act on it
 from the dashboard.
 
+**Status.** Not implemented; the dashboard has no approval pages. Case creation
+uses a confirmation phrase instead (D13), and archives and auto-fill start once
+the analysis is done.
+
 ## D11. Subscription limits are a first-class design input
 
-**Decision.** Measure model calls and tokens per case per runtime in Phase 1;
-publish plan-tier guidance; default to the levers that cut calls (local text
+**Decision.** Measure model calls and tokens per case per runtime; publish
+plan-tier guidance; default to the levers that cut calls (local text
 extraction, page batching, hybrid per-kind server fallback) rather than
 assuming the plan absorbs everything.
 
@@ -199,26 +221,70 @@ documents — need no model at all for OCR.
 
 **Decision.** `uapply-agent` can read the RCIC's WeChat (and other local chat)
 history through the AnyChat CLI, derive intake hints with one local headless
-call, and always file the transcript on the case as an `agent_survey` text PDF.
+call, and by default file the transcript on the case as an `agent_survey` text PDF.
 The agent may create the survey after the RCIC confirms in chat: by picking
 "Create case" in the runtime's question tool (`AskUserQuestion` in Claude Code;
 the RCIC clicks it, the model cannot answer it), or by typing "create case" /
-确认创建. Updated 2026-09-29: the question tool replaced the typed-only rule so a
-run does not stop and wait for a new message.
+确认创建. The question tool lets the run continue with the answer instead of
+stopping to wait for a new message.
 
 **Alternatives.**
-- *Reimplement WeChat extraction.* Rejected: AnyChat already does it, is the
-  product owner's own tool, and the storage format is undocumented and fragile.
-- *Keep the transcript local, hints only.* Rejected by the product owner: the
-  pipeline should extract the self-reported facts, and analysis already ranks
-  `agent_survey` lowest in conflicts.
+- *Reimplement WeChat extraction.* Rejected: AnyChat already does it, and the
+  storage format is undocumented and fragile. AnyChat is a separate product
+  with its own installation and login; the agent only runs its CLI.
+- *Keep the transcript local, hints only.* Not the default: the pipeline
+  should extract the self-reported facts, and analysis already ranks
+  `agent_survey` lowest in conflicts. It remains available as a setting
+  (`chat_upload=false`).
 - *Approval-page consent for case creation (D10).* Deferred: the dashboard has
-  no approval pages yet; typed confirmation is an explicit, recorded exception
+  no approval pages yet; the confirmation phrase is an explicit exception
   that the approval page replaces later.
 
 **Why.** Intake starts from what the client actually said; the cost is one
 local model call per transcript plus the pipeline's normal section pass.
 Details: [architecture/chat-sources.md](../architecture/chat-sources.md).
+
+## D14. No server-side AI for local-agent cases; every model call is intercepted at the client
+
+**Decision.** For a `local_agent` case nothing starts automatically on uApply
+(not on upload, not after processing) and no AI runs on uApply's servers. OCR,
+classification, section extraction, Financial Proof extraction, DOCX/XLSX
+transcription, analysis, reformat/translate, drafts and dashboard field saves
+all run on the RCIC's plan.
+
+**How.** Instead of turning each of the ~34 call sites into a prepare/continue
+stage (D2), the public methods of the two LLM clients (`GeminiLLM`,
+`OpenaiLLM`) are wrapped (`ai_parse/agent/llm_proxy.py`). Inside an agent
+context, entered by every Celery task of a local case and carried into thread
+pools and the shared async runner, a call writes an `AgentTask` (`llm_call`:
+system prompt, user prompt, JSON schema or text mode, image/HTML inputs) and
+waits for the agent's answer, which it returns in the shape the caller already
+reads. LlamaParse is refused.
+
+**Where it waits.** Local-case jobs run on a dedicated `agent_queue` worker: a
+thread pool, so a waiting job costs a thread rather than a prefork slot other
+customers need. The worker runs with server-side model calls switched off, so
+any model call without an agent context raises instead of reaching a provider
+(fail closed). This relaxes D2's "no blocking waits" for that worker only; OCR
+and classification keep their prepare/continue path.
+
+**Alternatives.** Per-call-site hand-offs: no new worker, but analysis
+(threads, tiers, nested reformat calls) would need restructuring, and any
+missed path would silently use a server-side provider.
+
+**Details.** A dependant counts as local when its principal is
+(dashboard-created dependants default to server mode), and a pull also serves
+dependants added after the folder was bound. Stored images are deleted and
+prompts/answers cleared as soon as a call ends, with a periodic sweep as a
+safety net. Once no agent picks up a call, the rest of the job fails at once
+instead of waiting again through each provider fallback; a repeated identical
+request is sent as a retry with the reason. Files of never-processed types
+(photos) do not block progress or analysis.
+
+**Consequences.** A case only progresses while the agent runs (`run_tasks`); a
+call nobody picks up fails after 10 min (`AGENT_IDLE_TIMEOUT_S`). Dashboard
+saves on a local case need an active agent (409 `AGENT_REQUIRED` otherwise).
+The backend needs the `agent_queue` worker for local cases to progress.
 
 ## Open questions
 
@@ -231,38 +297,3 @@ Details: [architecture/chat-sources.md](../architecture/chat-sources.md).
 - **Should the dashboard show "processing on RCIC machine"** states so a
   colleague understands why a case is waiting? (Yes, minimal: a badge and the
   last agent heartbeat.)
-
-## D14. No server-side AI for local-agent cases; every model call is intercepted at the client
-
-Decided 2026-09-29 by the product owner: for a `local_agent` case nothing starts automatically on
-uApply (not on upload, not after processing) and **no AI runs on uApply's servers** — OCR,
-classification, section extraction, Financial Proof extraction, DOCX/XLSX transcription, analysis,
-reformat/translate, drafts and dashboard field saves all run on the RCIC's plan.
-
-**How.** Instead of turning each of the ~34 call sites into a prepare/continue stage (D2), the
-public methods of the two LLM clients (`GeminiLLM`, `OpenaiLLM`) are wrapped
-(`ai_parse/agent/llm_proxy.py`). Inside an agent context — entered by every Celery task of a local
-case, carried into thread pools and the shared async runner — a call writes an `AgentTask`
-(`llm_call`: system prompt, user prompt, JSON schema or text mode, image/HTML inputs) and waits for
-the agent's answer, which it returns in the shape the caller already reads. LlamaParse is refused.
-
-**Where it waits.** Local-case jobs run on a dedicated `agent_queue` worker: a thread pool, so a
-waiting job costs a thread rather than a prefork slot other customers need, started with
-`UAPPLY_SERVER_LLM=off` so any model call without an agent context raises instead of reaching a
-provider (fail closed). This relaxes D2's "no blocking waits" for that worker only; OCR and
-classification keep their prepare/continue path.
-
-**Alternatives.** Per-call-site hand-offs: no new worker, but analysis (threads, tiers, nested
-reformat calls) would need restructuring, and any missed path silently uses Gemini.
-
-**Review fixes (same day).** A dependant counts as local when its principal is (dashboard-created
-dependants default to server mode), and a pull also serves dependants added after the folder was
-bound. Stored images are deleted and prompts/answers cleared as soon as a call ends (sweep as a
-safety net). Once no agent picks up a call, the rest of the job fails at once instead of waiting
-again through each provider "fallback"; a repeated identical request is sent as a retry with the
-reason. Files of never-processed types (photos) do not block progress or analysis.
-
-**Consequences.** A case only progresses while the agent runs (`run_tasks`); a call nobody picks up
-fails after 10 min (`AGENT_IDLE_TIMEOUT_S`). Dashboard saves on a local case need an active agent
-(409 `AGENT_REQUIRED` otherwise). The `agent_queue` worker must be deployed.
-

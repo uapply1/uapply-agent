@@ -13,12 +13,11 @@ from pathlib import Path
 
 from .api import ApiError, UApplyApi
 from .config import Settings
-from .folder import WorkingFolder
+from .folder import OUTPUT_DIR, WorkingFolder
 from .util import write_text_atomic
 
 logger = logging.getLogger(__name__)
 
-OUTPUT_DIR = "uApply output"
 
 
 def status_label(r: dict) -> str:

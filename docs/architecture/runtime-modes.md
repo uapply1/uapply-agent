@@ -11,13 +11,15 @@ CLI) executes them itself:
 ```
 run_tasks()  /  uapply-agent run
   └─ for each AgentTask (N workers):
-       1. pull task from the server; resolve inputs to local files; render pages if needed
+       1. pull task from the server; download its input documents into .uapply/cache/<task id>/;
+          render pages if needed (text-layer PDFs are extracted with pdfplumber, no model)
        2. spawn the runtime headless with the task's prompt as a real system prompt
-            Claude Code:  claude -p --system-prompt <file> --output-format json …
-            Codex:        codex exec --output-schema schema.json …
-          images attached; text-layer PDFs pre-extracted and inlined
-       3. validate the JSON locally against output_schema; submit; on rejection retry once
-  └─ return counts: accepted / rejected / released, plus any plan-limit signal
+            Claude Code:  claude -p --system-prompt=… --json-schema … --output-format json
+                          (only the Read tool; no MCP servers, plugins or settings)
+            Codex:        codex exec --output-schema … (experimental)
+          long prompts and document text are written to files the model reads
+       3. check the JSON locally against output_schema; submit; retry with the rejection reason
+  └─ return counts: accepted / rejected / released / failed, remaining, plan_limited, runtime_error
 ```
 
 Why this is the only executor:
@@ -37,11 +39,15 @@ Why this is the only executor:
 
 `--workers N` (default 2, max 4) runs N runtimes concurrently. Plan rate
 limits, not CPU, are the bottleneck. When the runtime reports a usage limit
-the executor releases its leases, records `plan_limited_until` if the runtime
-exposes it, and stops; the case resumes on the next `run_tasks` / `run`.
+the executor releases its leases, reports `plan_limited` and stops; the case
+resumes on the next `run_tasks` / `run`. When the runtime cannot work at all
+(e.g. the Claude Code CLI is not signed in) it reports `runtime_error` and
+stops the same way.
 
-The MCP server needs the runtime's CLI on `PATH`. `whoami` reports which
-runtimes were detected; `run_tasks` fails with a clear hint if none is.
+The MCP server finds the runtime's CLI by the absolute path `setup` recorded,
+then `PATH`, then the installers' usual locations (desktop apps start the
+server with a minimal `PATH`). `whoami` reports which runtimes were detected,
+whether they start and whether Claude Code is signed in.
 
 ## Interactive — the RCIC orchestrates from a chat
 
@@ -52,43 +58,48 @@ $ claude            # or: codex, or the desktop apps
 ```
 
 - `uapply-agent` runs as a **stdio MCP server** launched by the runtime.
-- The chat model does the *orchestration*: intake proposal, calling
-  `run_tasks`, reviewing classifications, working the review queue, drafting
-  client questions, presenting approval links. It never sees a task payload.
-- The RCIC sees the summaries, opens approval pages, and can interject.
+- The chat model does the *orchestration*: proposing the case, picking
+  document types from page previews, uploading, calling `start_processing`,
+  `run_tasks` and `wait_for_stage`, finishing the case and showing the final
+  report. It never sees a task payload.
+- The RCIC answers questions in the runtime's question tool, sees one
+  progress line per call, and can interject.
 - Works from Claude Code, Codex CLI, Claude Desktop and the Codex desktop app
   alike, because the MCP server and its prompts are runtime-agnostic (see
   [playbook.md](../reference/playbook.md)). For most RCICs the desktop apps
   are the realistic surface; the CLIs are for power users.
 
-Context stays small by construction: `run_tasks` returns counts, the review
-queue returns snippets, and `get_document_text` is capped and used only when a
-decision needs it.
+Context stays small by construction: `run_tasks` returns counts and a
+progress snapshot, and page previews are rendered locally only when a file's
+type is not obvious from its name.
 
 ## Batch — the CLI orchestrates, no chat
 
 ```
-$ uapply-agent run ~/Clients/Zhang_Wei --stages classify,extract --workers 3
-$ uapply-agent run ~/Clients/*/ --stages classify,extract        # several clients
+$ cd ~/Clients/Zhang_Wei
+$ uapply-agent run --follow --workers 3        # execute tasks until processing is done
+$ uapply-agent run --folder ~/Clients/Li_Na    # one pass over the queued tasks of another folder
 ```
 
-- The CLI runs the stage sequence itself using the same executor. No chat
+- The CLI runs the same executor over the bound folder's queued tasks. No chat
   model is involved except inside each spawned task.
-- It stops at every 🧑 gate and prints the pending approval URLs
-  (`uapply-agent status` shows them). The RCIC decides on the page, then
-  re-runs `run`, which resumes.
-- Best for: stages 3–4 on large cases, overnight runs, several clients
-  back-to-back.
+- It does not upload or start stages: the folder must already be bound
+  (`uapply-agent init --survey <id>`) and processing or analysis started, e.g.
+  from a chat session or the dashboard. `--follow` keeps going until
+  processing is done; `--kinds` and `--max-tasks` narrow a run.
+- It exits with code 4 at the plan limit and 5 when the runtime cannot work,
+  so a script can retry later.
+- Best for: long task queues on large cases and overnight runs.
 
 ## Choosing at runtime
 
 | Situation | Mode |
 |---|---|
-| New case, intake decisions | Interactive |
-| Any case size, stages 3–4 | Either — same executor; interactive just shows progress |
-| Overnight, many clients | Batch, `--stages classify,extract`, review next morning |
-| Review of conflicts and doubts | Interactive |
-| Plan limit reached mid-run | Either: executor releases leases; run again later resumes |
+| New case, intake decisions, uploads | Interactive |
+| Processing and analysis tasks | Either: same executor; interactive also starts the stages and shows progress |
+| Overnight, long task queue | Batch, `uapply-agent run --follow` |
+| Finishing (archives, forms, report) | Interactive |
+| Plan limit reached mid-run | Either: executor releases leases; running again later resumes |
 
 ## Subscription usage limits — the real constraint
 
@@ -97,8 +108,8 @@ tokens. That is the whole point of local tokens, and also the main risk: a
 case that needs more model calls than the window allows stalls until the
 window resets.
 
-Order-of-magnitude call counts for a typical case (to be **measured** in
-Phase 1 and replaced with real numbers):
+Order-of-magnitude call counts for a typical case (estimates, to be replaced
+with measured numbers):
 
 | Case | Docs | Pages | OCR calls (scans only) | Classify | Section extraction | Analysis | Total model calls |
 |---|---|---|---|---|---|---|---|
@@ -111,16 +122,16 @@ kind. Levers, in order of impact:
 1. **Skip the model where text exists.** Text-layer PDFs (most bank
    statements, letters, transcripts) go through pdfplumber locally — no model
    call. This alone can halve the count.
-2. **Batch pages.** 3–4 page images per `extract_content` task instead of one.
-3. **Keep expensive steps server-side per case** (`AGENT_LOCAL_TASK_KINDS`),
-   e.g. OCR on uApply's provider, everything else local — a hybrid that still
-   removes most of the cost.
-4. **Batch mode overnight** spreads a large case across windows
-   automatically: the executor backs off when the runtime reports a limit and
-   resumes when it clears.
+2. **Batch pages.** One `extract_content` task covers the whole document;
+   the executor sends several page images per model call.
+3. **Server mode per case.** A case that the plan cannot carry can run in
+   server mode instead (`set_llm_mode`, only when the RCIC asks).
+4. **Batch mode overnight** spreads a large case across usage windows: the
+   executor stops when the runtime reports a limit, and running it again
+   after the window resets carries on.
 
 Guidance to write into onboarding once measured: which plan tier handles
-which case sizes, and when to use batch or hybrid mode. Until then, assume
+which case sizes, and when to use batch or server mode. Until then, assume
 entry-level plans are fine for single-applicant cases in batch mode and not
 for family cases in one sitting.
 
@@ -133,18 +144,19 @@ breach provider terms.
 
 | | Claude Code | Codex |
 |---|---|---|
-| Playbook delivery | MCP prompts + server instructions (primary); optional plugin wrapper | MCP prompts + server instructions (primary); optional `AGENTS.md` wrapper |
-| MCP config | `claude mcp add` / `.mcp.json` / Claude Desktop config | `~/.codex/config.toml` `[mcp_servers.uapply]` |
-| Headless (executor) | `claude -p` with system-prompt and JSON output flags | `codex exec --output-schema` |
-| Vision inputs (executor) | image file paths in the prompt | image attachments |
-| Usage-limit signal | exit code / message parsed by `runners/claude_code.py` | parsed by `runners/codex.py` |
+| Support | supported | experimental |
+| Playbook delivery | MCP prompts + server instructions; a Claude Code plugin generated by `setup` adds `/uapply:*` | MCP prompts + server instructions |
+| MCP config | `claude mcp add --scope user`, or `~/.claude.json` when only the desktop app is installed | `codex mcp add`, or `[mcp_servers.uapply]` in `~/.codex/config.toml` |
+| Headless (executor) | `claude -p` with `--system-prompt` and `--json-schema` | `codex exec --output-schema`; the system prompt is prepended to the prompt |
+| Vision inputs (executor) | image file paths the model reads with its Read tool | image attachments |
+| Usage-limit signal | parsed by `runners/claude_code.py` | parsed by `runners/codex.py` |
 
-Flags change often; the `runners/` module isolates them and the eval suite
-runs against both runtimes on every release. Nothing runtime-specific lives in
-the playbook.
+Flags change often; the `runners/` module isolates them. Nothing
+runtime-specific lives in the playbook.
 
-## What the desktop app does in each mode
+## Where the forms are filled
 
-Nothing changes for `uapply-desktop`: it still consumes the L3 JSON / IMM PDFs
-for the survey. The agent's job ends at producing approved data and, in v1,
-downloading those artefacts into `.uapply/output/`.
+`autofill_forms` fills the IMM PDFs with Adobe Acrobat Pro on the RCIC's
+Windows PC when it is available (copies in `.uapply/output/imm_pdfs/`), and
+otherwise hands them to uApply's platform filler. `final_report` saves the
+final package into `uApply output/` in the client folder.

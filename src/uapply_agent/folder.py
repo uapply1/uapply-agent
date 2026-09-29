@@ -14,6 +14,7 @@ from .util import now_iso, read_json, sha256_of, write_text_atomic
 logger = logging.getLogger(__name__)
 
 STATE_DIR = ".uapply"
+OUTPUT_DIR = "uApply output"   # what the agent saves for the RCIC (final package, report); never uploaded
 IGNORED_PREFIXES = (".", "~$")
 
 
@@ -104,7 +105,8 @@ class WorkingFolder:
 
     def iter_files(self) -> Iterable[Path]:
         for dirpath, dirnames, filenames in os.walk(self.root):
-            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            dirnames[:] = [d for d in dirnames
+                           if not d.startswith(".") and not (Path(dirpath) == self.root and d == OUTPUT_DIR)]
             for fn in filenames:
                 if fn.startswith(IGNORED_PREFIXES) or fn.endswith(".tmp"):
                     continue

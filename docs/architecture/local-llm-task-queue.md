@@ -10,7 +10,7 @@ park a running task for hours without holding a worker, so the design below
 never waits inside a worker: a stage task *creates* agent tasks and exits, and
 the API *resumes* the pipeline when the agent's answers arrive.
 
-## Update 2026-09-29: every model call of a local case (D14)
+## Every model call of a local case (D14)
 
 The prepare/continue stages below still carry OCR (`extract_content`) and the passport sub-type
 classifier (`classify_document`). Everything else — section extraction, Financial Proof, DOCX/XLSX,
@@ -55,7 +55,7 @@ continue_(ctx, results: list[LLMResult])   # no LLM, parses, writes memos, dispa
 and run through one helper:
 
 ```python
-# ai_parse/agent/stage_runner.py  (new)
+# sketch; the backend implements it in ai_parse/agent/stage.py (hand_off_to_agent)
 def run_llm_stage(stage: str, ctx, prepare, continue_):
     requests = prepare(ctx)
     if ctx.survey.llm_mode == "server":
@@ -93,6 +93,11 @@ The agent already has the files — they came from the folder it uploaded. The
 task carries `{"local_path": "passport.pdf", "sha256": "…", "pages": [1,2]}`.
 The agent verifies the hash before use; if the file is gone (RCIC moved it),
 the agent downloads it from S3 via the existing `documents/{id}/download/`.
+
+Status: the executor currently downloads every input document from uApply
+(presigned URL from `documents/{id}/download/`, or the URL an `llm_call` input
+carries) into `.uapply/cache/<task id>/`, rather than reusing the local
+copy.
 
 Server-side page rendering / pdfplumber / docx text are **moved to the agent**
 (`local_ops/`) in local mode. They need no model, and rendering on the server
@@ -155,9 +160,8 @@ Properties this buys:
 
 ### Status while waiting
 
-Today `survey_status` auto-fails any document `STARTED` for 30 minutes and any
-analysis job untouched for 30 minutes (see
-[known-issues.md #3](../design/known-issues.md)). In local mode a document
+The backend's status check auto-fails any document `STARTED` for 30 minutes
+and any analysis job untouched for 30 minutes. In local mode a document
 legitimately waits hours. `mark_waiting_on_agent` sets
 `DocumentProcessingJob.progress["waiting_on_agent"] = true` (and the analogue
 on `AnalysisJob`); the stale sweep skips jobs with that flag and an open
@@ -256,5 +260,5 @@ parallel by multiple agent workers — see [runtime-modes.md](runtime-modes.md).
   conflict detection, formulas, auto-fill data generation, the dashboard.
 - Server mode: `llm_mode=server` is the default; after the prepare/continue
   refactor it runs the same calls in the same Celery task as today.
-- Celery itself: two queues, Redis broker, existing entrypoints. One new beat
-  task.
+- Celery itself: two queues and a Redis broker, plus the `agent_queue` worker
+  for local cases (D14) and one beat task (`expire_agent_tasks`).
