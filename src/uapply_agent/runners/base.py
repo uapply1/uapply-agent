@@ -80,8 +80,9 @@ class Runner:
     @staticmethod
     def _exec(cmd: list[str], cwd: Path, timeout_s: int, stdin: Optional[str] = None) -> subprocess.CompletedProcess:
         try:
-            return subprocess.run(cmd, cwd=str(cwd), input=stdin, capture_output=True, text=True, encoding="utf-8",
-                                  errors="replace", timeout=timeout_s)
+            feed = {"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}
+            return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=timeout_s, **feed)
         except FileNotFoundError as e:
             raise RunnerError(f"{cmd[0]} not found: {e}")
         except subprocess.TimeoutExpired:

@@ -63,7 +63,7 @@ that require the RCIC's normal login.
 |---|---|---|
 | `start_processing` | `document_ids?: string[]` | job ids; count of agent tasks expected |
 | `run_analysis` | `force?: bool` (default **true**) | analysis job id |
-| `wait_for_stage` | `stage: processing \| analysis \| formulas`, `timeout_s?` (default 45, ≤ 60) | done: bool, progress: {completed, failed, pending, open_agent_tasks}, failures: [{document_id, reason}] |
+| `wait_for_stage` | `stage: processing \| analysis \| formulas`, `timeout_s?` (default 45, ≤ 60) | done: bool, progress: {completed, failed, pending, open_agent_tasks}, failures: [{document_id, reason}]; includes the same `progress` snapshot |
 | `stop_processing` / `stop_analysis` | — | ack |
 
 `wait_for_stage` is a server long-poll: it returns early on completion, else at
@@ -75,7 +75,7 @@ minutes). The playbook calls it in a loop with a task-loop in between.
 
 | Tool | Input | Output |
 |---|---|---|
-| `run_tasks` | `kinds?: string[]`, `max_tasks?` (default: all queued), `workers?` (default 2, ≤ 4) | counts: {accepted, rejected, released, remaining}, `plan_limited: bool`, failures: [{task_id, kind, reason}] |
+| `run_tasks` | `max_tasks?`, `workers?`, `kinds?`, `budget_s?` (default 90, 20–300) | runs local tasks for up to `budget_s`, then returns counts (`accepted`, `rejected`, `remaining`, …) and `progress`: documents total/finished, by status, in progress, failed. Call again while `remaining` > 0 |
 | `task_stats` | — | queued / leased / submitted / failed counts for the case |
 
 `run_tasks` is the **only** way tasks are executed. The MCP server pulls each

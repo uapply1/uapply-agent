@@ -54,7 +54,8 @@ class AnyChatSource:
         if not self.binary:
             raise ChatError("not_installed", "anychat CLI not found", self.INSTALL_HINT)
         try:
-            return subprocess.run([str(self.binary), *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
+            return subprocess.run([str(self.binary), *args], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace",
                                   timeout=timeout_s or self.timeout_s)
         except subprocess.TimeoutExpired:
             raise ChatError("cli_error", f"anychat {args[0]} timed out")

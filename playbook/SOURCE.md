@@ -39,8 +39,12 @@ Always:
   ask the RCIC which type to use or whether to skip it. Never file non-IMM
   documents under Agent Survey on your own.
 - Upload only files inside the working folder, through `sync_documents`.
-- For processing, loop: `run_tasks` → `wait_for_stage("processing")` until
-  `done` is true and `remaining` is 0. Report progress in one line per loop.
+- For processing, loop: `run_tasks` (returns within about 90 s) →
+  `wait_for_stage("processing")` until `done` is true and `remaining` is 0.
+  After every call, print one progress line from its `progress` field before
+  the next call, e.g. "Processing 4/7 documents · running: passport & sp.pdf,
+  LOA · 3 local tasks done this round". Name failed documents as soon as they
+  appear. Never make the RCIC wait on a silent call.
 - If `run_tasks` reports `plan_limited`, stop and tell the RCIC; do not switch
   the case to server mode on your own.
 - Never ask for, print, or reason about a task's prompt or inputs.

@@ -68,8 +68,10 @@ class ClaudeCodeRunner(Runner):
     def _exec_env(self, cmd, cwd, timeout_s, env):
         import subprocess
         try:
-            return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                  timeout=timeout_s, env=env)
+            # stdin closed: `claude -p` otherwise waits 3 s on a non-TTY stdin and reads whatever arrives,
+            # which under the MCP server is the server's own protocol pipe.
+            return subprocess.run(cmd, cwd=str(cwd), stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=timeout_s, env=env)
         except FileNotFoundError as e:
             raise RunnerError(f"claude not found: {e}")
         except subprocess.TimeoutExpired:

@@ -107,3 +107,17 @@ def test_runtime_error_reports_a_binary_that_does_not_start(tmp_path):
     assert r.runtime_error(str(good)) == ""
     assert "not compatible" in r.runtime_error(str(bad))
     assert r.runtime_error(str(tmp_path / "missing"))
+
+
+def test_claude_headless_gets_a_closed_stdin(tmp_path, monkeypatch):
+    """Under the MCP server stdin is the protocol pipe; `claude -p` must never read it."""
+    import subprocess as sp
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen.update(kw)
+        return _completed(stdout=json.dumps({"type": "result", "is_error": False, "structured_output": {"a": 1},
+                                             "result": "{}", "usage": {}}))
+    monkeypatch.setattr(sp, "run", fake_run)
+    ClaudeCodeRunner().run(system_prompt="s", user_prompt="u", schema={}, images=[], cwd=tmp_path)
+    assert seen["stdin"] is sp.DEVNULL and seen["encoding"] == "utf-8"

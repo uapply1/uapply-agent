@@ -347,16 +347,45 @@ def start_processing(document_ids: Optional[list[str]] = None) -> dict:
     return _wrap(go)
 
 
+def _progress() -> dict:
+    """Per-document progress of the case (top-level documents only; pages mirror their parent)."""
+    docs = [d for d in api().documents(_folder.survey_id) if not d.get("old_doc_id")]
+    by_status: dict[str, int] = {}
+    for d in docs:
+        by_status[d.get("status") or "?"] = by_status.get(d.get("status") or "?", 0) + 1
+    finished = by_status.get("completed", 0) + by_status.get("failed", 0) + by_status.get("stopped", 0)
+    return {
+        "documents_total": len(docs),
+        "documents_finished": finished,
+        "by_status": by_status,
+        "in_progress": [d.get("file_name") for d in docs if d.get("status") in ("started", "analyzing")][:10],
+        "failed": [{"file_name": d.get("file_name"), "error": (d.get("error") or "")[:160]}
+                   for d in docs if d.get("status") == "failed"][:10],
+    }
+
+
+def _with_progress(out: dict) -> dict:
+    try:
+        out["progress"] = _progress()
+    except ApiError:
+        pass
+    return out
+
+
 @server.tool()
-def run_tasks(max_tasks: Optional[int] = None, workers: int = 2, kinds: Optional[list[str]] = None) -> dict:
-    """Execute queued agent tasks in fresh headless runtime processes. Returns counts only."""
+def run_tasks(max_tasks: Optional[int] = None, workers: int = 2, kinds: Optional[list[str]] = None,
+              budget_s: int = 90) -> dict:
+    """Execute queued agent tasks in fresh headless runtime processes for up to `budget_s` seconds
+    (running tasks finish first), then return counts plus per-document `progress`. Call it again while
+    `remaining` > 0, reporting one progress line to the RCIC between calls."""
     if e := _need_agent_api():
         return e
 
     def go():
         ex = Executor(api(), _folder, runtime=_settings.runtime, model=_settings.model, force_ocr=_settings.force_ocr)
-        stats = ex.run(max_tasks=max_tasks, workers=workers or _settings.workers, kinds=kinds)
-        return _ok(runtime=ex.runner.name, **stats.as_dict())
+        stats = ex.run(max_tasks=max_tasks, workers=workers or _settings.workers, kinds=kinds,
+                       budget_s=max(20, min(int(budget_s or 90), 300)))
+        return _with_progress(_ok(runtime=ex.runner.name, **stats.as_dict()))
     return _wrap(go)
 
 
@@ -365,7 +394,8 @@ def wait_for_stage(stage: str = "processing", timeout_s: int = 45) -> dict:
     """Long-poll (≤ 60 s) until processing/analysis is done for the case; returns status either way."""
     if e := _need_agent_api():
         return e
-    return _wrap(lambda: _ok(**api().agent_wait(_folder.survey_id, stage, max(1, min(int(timeout_s), 60)))))
+    return _wrap(lambda: _with_progress(_ok(**api().agent_wait(_folder.survey_id, stage,
+                                                                max(1, min(int(timeout_s), 60))))))
 
 
 @server.tool()

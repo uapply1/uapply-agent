@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -255,14 +256,21 @@ class Executor:
     # ---- the loop ----
 
     def run(self, max_tasks: Optional[int] = None, workers: int = 2, kinds: Optional[list] = None,
-            batch: int = 5) -> RunStats:
+            batch: int = 5, budget_s: Optional[float] = None) -> RunStats:
+        """`budget_s`: stop pulling new tasks after this long (running ones finish), so the chat
+        gets control back and can report progress instead of one silent call."""
+        deadline = time.monotonic() + budget_s if budget_s else None
         stats = RunStats()
         survey_ids = self.folder.family_survey_ids
         if not survey_ids:
             raise RunnerError("folder has no case; run `uapply-agent init --survey <id>` first")
         done = 0
         workers = max(1, min(int(workers or 1), 4))
+        if deadline:
+            batch = workers  # one round per worker slot keeps each check-in short
         while max_tasks is None or done < max_tasks:
+            if deadline and time.monotonic() >= deadline:
+                break
             n = batch if max_tasks is None else min(batch, max_tasks - done)
             tasks = self.api.pull_tasks(survey_ids, n, self.session_id, self.runner.name, kinds=kinds)
             if not tasks:

@@ -55,7 +55,8 @@ def _configured(name: str) -> str:
 def runtime_error(path: str) -> str:
     """'' when `<path> --version` runs; otherwise why not (e.g. a build this Windows cannot start)."""
     try:
-        r = subprocess.run([path, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace",
+        r = subprocess.run([path, "--version"], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace",
                            timeout=60, check=False)
     except (OSError, subprocess.TimeoutExpired) as e:
         return str(e)[:300]

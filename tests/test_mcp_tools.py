@@ -235,3 +235,26 @@ def test_same_name_different_size_is_uploaded(bound):
     bound.docs = [{"id": "srv-1", "file_name": "passport.pdf", "document_type_id": "dt-pass", "size": 999999, "old_doc_id": None}]
     out = m.sync_documents("dt-pass", paths=["passport.pdf"])
     assert out["uploaded"] == 1 and out["already_on_server"] == []
+
+
+def test_run_tasks_reports_per_document_progress(bound, monkeypatch):
+    class FakeExecutor:
+        def __init__(self, *a, **kw):
+            self.runner = type("R", (), {"name": "claude-code"})()
+
+        def run(self, **kw):
+            assert 20 <= kw["budget_s"] <= 300
+            from uapply_agent.executor import RunStats
+            return RunStats(accepted=2, remaining=3)
+    monkeypatch.setattr(m, "Executor", FakeExecutor)
+    bound.docs = [
+        {"id": "a", "file_name": "passport & sp.pdf", "status": "analyzing", "old_doc_id": None},
+        {"id": "a1", "file_name": "passport & sp_p1.png", "status": "completed", "old_doc_id": "a"},
+        {"id": "b", "file_name": "birth certificate.pdf", "status": "completed", "old_doc_id": None},
+        {"id": "c", "file_name": "photo.jpg", "status": "failed", "error": "bad image", "old_doc_id": None},
+    ]
+    out = m.run_tasks()
+    p = out["progress"]
+    assert out["accepted"] == 2 and out["remaining"] == 3
+    assert p["documents_total"] == 3 and p["documents_finished"] == 2       # pages are not counted
+    assert p["in_progress"] == ["passport & sp.pdf"] and p["failed"][0]["file_name"] == "photo.jpg"

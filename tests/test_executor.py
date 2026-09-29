@@ -129,3 +129,14 @@ def test_no_case_raises(tmp_path):
     from uapply_agent.runners.base import RunnerError
     with pytest.raises(RunnerError):
         Executor(FakeApi([]), WorkingFolder(tmp_path), runner=FakeRunner([])).run()
+
+
+def test_budget_stops_pulling_new_tasks(folder, monkeypatch):
+    """A time-boxed run returns after the running round, leaving the rest queued for the next call."""
+    import uapply_agent.executor as ex_mod
+    clock = iter([0.0, 0.0, 1000.0, 1000.0, 1000.0])
+    monkeypatch.setattr(ex_mod.time, "monotonic", lambda: next(clock))
+    api = FakeApi([task(f"t{i}") for i in range(6)])
+    runner = FakeRunner([{"file_types": ["Passport"]}] * 6)
+    stats = Executor(api, folder, runner=runner).run(workers=2, budget_s=60)
+    assert stats.accepted == 2 and stats.remaining == 4   # one round of `workers` tasks, then the deadline
