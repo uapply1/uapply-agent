@@ -96,16 +96,27 @@ def test_interrupted_download_leaves_no_file(tmp_path, monkeypatch):
     assert not dest.exists() and not (tmp_path / "scan.pdf.part").exists()
 
 
-def test_a_pasted_token_drops_the_previous_refresh_token(tmp_path, monkeypatch):
+def test_a_pasted_token_drops_the_previous_refresh_token():
     from uapply_agent.config import Credentials
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.delenv("UAPPLY_TOKEN", raising=False)
-    import keyring
-    monkeypatch.setattr(keyring, "set_password", lambda *a: (_ for _ in ()).throw(RuntimeError("no backend")))
-    monkeypatch.setattr(keyring, "get_password", lambda *a: None)
     Credentials.set_token("a1", "r1")
     assert Credentials.get_refresh_token() == "r1"
     Credentials.set_token("pasted")
     assert Credentials.get_token() == "pasted" and Credentials.get_refresh_token() is None
     Credentials.clear()
     assert Credentials.get_token() is None
+
+
+def test_credentials_fall_back_to_a_private_file_without_a_keychain(monkeypatch):
+    import keyring
+
+    from uapply_agent.config import Credentials
+
+    def broken(*a):
+        raise keyring.errors.NoKeyringError("no backend")
+    for name in ("get_password", "set_password", "delete_password"):
+        monkeypatch.setattr(keyring, name, broken)
+    Credentials.set_token("a1", "r1")
+    assert Credentials._file().stat().st_mode & 0o077 == 0
+    assert (Credentials.get_token(), Credentials.get_refresh_token()) == ("a1", "r1")
+    Credentials.clear()
+    assert not Credentials._file().exists()
