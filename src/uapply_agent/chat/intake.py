@@ -1,9 +1,7 @@
 """One local headless call: transcript → intake hints. Runs on the RCIC's plan."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -14,31 +12,31 @@ PROMPT_PATH = Path(__file__).parent / "prompts" / "intake.md"
 
 
 class Applicant(BaseModel):
-    family_name: Optional[str] = None
-    given_name: Optional[str] = None
-    native_name: Optional[str] = None
-    birthdate: Optional[str] = None
-    gender: Optional[str] = None
-    citizenship: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    current_country: Optional[str] = None
-    current_status: Optional[str] = None
+    family_name: str | None = None
+    given_name: str | None = None
+    native_name: str | None = None
+    birthdate: str | None = None
+    gender: str | None = None
+    citizenship: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    current_country: str | None = None
+    current_status: str | None = None
 
 
 class FamilyMember(BaseModel):
     name: str
     relationship: str
-    note: Optional[str] = None
+    note: str | None = None
 
 
 class ApplicationGuess(BaseModel):
-    program: Optional[str] = None
-    visa_type: Optional[str] = None
-    visa_location: Optional[str] = None
-    suggested_application_type_id: Optional[str] = None
+    program: str | None = None
+    visa_type: str | None = None
+    visa_location: str | None = None
+    suggested_application_type_id: str | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    rationale: Optional[str] = None
+    rationale: str | None = None
 
 
 class IntakeHints(BaseModel):
@@ -62,7 +60,8 @@ def cap_transcript(md_path: Path, max_chars: int, cwd: Path) -> Path:
     cut = cut[cut.find("\n") + 1:]  # start on a whole line
     out = cwd / (md_path.stem + ".recent.md")
     cwd.mkdir(parents=True, exist_ok=True)
-    out.write_text(f"(earlier messages omitted; showing the most recent {max_chars} characters)\n\n" + cut, encoding="utf-8")
+    note = f"(earlier messages omitted; showing the most recent {max_chars} characters)"
+    out.write_text(f"{note}\n\n{cut}", encoding="utf-8")
     return out
 
 

@@ -7,7 +7,6 @@ import os
 import stat
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
-from typing import Optional
 from urllib.parse import urlsplit
 
 from .util import read_json, write_text_atomic
@@ -76,7 +75,7 @@ class Settings:
         setattr(self, key, value)
 
     @classmethod
-    def load(cls) -> "Settings":
+    def load(cls) -> Settings:
         s = cls()
         for key, value in read_json(config_dir() / "config.json", {}).items():
             if key in RETIRED_KEYS:
@@ -127,7 +126,7 @@ class Credentials:
             return {}
 
     @classmethod
-    def _get(cls, key: str) -> Optional[str]:
+    def _get(cls, key: str) -> str | None:
         try:
             import keyring
             value = keyring.get_password(APP, key)
@@ -138,15 +137,15 @@ class Credentials:
         return cls._read_file().get("access_token" if key == cls.ACCESS else "refresh_token")
 
     @classmethod
-    def get_token(cls) -> Optional[str]:
+    def get_token(cls) -> str | None:
         return os.environ.get("UAPPLY_TOKEN") or cls._get(cls.ACCESS)
 
     @classmethod
-    def get_refresh_token(cls) -> Optional[str]:
+    def get_refresh_token(cls) -> str | None:
         return cls._get(cls.REFRESH)
 
     @classmethod
-    def set_token(cls, token: str, refresh_token: Optional[str] = None) -> str:
+    def set_token(cls, token: str, refresh_token: str | None = None) -> str:
         """Store a new login. Without a refresh token any previous one is removed, so a pasted
         token can never be silently refreshed back into an earlier account."""
         try:

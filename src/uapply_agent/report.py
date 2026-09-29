@@ -11,7 +11,7 @@ import re
 import zipfile
 from pathlib import Path
 
-from .api import UApplyApi
+from .api import ApiError, UApplyApi
 from .config import Settings
 from .folder import WorkingFolder
 from .util import write_text_atomic
@@ -124,8 +124,8 @@ def build(api: UApplyApi, folder: WorkingFolder, settings: Settings, download: b
     if download:
         try:
             files = download_package(api, folder, r)
-        except Exception as e:
-            logger.warning(f"final package download failed: {e}")
+        except (ApiError, OSError, zipfile.BadZipFile) as e:
+            logger.warning("final package download failed: %s", e)
             files = {"error": f"could not download the final package: {e}"[:300]}
     md = render(r, lk, files)
     out = folder.root / OUTPUT_DIR

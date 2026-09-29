@@ -68,7 +68,9 @@ def test_clean_removes_cache_only(tmp_path):
 
 def test_state_files_are_utf8_whatever_the_system_code_page(tmp_path):
     """English Windows defaults to cp1252: Chinese names must still round-trip (UTF-8 on disk)."""
-    import subprocess, sys, os
+    import os
+    import subprocess
+    import sys
     name, shot = "李天毅".encode("unicode_escape").decode(), "屏幕截图 1.png".encode("unicode_escape").decode()
     script = tmp_path / "run.py"   # ASCII-only source: an ASCII locale cannot even decode a Chinese argv
     script.write_text(
@@ -97,6 +99,7 @@ def test_truncated_state_file_is_set_aside_not_fatal(tmp_path):
 
 def test_state_file_in_a_legacy_code_page_is_still_read(tmp_path, monkeypatch):
     import locale
+
     from uapply_agent.folder import WorkingFolder
     monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=True: "gbk")
     f = WorkingFolder(tmp_path)

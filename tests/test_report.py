@@ -4,10 +4,9 @@ import zipfile
 
 import pytest
 
+from uapply_agent import report
 from uapply_agent.config import Settings
 from uapply_agent.folder import WorkingFolder
-from uapply_agent import report
-
 
 REPORT = {
     "survey_id": "s-1", "name": "Li, Tianyi", "application_type": "Study Permit", "program": "tra",

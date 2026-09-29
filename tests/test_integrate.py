@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from uapply_agent import integrate as it
 
@@ -62,7 +61,8 @@ def test_codex_skipped_without_cli_or_dir(tmp_path):
 
 def test_cli_fallback_when_claude_add_fails(tmp_path):
     fake = tmp_path / "claude"
-    fake.write_text("#!/bin/sh\nexit 1\n"); fake.chmod(0o755)
+    fake.write_text("#!/bin/sh\nexit 1\n")
+    fake.chmod(0o755)
     msg = it.register_claude("/x/uapply-agent", tmp_path, which=lambda n: str(fake) if n == "claude" else None)
     assert msg.startswith("written") and (tmp_path / ".claude.json").exists()
 
@@ -134,13 +134,18 @@ def test_broken_runtime_is_reported_and_skips_login(tmp_path):
 
 def test_record_runtimes_prefers_a_build_that_starts(tmp_path, monkeypatch):
     """An npm claude that Windows refuses to start loses to the native build in ~/.local/bin."""
-    from uapply_agent.config import Settings
     from uapply_agent import runners
+    from uapply_agent.config import Settings
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setattr(runners.Path, "home", classmethod(lambda cls: tmp_path))
-    broken = tmp_path / "nodejs" / "claude"; broken.parent.mkdir(); broken.write_text("#!/bin/sh\nexit 216\n"); broken.chmod(0o755)
-    native = tmp_path / ".local" / "bin" / "claude"; native.parent.mkdir(parents=True)
-    native.write_text("#!/bin/sh\necho 2.1.0\n"); native.chmod(0o755)
+    broken = tmp_path / "nodejs" / "claude"
+    broken.parent.mkdir()
+    broken.write_text("#!/bin/sh\nexit 216\n")
+    broken.chmod(0o755)
+    native = tmp_path / ".local" / "bin" / "claude"
+    native.parent.mkdir(parents=True)
+    native.write_text("#!/bin/sh\necho 2.1.0\n")
+    native.chmod(0o755)
     runners._WORKING.clear()
     found = it.record_runtimes(Settings(), which=lambda n: str(broken) if n == "claude" else None)
     assert found == {"claude": str(native)}

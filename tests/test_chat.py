@@ -1,6 +1,5 @@
 """Chat intake: AnyChat wrapper against a fake CLI, PDF rendering, local intake, tools."""
 import json
-import os
 import stat
 import sys
 from pathlib import Path
@@ -316,6 +315,7 @@ def test_schema_refs_are_inlined_for_the_runtime():
 
 def test_codex_runner_sends_prompt_on_stdin(monkeypatch, tmp_path):
     import subprocess
+
     from uapply_agent.runners.codex import CodexRunner
     seen = {}
 

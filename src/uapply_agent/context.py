@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from .api import UApplyApi
 from .config import Settings
@@ -33,10 +32,10 @@ NO_CASE_HINT = ("ask the RCIC: create a new case (list_application_types → con
 class ServerContext:
     settings: Settings
     folder: WorkingFolder
-    _api: Optional[UApplyApi] = field(default=None, repr=False)
+    _api: UApplyApi | None = field(default=None, repr=False)
 
     @classmethod
-    def from_environment(cls, folder: Path | str) -> "ServerContext":
+    def from_environment(cls, folder: Path | str) -> ServerContext:
         return cls(Settings.load(), WorkingFolder(folder))
 
     @property

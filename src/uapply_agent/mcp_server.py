@@ -11,13 +11,14 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from mcp.server.mcpserver import MCPServer
 
 from . import cases, playbook, uploads
+from .acrobat import detect as detect_acrobat
 from .api import NO_AGENT_API_HINT, ApiError
-from .autofill import AutoFiller, acrobat_status
+from .autofill import AutoFiller
 from .chat import filing
 from .chat.anychat import AnyChatSource
 from .chat.base import ChatError
@@ -88,7 +89,7 @@ def _with_progress(out: dict) -> dict:
 _claude_signed_in: set[str] = set()
 
 
-def _claude_login_state(path: str) -> Optional[bool]:
+def _claude_login_state(path: str) -> bool | None:
     """Cached once signed in; a signed-out CLI is checked again on the next call."""
     if path in _claude_signed_in:
         return True
@@ -109,7 +110,7 @@ def whoami() -> dict:
             r["logged_in"] = _claude_login_state(r["path"])
     out = ok(backend=ctx.settings.backend_url, logged_in=api.logged_in,
              agent_api=api.agent_api_available() if api.logged_in else None, runtimes=runtimes,
-             acrobat=acrobat_status(), folder=str(ctx.folder.root), case=ctx.folder.case or None)
+             acrobat=detect_acrobat(probe=False), folder=str(ctx.folder.root), case=ctx.folder.case or None)
     if runtimes and all(r.get("error") for r in runtimes):
         out["hint"] = (f"{runtimes[0]['name']} is installed but does not start on this machine "
                        f"({runtimes[0]['error']}); local tasks cannot run — tell the RCIC, do not retry")
@@ -199,7 +200,7 @@ def list_document_types(query: str = "") -> dict:
 
 
 @tool(requires="case")
-def sync_documents(document_type_id: str, document_category: str = "", paths: Optional[list[str]] = None,
+def sync_documents(document_type_id: str, document_category: str = "", paths: list[str] | None = None,
                    applicant: str = "principal", archive_name: str = "") -> dict:
     """Upload folder files under one document type; files already uploaded are skipped, and a file
     already on the case (same type, name and size) is recorded instead of uploaded again.
@@ -223,7 +224,7 @@ def list_documents() -> dict:
 # ---------- pipeline ----------
 
 @tool(requires="case")
-def start_processing(document_ids: Optional[list[str]] = None) -> dict:
+def start_processing(document_ids: list[str] | None = None) -> dict:
     """Start processing the uploaded documents (uploads alone never start it for agent cases), or retry
     failed ones."""
     ids = document_ids or cases.startable_document_ids(ctx.api.survey(ctx.survey_id))
@@ -281,7 +282,7 @@ def final_report(download: bool = True) -> dict:
 
 
 @tool(requires="agent_api")
-def run_tasks(max_tasks: Optional[int] = None, workers: int = 2, kinds: Optional[list[str]] = None,
+def run_tasks(max_tasks: int | None = None, workers: int = 2, kinds: list[str] | None = None,
               budget_s: int = 90) -> dict:
     """Execute queued agent tasks in fresh headless runtime processes for up to `budget_s` seconds
     (running tasks finish first), then return counts plus per-document `progress`. Call it again while
@@ -364,7 +365,7 @@ def chat_find_contact(name: str) -> dict:
 
 
 @tool()
-def chat_fetch(contact: str, days: Optional[int] = None) -> dict:
+def chat_fetch(contact: str, days: int | None = None) -> dict:
     """Fetch the chat history with one contact the RCIC named, derive intake hints with the local
     runtime (headless, the RCIC's plan), and file the transcript on the case as an Agent Survey document
     (queued until a case is bound). Message bodies never enter this conversation."""
@@ -401,7 +402,7 @@ def chat_fetch(contact: str, days: Optional[int] = None) -> dict:
 
 
 @tool(requires="case")
-def chat_upload(path: Optional[str] = None) -> dict:
+def chat_upload(path: str | None = None) -> dict:
     """Upload a fetched transcript (or every queued one) to the bound case as an Agent Survey document."""
     if path:
         return ok(**filing.upload_transcript(ctx.api, ctx.folder, ctx.folder.resolve(path)))

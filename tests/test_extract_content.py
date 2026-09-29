@@ -34,7 +34,7 @@ class FakeApi:
     def __init__(self, src: Path, tasks):
         self.src, self.queue, self.submitted, self.released = src, list(tasks), [], []
 
-    def pull_tasks(self, survey_ids, n, session_id, runtime, kinds=None, lease_s=None):
+    def pull_tasks(self, survey_ids, n, session_id, runtime, kinds=None):
         out, self.queue = self.queue[:n], self.queue[n:]
         return out
 

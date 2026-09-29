@@ -53,6 +53,7 @@ def test_network_errors_become_api_errors():
 
 def test_concurrent_401s_refresh_the_token_once(monkeypatch):
     import threading
+
     from uapply_agent import api as api_mod
     posts = []
 

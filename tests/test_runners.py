@@ -88,9 +88,12 @@ def test_resolve_binary_order(tmp_path, monkeypatch):
     monkeypatch.setattr(r.Path, "home", classmethod(lambda cls: tmp_path))
     assert r.resolve_binary("claude") is None
     local = tmp_path / ".local" / "bin" / "claude"
-    local.parent.mkdir(parents=True); local.write_text("#!/bin/sh\n")
+    local.parent.mkdir(parents=True)
+    local.write_text("#!/bin/sh\n")
     assert r.resolve_binary("claude") == str(local)           # known location, not on PATH
-    conf = tmp_path / "elsewhere" / "claude"; conf.parent.mkdir(); conf.write_text("")
+    conf = tmp_path / "elsewhere" / "claude"
+    conf.parent.mkdir()
+    conf.write_text("")
     assert r.resolve_binary("claude", str(conf)) == str(conf)  # configured path wins
     assert r.resolve_binary("claude", str(tmp_path / "gone")) is None
 
@@ -110,8 +113,12 @@ def test_get_runner_uses_resolved_path_and_explains_when_missing(tmp_path, monke
 
 def test_runtime_error_reports_a_binary_that_does_not_start(tmp_path):
     from uapply_agent import runners as r
-    good = tmp_path / "good"; good.write_text("#!/bin/sh\necho 2.1.0\n"); good.chmod(0o755)
-    bad = tmp_path / "bad"; bad.write_text("#!/bin/sh\necho 'not compatible with this Windows' >&2; exit 216\n"); bad.chmod(0o755)
+    good = tmp_path / "good"
+    good.write_text("#!/bin/sh\necho 2.1.0\n")
+    good.chmod(0o755)
+    bad = tmp_path / "bad"
+    bad.write_text("#!/bin/sh\necho 'not compatible with this Windows' >&2; exit 216\n")
+    bad.chmod(0o755)
     assert r.runtime_error(str(good)) == ""
     assert "not compatible" in r.runtime_error(str(bad))
     assert r.runtime_error(str(tmp_path / "missing"))

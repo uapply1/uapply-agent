@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 from . import acrobat
 from .api import UApplyApi
@@ -100,8 +100,8 @@ class AutoFiller:
         out = out_dir / f"{name}.pdf"
         try:
             r = self.fill(template, form.get("ops", []), out)
-        except Exception as e:
-            logger.warning(f"{name}: local fill failed: {e}")
+        except Exception as e:  # noqa: BLE001  (any Acrobat failure hands the form to the platform)
+            logger.warning("%s: local fill failed: %s", name, e)
             self.api.autofill_result(sid, pid, error=f"local Acrobat fill failed: {e}"[:2000])
             return {"name": name, "ok": False, "error": str(e)[:300], "acrobat_failed": True}
         ops = max(1, len(form.get("ops", [])))
@@ -111,10 +111,3 @@ class AutoFiller:
                                  survey_values_updated_at=form.get("survey_values_updated_at"))
         return {"name": name, "ok": True, "applied": r["applied"], "failed_fields": r["failed"],
                 "path": str(out.relative_to(self.folder.root))}
-
-
-def acrobat_status(probe: bool = False) -> Optional[dict]:
-    try:
-        return acrobat.detect(probe=probe)
-    except Exception as e:
-        return {"available": False, "reason": str(e)[:200]}

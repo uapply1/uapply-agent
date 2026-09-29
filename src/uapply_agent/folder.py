@@ -4,9 +4,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional
 
 from .constants import IMAGE_EXTENSIONS, UPLOADABLE_EXTENSIONS
 from .util import now_iso, read_json, sha256_of, write_text_atomic
@@ -23,9 +23,9 @@ class ScannedFile:
     size: int
     sha256: str
     kind: str          # pdf | image | office
-    applicant_hint: Optional[str]
+    applicant_hint: str | None
     manifested: bool
-    document_id: Optional[str] = None
+    document_id: str | None = None
 
     def as_dict(self) -> dict:
         return self.__dict__.copy()
@@ -79,7 +79,7 @@ class WorkingFolder:
         self.write_state("manifest.json", manifest)
 
     def init_case(self, survey_id: str, backend_url: str, llm_mode: str = "local_agent",
-                  name: str = "", dependents: Optional[list] = None) -> dict:
+                  name: str = "", dependents: list | None = None) -> dict:
         case = self.case
         case.update({
             "schema": 1, "backend": backend_url, "survey_id": survey_id, "name": name,
@@ -90,13 +90,15 @@ class WorkingFolder:
         return case
 
     @property
-    def survey_id(self) -> Optional[str]:
+    def survey_id(self) -> str | None:
         return self.case.get("survey_id")
 
     @property
     def family_survey_ids(self) -> list:
         c = self.case
-        return [c["survey_id"]] + [d["survey_id"] for d in c.get("dependents", []) if d.get("survey_id")] if c.get("survey_id") else []
+        if not c.get("survey_id"):
+            return []
+        return [c["survey_id"], *(d["survey_id"] for d in c.get("dependents", []) if d.get("survey_id"))]
 
     # ---- files ----
 
@@ -110,7 +112,7 @@ class WorkingFolder:
                 if p.suffix.lower() in UPLOADABLE_EXTENSIONS:
                     yield p
 
-    def applicant_hint(self, rel: Path) -> Optional[str]:
+    def applicant_hint(self, rel: Path) -> str | None:
         return rel.parts[0] if len(rel.parts) > 1 else None
 
     def scan(self, include_manifested: bool = True) -> list[ScannedFile]:
@@ -130,7 +132,7 @@ class WorkingFolder:
         return out
 
     def record_upload(self, sha256: str, path: str, document_id: str, applicant: str = "principal",
-                      uploaded_path: Optional[str] = None) -> None:
+                      uploaded_path: str | None = None) -> None:
         m = self.manifest
         m["files"][sha256] = {
             "path": path, "document_id": document_id, "applicant": applicant,

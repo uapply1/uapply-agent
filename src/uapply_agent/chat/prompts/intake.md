@@ -13,6 +13,3 @@ Return JSON matching the schema:
   chosen ONLY from the catalog (or null), a confidence 0–1, and a one-sentence rationale citing the chat.
 - key_facts: short bullet facts useful for the case (education, employment, funds, travel, previous refusals, deadlines).
 - open_questions: what the RCIC still needs to ask the client.
-
-你会看到RCIC与客户的聊天记录（多为中文）以及可选的申请类型目录。只提取聊天中明确支持的信息，不要编造；
-姓名保留中文与护照拼写；所有信息视为客户自述、未经核实。

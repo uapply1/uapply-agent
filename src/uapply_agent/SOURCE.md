@@ -84,7 +84,7 @@ Chat history (optional, `chat_*` tools):
 
 ## prompt: run
 
-Run the uApply case in this folder end to end for Phase 1, in one turn: ask
+Run the uApply case in this folder end to end, in one turn: ask
 with the question tool whenever you need the RCIC and keep going with the
 answer. Check `case_status`. If the folder is not bound to a case (`NO_CASE`),
 first `preview_document` the identity documents so you can propose the client

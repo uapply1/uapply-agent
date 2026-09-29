@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pymupdf
+
 FONT = "china-s"      # PyMuPDF built-in CJK-capable font (covers Latin too)
 SIZE = 10
 LEADING = SIZE * 1.45
@@ -10,22 +12,22 @@ MARGIN = 48
 
 
 def _wrap(line: str, max_width: float) -> list[str]:
-    import pymupdf
+    """Break a line by character (transcripts are mostly CJK, which has no spaces to break at)."""
     if not line:
         return [""]
-    out, cur = [], ""
+    out, cur, width = [], "", 0.0
     for ch in line:
-        if pymupdf.get_text_length(cur + ch, fontname=FONT, fontsize=SIZE) > max_width and cur:
+        w = pymupdf.get_text_length(ch, fontname=FONT, fontsize=SIZE)
+        if cur and width + w > max_width:
             out.append(cur)
-            cur = ch
-        else:
-            cur += ch
+            cur, width = "", 0.0
+        cur += ch
+        width += w
     out.append(cur)
     return out
 
 
 def transcript_to_pdf(md_path: Path, pdf_path: Path, title: str, header_lines: list[str]) -> Path:
-    import pymupdf
     text = md_path.read_text(encoding="utf-8", errors="replace")
     page_rect = pymupdf.paper_rect("a4")
     width = page_rect.width - 2 * MARGIN

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from uapply_agent.executor import Executor, RunStats
+from uapply_agent.executor import Executor
 from uapply_agent.folder import WorkingFolder
 from uapply_agent.runners.base import PlanLimited, Runner, RunResult
 
@@ -23,7 +23,7 @@ class FakeApi:
         self.submitted, self.released = [], []
         self.downloads = 0
 
-    def pull_tasks(self, survey_ids, n, session_id, runtime, kinds=None, lease_s=None):
+    def pull_tasks(self, survey_ids, n, session_id, runtime, kinds=None):
         out, self.queue = self.queue[:n], self.queue[n:]
         return out
 

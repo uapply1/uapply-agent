@@ -1,8 +1,22 @@
 [project]
 name = "uapply-agent"
 version = "0.1.0"
-description = "Run a uApply case from Claude Code / Codex on the RCIC's own subscription"
+description = "Run uApply immigration cases from Claude Code or Codex on the RCIC's own subscription"
+readme = "README.md"
 requires-python = ">=3.11"
+authors = [{ name = "uApply", email = "contact@uapply.io" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Private :: Do Not Upload",
+]
 dependencies = [
     "mcp>=2,<3",
     "httpx>=0.27",
@@ -15,7 +29,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.urls]
+Homepage = "https://uapply.io"
+Repository = "https://github.com/uapply1/uapply-agent"
 
 [project.scripts]
 uapply-agent = "uapply_agent.cli:main"
@@ -29,3 +47,20 @@ packages = ["src/uapply_agent"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "BLE", "S110", "LOG", "G"]
+ignore = [
+    "SIM105",   # try/except/pass is clearer than contextlib.suppress for single statements
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["BLE001", "S110", "B011", "E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["uapply_agent"]

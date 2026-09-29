@@ -174,8 +174,10 @@ def test_preview_document_renders_pdf_pages_locally(bound, tmp_path):
     root = m.ctx.folder.root
     doc = pymupdf.open()
     for i in range(4):
-        page = doc.new_page(); page.insert_text((72, 72), f"page {i + 1}")
-    doc.save(root / "scan.pdf"); doc.close()
+        page = doc.new_page()
+        page.insert_text((72, 72), f"page {i + 1}")
+    doc.save(root / "scan.pdf")
+    doc.close()
     out = m.preview_document("scan.pdf")
     assert out["ok"] and out["page_count"] == 4 and len(out["images"]) == 1 and out["images"][0].endswith("_p001.png")
     assert Path(out["images"][0]).exists() and ".uapply/cache/preview" in out["images"][0].replace("\\", "/")

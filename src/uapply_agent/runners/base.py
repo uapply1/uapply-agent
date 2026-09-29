@@ -5,7 +5,6 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 LIMIT_PATTERNS = re.compile(
     r"\b(usage limit|rate limit|limit reached|too many requests|quota exceeded|exceeded your .*quota|"
@@ -58,7 +57,7 @@ def extract_json(text: str) -> dict:
     """Parse the model's answer: bare JSON, fenced JSON, or JSON embedded in prose."""
     text = text.strip()
     if text.startswith("```"):
-        text = "\n".join(l for l in text.splitlines() if not l.strip().startswith("```"))
+        text = "\n".join(line for line in text.splitlines() if not line.strip().startswith("```"))
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -84,8 +83,8 @@ class Runner:
         raise NotImplementedError
 
     @staticmethod
-    def _exec(cmd: list[str], cwd: Path, timeout_s: int, stdin: Optional[str] = None,
-              env: Optional[dict] = None) -> subprocess.CompletedProcess:
+    def _exec(cmd: list[str], cwd: Path, timeout_s: int, stdin: str | None = None,
+              env: dict | None = None) -> subprocess.CompletedProcess:
         """Run the CLI. `stdin` is sent on a pipe of our own: never inherit the MCP server's stdin,
         which is the protocol channel."""
         feed = {"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}

@@ -1,23 +1,25 @@
 """Typed client for the uApply backend. Every call the agent makes goes through here."""
 from __future__ import annotations
 
+import json
 import logging
 import mimetypes
 import threading
+from collections.abc import Iterable
+from contextlib import ExitStack
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 import httpx
 
 from . import __version__
 from .config import Credentials, Settings
 
-
 logger = logging.getLogger(__name__)
 
 USER_AGENT = f"uapply-agent/{__version__}"
 AGENT_PREFIX = "/api/ai-parse/agent/"
-NO_AGENT_API_HINT = ("the backend has no local-agent API (branch not deployed); the case runs in server mode "
+NO_AGENT_API_HINT = ("this uApply backend does not offer the local-agent API; the case runs in server mode "
                      "and its documents are processed by uApply's server models")
 
 
@@ -29,18 +31,18 @@ class ApiError(RuntimeError):
 
 
 class UApplyApi:
-    def __init__(self, settings: Optional[Settings] = None, token: Optional[str] = None, timeout: float = 90.0):
+    def __init__(self, settings: Settings | None = None, token: str | None = None, timeout: float = 90.0):
         self.settings = settings or Settings.load()
         self.token = token or Credentials.get_token()
         self._client = httpx.Client(base_url=self.settings.backend_url, timeout=timeout,
                                     headers=self._headers())
-        self._agent_api: Optional[bool] = None
+        self._agent_api: bool | None = None
         self._refresh_lock = threading.Lock()
 
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "UApplyApi":
+    def __enter__(self) -> UApplyApi:
         return self
 
     def __exit__(self, *exc) -> None:
@@ -56,7 +58,7 @@ class UApplyApi:
     def logged_in(self) -> bool:
         return bool(self.token)
 
-    def _refresh_token(self, rejected: Optional[str]) -> bool:
+    def _refresh_token(self, rejected: str | None) -> bool:
         """Exchange the stored refresh token for a new access token. Serialised: executor workers
         hit 401 together, and Auth0 revokes the whole token family when a rotated token is reused."""
         with self._refresh_lock:
@@ -104,7 +106,7 @@ class UApplyApi:
         return r.text
 
     def agent_api_available(self) -> bool:
-        """Does this backend serve /api/ai-parse/agent/? Production without the branch answers an HTML 404."""
+        """Does this backend serve /api/ai-parse/agent/? A backend without it answers an HTML 404."""
         if self._agent_api is None:
             try:
                 self._req("GET", f"{AGENT_PREFIX}tasks/stats/")
@@ -123,7 +125,7 @@ class UApplyApi:
 
     def documents(self, survey_id: str) -> list:
         """The case's documents from the survey detail: scoped by construction on every backend.
-        (The flat /documents/ list only honours ?survey= on branch backends and rows carry no survey id.)"""
+        (The flat /documents/ list is not scoped to one case on every backend version.)"""
         return self.survey(survey_id).get("documents") or []
 
     def application_types(self) -> list:
@@ -152,11 +154,8 @@ class UApplyApi:
                 return t
         raise ApiError(404, {"message": "agent_survey document type not found"})
 
-    def agent_survey_type_id(self) -> str:
-        return self.agent_survey_type()["id"]
-
-    def create_survey(self, name: str, application_type_id: str, team_id: Optional[str] = None,
-                      llm_mode: str = "local_agent", imm_pdf_types: Optional[list] = None) -> dict:
+    def create_survey(self, name: str, application_type_id: str, team_id: str | None = None,
+                      llm_mode: str = "local_agent", imm_pdf_types: list | None = None) -> dict:
         """Creates the case and charges the RCIC's account — only after explicit RCIC confirmation."""
         body = {"name": name, "application_type_id": application_type_id, "llm_mode": llm_mode,
                 "imm_pdf_types": imm_pdf_types or []}
@@ -170,20 +169,13 @@ class UApplyApi:
 
     def bulk_upload(self, survey_id: str, document_category: str, document_type_id: str,
                     paths: Iterable[Path], archive_name: str = "") -> list:
-        files = []
-        handles = []
-        try:
-            for p in paths:
-                f = open(p, "rb")
-                handles.append(f)
-                files.append(("files", (p.name, f, mimetypes.guess_type(p.name)[0] or "application/octet-stream")))
+        with ExitStack() as stack:
+            files = [("files", (p.name, stack.enter_context(open(p, "rb")),
+                                mimetypes.guess_type(p.name)[0] or "application/octet-stream")) for p in paths]
             return self._req("POST", "/api/survey/documents/bulk_upload/",
                              data={"survey_id": survey_id, "document_category": document_category,
                                    "document_type_id": document_type_id, "archive_name": archive_name},
                              files=files, timeout=600)
-        finally:
-            for f in handles:
-                f.close()
 
     def document_download_url(self, document_id: str) -> str:
         return self._req("GET", f"/api/survey/documents/{document_id}/download/")["url"]
@@ -222,10 +214,9 @@ class UApplyApi:
     def autofill_claim(self, survey_id: str) -> dict:
         return self._req("POST", f"{AGENT_PREFIX}surveys/{survey_id}/autofill/claim/", json={}, timeout=300)
 
-    def autofill_result(self, survey_id: str, imm_pdf_id: str, pdf: Optional[Path] = None, error: str = "",
-                        success_rate: Optional[float] = None, errors: Optional[list] = None,
-                        survey_values_updated_at: Optional[str] = None) -> dict:
-        import json
+    def autofill_result(self, survey_id: str, imm_pdf_id: str, pdf: Path | None = None, error: str = "",
+                        success_rate: float | None = None, errors: list | None = None,
+                        survey_values_updated_at: str | None = None) -> dict:
         data = {"error": error, "errors": json.dumps(errors or []),
                 "survey_values_updated_at": survey_values_updated_at or ""}
         if success_rate is not None:
@@ -268,32 +259,30 @@ class UApplyApi:
     # ---- agent endpoints ----
 
     def agent_status(self, survey_id: str) -> dict:
-        return self._req("GET", f"/api/ai-parse/agent/surveys/{survey_id}/status/")
+        return self._req("GET", f"{AGENT_PREFIX}surveys/{survey_id}/status/")
 
     def agent_wait(self, survey_id: str, stage: str, timeout_s: int) -> dict:
-        return self._req("GET", f"/api/ai-parse/agent/surveys/{survey_id}/wait/",
+        return self._req("GET", f"{AGENT_PREFIX}surveys/{survey_id}/wait/",
                          params={"stage": stage, "timeout": timeout_s}, timeout=timeout_s + 30)
 
     def set_llm_mode(self, survey_id: str, mode: str) -> dict:
-        return self._req("POST", f"/api/ai-parse/agent/surveys/{survey_id}/llm_mode/", json={"llm_mode": mode})
+        return self._req("POST", f"{AGENT_PREFIX}surveys/{survey_id}/llm_mode/", json={"llm_mode": mode})
 
     def pull_tasks(self, survey_ids: list, n: int, session_id: str, runtime: str,
-                   kinds: Optional[list] = None, lease_s: Optional[int] = None) -> list:
+                   kinds: list | None = None) -> list:
         body = {"survey_ids": survey_ids, "n": n, "session_id": session_id, "runtime": runtime}
         if kinds:
             body["kinds"] = kinds
-        if lease_s:
-            body["lease_s"] = lease_s
-        return self._req("POST", "/api/ai-parse/agent/tasks/pull/", json=body)["tasks"]
+        return self._req("POST", f"{AGENT_PREFIX}tasks/pull/", json=body)["tasks"]
 
     def submit_result(self, task_id: str, result: dict, model: str, runtime: str,
-                      usage: Optional[dict], session_id: str) -> dict:
-        return self._req("POST", f"/api/ai-parse/agent/tasks/{task_id}/result/",
+                      usage: dict | None, session_id: str) -> dict:
+        return self._req("POST", f"{AGENT_PREFIX}tasks/{task_id}/result/",
                          json={"result": result, "model": model or "", "runtime": runtime,
                                "usage": usage or {}, "session_id": session_id})
 
     def release_task(self, task_id: str, reason: str) -> dict:
-        return self._req("POST", f"/api/ai-parse/agent/tasks/{task_id}/release/", json={"reason": reason[:500]})
+        return self._req("POST", f"{AGENT_PREFIX}tasks/{task_id}/release/", json={"reason": reason[:500]})
 
     def task_stats(self, survey_id: str) -> dict:
-        return self._req("GET", "/api/ai-parse/agent/tasks/stats/", params={"survey": survey_id})["stats"]
+        return self._req("GET", f"{AGENT_PREFIX}tasks/stats/", params={"survey": survey_id})["stats"]

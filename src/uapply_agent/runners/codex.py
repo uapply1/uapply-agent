@@ -1,8 +1,8 @@
 """Codex headless: `codex exec` with --output-schema and image inputs.
 
-Codex has no system-prompt flag, so the system prompt is prepended to the
-prompt under an Instructions heading. Untested against a live Codex install;
-the flag set follows the current `codex exec --help`.
+Codex has no system-prompt flag, so the system prompt is prepended to the prompt under an
+Instructions heading. Experimental: Claude Code is the supported runtime; the flags follow
+`codex exec --help`.
 """
 from __future__ import annotations
 

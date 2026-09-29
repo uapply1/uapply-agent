@@ -7,9 +7,8 @@ import re
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 from collections.abc import Callable
-from typing import Optional
+from pathlib import Path
 
 from .runners.claude_code import claude_logged_in
 from .util import write_text_atomic
@@ -23,7 +22,7 @@ class SetupError(RuntimeError):
 PLUGIN_DIR = Path(".claude") / "skills" / "uapply"   # auto-loaded by Claude Code as uapply@skills-dir
 
 
-def _find(binary: str) -> Optional[str]:
+def _find(binary: str) -> str | None:
     from .runners import resolve_binary
     return resolve_binary(binary)
 
@@ -41,7 +40,8 @@ def own_executable() -> str:
 
 
 def _run(cmd: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    return subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace",
                           timeout=timeout, check=False)
 
 
@@ -60,7 +60,7 @@ def write_claude_json(exe: str, path: Path) -> None:
     write_text_atomic(path, json.dumps(data, indent=2))
 
 
-def register_claude(exe: str, home: Path, which: Callable[[str], Optional[str]] = _find) -> str:
+def register_claude(exe: str, home: Path, which: Callable[[str], str | None] = _find) -> str:
     claude = which("claude")
     cfg = home / ".claude.json"
     if claude:
@@ -74,7 +74,7 @@ def register_claude(exe: str, home: Path, which: Callable[[str], Optional[str]] 
     return "skipped: Claude Code not found (no `claude` command, no ~/.claude.json)"
 
 
-def verify_claude(which: Callable[[str], Optional[str]] = _find) -> Optional[bool]:
+def verify_claude(which: Callable[[str], str | None] = _find) -> bool | None:
     claude = which("claude")
     if not claude:
         return None
@@ -98,7 +98,7 @@ def install_claude_plugin(home: Path) -> str:
     return f"commands written to {root}"
 
 
-def ensure_claude_login(claude: str, say: Callable[[str], None] = print, interactive: bool = True) -> Optional[bool]:
+def ensure_claude_login(claude: str, say: Callable[[str], None] = print, interactive: bool = True) -> bool | None:
     """The CLI has its own login, separate from the desktop app; headless tasks fail without it."""
     state = claude_logged_in(claude)
     if state is False and interactive:
@@ -136,7 +136,7 @@ def write_codex_toml(exe: str, path: Path) -> None:
     write_text_atomic(path, text)
 
 
-def register_codex(exe: str, home: Path, which: Callable[[str], Optional[str]] = _find) -> str:
+def register_codex(exe: str, home: Path, which: Callable[[str], str | None] = _find) -> str:
     codex = which("codex")
     cfg = home / ".codex" / "config.toml"
     if codex:
@@ -150,7 +150,7 @@ def register_codex(exe: str, home: Path, which: Callable[[str], Optional[str]] =
     return "skipped: Codex not found (no `codex` command, no ~/.codex)"
 
 
-def record_runtimes(settings, which: Callable[[str], Optional[str]] = _find) -> dict:
+def record_runtimes(settings, which: Callable[[str], str | None] = _find) -> dict:
     """Remember where `claude` / `codex` are: the terminal running setup has the full PATH, the
     desktop app that later launches the MCP server usually does not."""
     from .runners import known_locations, runtime_error
@@ -175,7 +175,7 @@ def broken_runtimes(found: dict, check: Callable[[str], str] | None = None) -> d
     return {b: err for b, p in found.items() if (err := check(p))}
 
 
-def run_setup(say: Callable[[str], None] = print, home: Optional[Path] = None, settings=None,
+def run_setup(say: Callable[[str], None] = print, home: Path | None = None, settings=None,
               login: bool = True) -> dict:
     home = home or Path(os.environ.get("UAPPLY_HOME") or Path.home())
     exe = own_executable()

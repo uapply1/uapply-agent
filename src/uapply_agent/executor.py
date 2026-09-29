@@ -9,11 +9,10 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from .api import ApiError, UApplyApi
-from .folder import WorkingFolder
 from .constants import IMAGE_EXTENSIONS
+from .folder import WorkingFolder
 from .local_ops import pdf_page_count, pdf_pages_text, render_pdf_pages, to_image_for_model
 from .runners import PlanLimited, Runner, RunnerError, RuntimeUnavailable
 
@@ -59,7 +58,7 @@ class RunStats:
         return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
 
 
-def _schema_check(schema: dict, output: dict) -> Optional[str]:
+def _schema_check(schema: dict, output: dict) -> str | None:
     """Cheap local check so an obviously wrong answer is retried before a round-trip."""
     if not isinstance(output, dict):
         return "output is not an object"
@@ -78,7 +77,7 @@ def _merge_usage(total: dict, part: dict) -> dict:
 
 class Executor:
     def __init__(self, api: UApplyApi, folder: WorkingFolder, runner: Runner, *, force_ocr: bool = False,
-                 timeout_s: int = 300, session_id: Optional[str] = None):
+                 timeout_s: int = 300, session_id: str | None = None):
         self.api = api
         self.folder = folder
         self.runner = runner
@@ -248,7 +247,7 @@ class Executor:
     # ---- submit ----
 
     def _submit(self, task: dict, output: dict, model: str, usage: dict, stats: RunStats,
-                runtime: Optional[str] = None) -> SubmitOutcome:
+                runtime: str | None = None) -> SubmitOutcome:
         out = self.api.submit_result(task["id"], output, model, runtime or self.runner.name, usage, self.session_id)
         if out.get("accepted"):
             stats.bump("accepted")
@@ -283,7 +282,7 @@ class Executor:
             raise
         except (RunnerError, ApiError, OSError, ValueError) as e:
             self._fail(task, stats, str(e))
-        except Exception as e:  # never let one task abort the run with its lease held
+        except Exception as e:  # noqa: BLE001  (one task must not abort the run with its lease held)
             logger.exception("task %s failed unexpectedly", task["id"])
             self._fail(task, stats, f"{type(e).__name__}: {e}")
 
@@ -296,13 +295,13 @@ class Executor:
     def _release_quietly(self, task: dict, reason: str) -> None:
         try:
             self.api.release_task(task["id"], reason)
-        except Exception as e:
+        except ApiError as e:   # the lease expires on its own; the server re-queues the task
             logger.warning("releasing task %s failed: %s", task["id"], e)
 
     # ---- the loop ----
 
-    def run(self, max_tasks: Optional[int] = None, workers: int = 2, kinds: Optional[list] = None,
-            batch: int = 5, budget_s: Optional[float] = None) -> RunStats:
+    def run(self, max_tasks: int | None = None, workers: int = 2, kinds: list | None = None,
+            batch: int = 5, budget_s: float | None = None) -> RunStats:
         """`budget_s`: stop pulling new tasks after this long (running ones finish), so the chat
         gets control back and can report progress instead of one silent call."""
         deadline = time.monotonic() + budget_s if budget_s else None

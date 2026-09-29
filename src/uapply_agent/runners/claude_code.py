@@ -9,10 +9,8 @@ import json
 import os
 import re
 import subprocess
-from typing import Optional
 
 from .base import Runner, RunnerError, RunResult, RuntimeUnavailable, extract_json, inline_schema_refs
-
 
 NOT_SIGNED_IN = re.compile(r"not logged in|please run /login|invalid api key|oauth token (has )?expired", re.I)
 
@@ -30,11 +28,9 @@ class ClaudeCodeRunner(Runner):
             prompt = (f"{user_prompt}\n\nThe file(s) to look at are in the current directory:\n{listing}\n"
                       f"Read each one with the Read tool (a long text file may need several Reads with offset/limit), "
                       f"then answer with JSON only.")
-        # Not --bare: bare mode only accepts ANTHROPIC_API_KEY, so a Claude Pro/Max sign-in is "Not logged
-        # in". The isolation it gave comes from explicit flags: no MCP servers (else each task would start
-        # the uapply server again), no skills/plugins, no user/project settings or hooks, Read only.
-        # The prompt goes on stdin and the system prompt as --system-prompt=…: text starting with "-"
-        # (e.g. "- Family Name: …") is otherwise parsed as an unknown option.
+        # Isolated run on the RCIC's own sign-in (--bare would require an API key): no MCP servers,
+        # skills, plugins, settings or hooks, and only the Read tool. The prompt goes on stdin and the
+        # system prompt as --system-prompt=…, so text starting with "-" is never taken for an option.
         cmd = [
             self.binary, "-p",
             "--no-session-persistence",
@@ -64,7 +60,7 @@ class ClaudeCodeRunner(Runner):
             data = json.loads(raw)
         except json.JSONDecodeError:
             self._raise_if_limited(raw)
-            raise RunnerError(f"claude returned non-JSON: {raw[:200]!r}")
+            raise RunnerError(f"claude returned non-JSON: {raw[:200]!r}") from None
         if data.get("is_error"):
             msg = str(data.get("result", ""))
             self._raise_if_limited(msg)
@@ -92,7 +88,7 @@ def _main_model(model_usage: dict) -> str:
     return max(model_usage, key=lambda m: (model_usage[m] or {}).get("outputTokens", 0))
 
 
-def claude_logged_in(claude: str) -> Optional[bool]:
+def claude_logged_in(claude: str) -> bool | None:
     """`claude auth status --json` → loggedIn; None when the CLI cannot tell."""
     try:
         r = subprocess.run([claude, "auth", "status", "--json"], stdin=subprocess.DEVNULL, capture_output=True,

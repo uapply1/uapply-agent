@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from .constants import HEIC_EXTENSIONS
 
@@ -44,7 +43,7 @@ def looks_like_real_text(text: str, min_ratio: float = 0.85) -> bool:
     return ok / len(chars) >= min_ratio
 
 
-def pdf_pages_text(pdf: Path, min_chars_per_page: int = 40, force_ocr: bool = False) -> Optional[list[str]]:
+def pdf_pages_text(pdf: Path, min_chars_per_page: int = 40, force_ocr: bool = False) -> list[str] | None:
     """One string per page from the text layer, or None when the PDF is a scan
     (or its text layer does not look like real text, or OCR is forced)."""
     if force_ocr:

@@ -11,12 +11,13 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
 PD_SAVE_FULL = 1
+NO_AUTOMATION = "Acrobat is installed but its automation is unavailable (Reader, or no Pro licence)"
 
 
 class AcrobatError(RuntimeError):
@@ -25,7 +26,7 @@ class AcrobatError(RuntimeError):
 
 # ---- detection ----
 
-def _registry_has_acrobat() -> Optional[str]:
+def _registry_has_acrobat() -> str | None:
     """Acrobat.exe path from App Paths, if Acrobat (not only Reader) is installed."""
     import winreg
     key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Acrobat.exe"
@@ -67,10 +68,9 @@ def detect(probe: bool = True) -> dict:
             doc.close()
             with DialogClicker(), AcrobatDoc(pdf) as d:   # a first-run dialog must not hang the probe
                 if d.jso is None:
-                    return {"available": False, "path": path,
-                            "reason": "Acrobat is installed but its automation is unavailable (Reader or no Pro licence)"}
+                    return {"available": False, "path": path, "reason": NO_AUTOMATION}
         return {"available": True, "path": path, "reason": ""}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  (COM/registry errors of any kind mean "not usable")
         return {"available": False, "path": None, "reason": f"Acrobat automation failed: {e}"[:300]}
 
 
@@ -96,7 +96,7 @@ class AcrobatDoc:
         self.app = self.pd = self.jso = None
         self._com = False
 
-    def __enter__(self) -> "AcrobatDoc":
+    def __enter__(self) -> AcrobatDoc:
         # MCP tools run on worker threads, and COM must be initialised on each thread that uses it.
         self._com = self._dispatch is _dispatch and _co_initialize()
         self.app = self._dispatch("AcroExch.App")
@@ -137,7 +137,7 @@ def _normalize(text) -> str:
     return text.lower().strip()
 
 
-def choice_matches(option: str, value: str, mapper: Optional[dict]) -> bool:
+def choice_matches(option: str, value: str, mapper: dict | None) -> bool:
     mapper = mapper or {}
     option = (mapper.get("mapping") or {}).get(option, option)
     option, value = _normalize(option), _normalize(value)
@@ -165,7 +165,7 @@ def _display_items(field) -> list[str]:
     return items
 
 
-def apply_op(xfa, op: dict) -> Optional[str]:
+def apply_op(xfa, op: dict) -> str | None:
     """Apply one recorded operation; returns an error string or None."""
     node = op.get("node")
     try:
@@ -190,12 +190,12 @@ def apply_op(xfa, op: dict) -> Optional[str]:
         else:
             return f"{node}: unknown operation {kind!r}"
         return None
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  (a COM error on one field must not stop the form)
         return f"{node}: {e}"[:300]
 
 
 def fill(template: Path, ops: list, out: Path, doc_factory: Callable = AcrobatDoc,
-         on_progress: Optional[Callable[[int, int], None]] = None) -> dict:
+         on_progress: Callable[[int, int], None] | None = None) -> dict:
     """Open the blank IMM template, replay the ops, save to `out`."""
     errors = []
     with DialogClicker(), doc_factory(template) as doc:
@@ -229,7 +229,7 @@ class DialogClicker:
         self._thread = threading.Thread(target=self._run, daemon=True, name="acrobat-dialogs")
         self._thread.start()
 
-    def __enter__(self) -> "DialogClicker":
+    def __enter__(self) -> DialogClicker:
         self.start()
         return self
 
@@ -265,7 +265,7 @@ class DialogClicker:
                 return Path(win32process.GetModuleFileNameEx(h, 0)).name.lower() == "acrobat.exe"
             finally:
                 win32api.CloseHandle(h)
-        except Exception:
+        except Exception:  # noqa: BLE001  (the window's process has gone or is protected)
             return False
 
     def _maybe_click(self, hwnd, win32gui, win32con) -> bool:
@@ -282,7 +282,7 @@ class DialogClicker:
             return True
         win32gui.EnumChildWindows(hwnd, collect, buttons)
         if buttons:
-            logger.info(f"Acrobat dialog '{win32gui.GetWindowText(hwnd)}': clicking OK")
+            logger.info("Acrobat dialog %r: clicking OK", win32gui.GetWindowText(hwnd))
             win32gui.SendMessage(buttons[0], win32con.BM_CLICK, 0, 0)
             time.sleep(0.1)
         return True

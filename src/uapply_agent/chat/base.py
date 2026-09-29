@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Protocol
+from typing import Protocol
 
 
 class ChatError(RuntimeError):
@@ -27,7 +27,7 @@ class Availability:
 class Contact:
     display_name: str
     kind: str = "friend"  # friend | group
-    raw_id: Optional[str] = None   # never shown to the chat model
+    raw_id: str | None = None   # never shown to the chat model
 
     def public(self) -> dict:
         return {"display_name": self.display_name, "kind": self.kind}

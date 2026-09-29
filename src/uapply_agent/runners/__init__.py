@@ -6,7 +6,6 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 from .base import PlanLimited, Runner, RunnerError, RunResult, RuntimeUnavailable
 from .claude_code import ClaudeCodeRunner
@@ -28,7 +27,7 @@ def known_locations(binary: str) -> list[Path]:
     return cands
 
 
-def resolve_binary(binary: str, configured: str = "") -> Optional[str]:
+def resolve_binary(binary: str, configured: str = "") -> str | None:
     """Configured path → PATH → known install locations. The MCP server often runs under a
     desktop app whose PATH lacks ~/.local/bin, so PATH alone is not enough."""
     if configured:
@@ -89,7 +88,8 @@ def get_runner(name: str = "auto", model: str = "", settings=None) -> Runner:
     if name in (None, "", "auto"):
         if not found and installed:
             b = installed[0]
-            raise RunnerError(f"{b['name']} is installed at {b['path']} but does not start on this machine: {b['error']}. "
+            raise RunnerError(f"{b['name']} is installed at {b['path']} but does not start on this machine: "
+                              f"{b['error']}. "
                               "Reinstall it with the uApply installer; if Windows reports it is not compatible, this "
                               "Windows version is too old for it.")
         if not found:

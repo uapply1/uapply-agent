@@ -7,7 +7,7 @@ import locale
 import logging
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ def read_json(path: Path, default):
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        aside = path.with_name(f"{path.name}.corrupt-{datetime.now(timezone.utc):%Y%m%d%H%M%S}")
+        aside = path.with_name(f"{path.name}.corrupt-{datetime.now(UTC):%Y%m%d%H%M%S}")
         os.replace(path, aside)
         logger.warning("unreadable %s moved to %s", path, aside)
         return default
@@ -55,4 +55,4 @@ def sha256_of(path: Path, chunk: int = 1 << 20) -> str:
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
