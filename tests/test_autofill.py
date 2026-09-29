@@ -86,16 +86,18 @@ class FakeApi:
         self.forms, self.need_restart = forms, need_restart
         self.calls, self.results = [], []
 
-    automation_status = "filling"
+    automation_status = "archive"
 
     def start_auto_filling(self, sid):
         self.calls.append("start_auto_filling")
+        self.automation_status = "started"
 
     def agent_status(self, sid):
         return {"automation_status": self.automation_status}
 
     def autofill_claim(self, sid):
         self.calls.append("claim")
+        self.automation_status = "filling"
         return {"forms": self.forms, "skipped": []}
 
     def download_to(self, url, dest):
@@ -109,6 +111,7 @@ class FakeApi:
     def autofill_finish(self, sid):
         self.calls.append("finish")
         restart, self.need_restart = self.need_restart, False
+        self.automation_status = "filling" if restart else "completed"
         return {"need_restart": restart, "automation_status": "filling" if restart else "completed", "imm_pdfs": []}
 
 
@@ -191,3 +194,20 @@ def test_platform_state_clears_once_filling_is_done(folder):
     api.automation_status = "completed"
     assert filler.run() == {"mode": "platform", "remaining": 0, "automation_status": "completed"}
     assert not (folder.state / "autofill.json").exists()
+
+
+def test_a_platform_fill_from_an_earlier_run_does_not_block_a_new_one(folder):
+    """Confirm resets the case to archive; the saved platform fill from the first run is stale."""
+    folder.write_state("autofill.json", {"survey_id": "s-1", "mode": "platform", "reason": "Reader only"})
+    api = FakeApi([form(1)])
+    r = AutoFiller(api, folder, detect=lambda: {"available": False, "reason": "Reader only"}).run()
+    assert r["mode"] == "platform" and api.calls == ["start_auto_filling"]
+
+
+def test_a_local_claim_from_an_earlier_run_is_claimed_again(folder):
+    folder.write_state("autofill.json", {"survey_id": "s-1", "mode": "local", "forms": [form(9)], "done": {},
+                                         "skipped": [], "restarts": 0})
+    api = FakeApi([form(1)])
+    r = AutoFiller(api, folder, detect=available, fill=local_fill).run()
+    assert [x["name"] for x in r["filled"]] == ["IMM1"] and api.calls[0] == "claim"
+

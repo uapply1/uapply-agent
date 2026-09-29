@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 STATE = "autofill.json"
 MAX_REFILLS = 1          # re-claims after survey values changed mid-fill
+PLATFORM_FILLING = ("started", "filling")
+FILL_DONE = ("completed", "failed")
 
 
 class AutoFiller:
@@ -46,13 +48,26 @@ class AutoFiller:
         self._save(s)
         return s
 
-    def run(self, budget_s: int = 240) -> dict:
+    def _current_state(self) -> dict:
+        """The saved fill, if it is still the one uApply is running. A saved fill from an earlier run
+        (Confirm has since reset the case, or the fill ended) is discarded, so a new fill starts."""
         s = self._state()
+        if not s:
+            return s
+        status = self.api.agent_status(self.folder.survey_id).get("automation_status")
+        if s.get("mode") == "platform" and status in PLATFORM_FILLING + FILL_DONE:
+            return {**s, "automation_status": status}
+        if s.get("mode") == "local" and status == "filling":
+            return s
+        self._clear()
+        return {}
+
+    def run(self, budget_s: int = 240) -> dict:
+        s = self._current_state()
         if s.get("mode") == "platform":
-            status = self.api.agent_status(self.folder.survey_id).get("automation_status")
-            if status in ("completed", "failed"):
-                self._clear()                   # done on uApply; a later run starts afresh
-                return {"mode": "platform", "remaining": 0, "automation_status": status}
+            if s["automation_status"] in FILL_DONE:
+                self._clear()
+                return {"mode": "platform", "remaining": 0, "automation_status": s["automation_status"]}
             return {"mode": "platform", "reason": s.get("reason"), "remaining": 0,
                     "next": "loop wait_for_stage('filling') until done"}
         if not s:
