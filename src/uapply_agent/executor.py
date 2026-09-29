@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 IMAGE_EXT = (".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp")
 
 
+PROMPT_INLINE_MAX = 6000   # characters; longer prompts are passed as files
+
+
 @dataclass
 class RunStats:
     accepted: int = 0
@@ -82,13 +85,35 @@ class Executor:
         cache.mkdir(parents=True, exist_ok=True)
         files = []
         for inp in task["payload"].get("inputs", []):
-            name = inp.get("file_name") or f"{inp['document_id']}.bin"
+            name = inp.get("file_name") or f"{inp.get('document_id') or 'input'}.bin"
             dest = cache / Path(name).name
             if not dest.exists():
-                url = self.api.document_download_url(inp["document_id"])
+                # llm_call inputs carry a short-lived URL; document inputs are fetched by id
+                url = inp.get("url") or self.api.document_download_url(inp["document_id"])
                 self.api.download_to(url, dest)
             files.append(dest)
         return files
+
+    def _prompt_files(self, task: dict, cwd: Path, system_prompt: str, user_prompt: str):
+        """Long prompts and documents go to files the model reads: Windows caps a command line at
+        ~32 KB and section/analysis prompts embed whole documents."""
+        text_files = []
+        for tf in task["payload"].get("text_files", []) or []:
+            p = cwd / Path(tf.get("file_name") or "input.txt").name
+            p.write_text(tf.get("text", ""), encoding="utf-8")
+            text_files.append(p)
+        if len(system_prompt) > PROMPT_INLINE_MAX:
+            p = cwd / "instructions.md"
+            p.write_text(system_prompt, encoding="utf-8")
+            text_files.append(p)
+            system_prompt = ("Your complete instructions are in instructions.md in the current directory. "
+                             "Read the whole file first and follow it exactly.")
+        if len(user_prompt) > PROMPT_INLINE_MAX:
+            p = cwd / "task.md"
+            p.write_text(user_prompt, encoding="utf-8")
+            text_files.append(p)
+            user_prompt = "The task is in task.md in the current directory. Read the whole file, then answer."
+        return system_prompt, user_prompt, text_files
 
     def _for_model(self, path: Path, cache: Path) -> Path:
         """A PDF goes to the runtime as-is when it can read PDFs; otherwise page 1 as an image."""
@@ -110,10 +135,15 @@ class Executor:
                             "(never without a page range) and classify from those.")
         for t in payload.get("text_inputs", []):
             user_prompt += f"\n\n--- document {t.get('document_id')} ---\n{t.get('text', '')}"
+        rejection = task.get("rejection") or {}
+        if rejection.get("code") == "SCHEMA_INVALID":   # handed back by the server with the reason
+            user_prompt += f"\n\nA previous answer was rejected: {rejection.get('message')}. Fix that."
+        system_prompt, user_prompt, text_files = self._prompt_files(task, cwd, payload.get("system_prompt", ""),
+                                                                    user_prompt)
         note = ""
         for attempt in range(2):
-            rr = self.runner.run(system_prompt=payload["system_prompt"], user_prompt=user_prompt + note,
-                                 schema=schema, images=images, cwd=cwd)
+            rr = self.runner.run(system_prompt=system_prompt, user_prompt=user_prompt + note,
+                                 schema=schema, images=images, cwd=cwd, text_files=text_files)
             stats.bump('model_calls')
             local_err = _schema_check(schema, rr.output)
             if local_err:

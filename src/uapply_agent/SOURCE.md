@@ -39,8 +39,13 @@ Always:
   ask the RCIC which type to use or whether to skip it. Never file non-IMM
   documents under Agent Survey on your own.
 - Upload only files inside the working folder, through `sync_documents`.
-- For processing, loop: `run_tasks` (returns within about 90 s) →
-  `wait_for_stage("processing")` until `done` is true and `remaining` is 0.
+- Uploads never start anything on uApply for agent cases, and uApply runs no AI
+  for them: every model call (OCR, sections, analysis) is a task this machine
+  runs. After uploading, call `start_processing`; once processing is done, call
+  `start_analysis`, then run the analysis the same way.
+- For processing (and analysis), loop: `run_tasks` (returns within about 90 s) →
+  `wait_for_stage("processing")` (or `"analysis"`) until `done` is true and
+  `remaining` is 0.
   After every call, print one progress line from its `progress` field before
   the next call, e.g. "Processing 4/7 documents · running: passport & sp.pdf,
   LOA · 3 local tasks done this round". Name failed documents as soon as they
@@ -86,8 +91,9 @@ Scan the folder; for each unmanifested file whose type is not obvious from its
 name, `preview_document` it and pick the type from `list_document_types`; filled
 IMM forms go under Agent Survey; ask the RCIC only when the pages do not
 settle it, all unclear files in one question call. Upload with `sync_documents`, then —
-unless `agent_api` is false — loop `run_tasks` / `wait_for_stage("processing")`
-until processing is done. Finish with a short summary: documents by status, tasks
+unless `agent_api` is false — `start_processing`, loop `run_tasks` /
+`wait_for_stage("processing")` until processing is done, then `start_analysis`
+and loop `run_tasks` / `wait_for_stage("analysis")` until the analysis is done. Finish with a short summary: documents by status, tasks
 accepted, anything waiting on the RCIC.
 
 ## prompt: intake-from-chat

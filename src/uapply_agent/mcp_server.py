@@ -349,7 +349,8 @@ def start_processing(document_ids: Optional[list[str]] = None) -> dict:
 
 def _progress() -> dict:
     """Per-document progress of the case (top-level documents only; pages mirror their parent)."""
-    docs = [d for d in api().documents(_folder.survey_id) if not d.get("old_doc_id")]
+    survey = api().survey(_folder.survey_id)
+    docs = [d for d in (survey.get("documents") or []) if not d.get("old_doc_id")]
     by_status: dict[str, int] = {}
     for d in docs:
         by_status[d.get("status") or "?"] = by_status.get(d.get("status") or "?", 0) + 1
@@ -361,6 +362,7 @@ def _progress() -> dict:
         "in_progress": [d.get("file_name") for d in docs if d.get("status") in ("started", "analyzing")][:10],
         "failed": [{"file_name": d.get("file_name"), "error": (d.get("error") or "")[:160]}
                    for d in docs if d.get("status") == "failed"][:10],
+        "analysis": survey.get("analyzing_status") or "none",
     }
 
 
@@ -370,6 +372,24 @@ def _with_progress(out: dict) -> dict:
     except ApiError:
         pass
     return out
+
+
+@server.tool()
+def start_analysis() -> dict:
+    """Start the case analysis once every document is processed (uploads never start it for agent
+    cases). Every model call it makes runs on this machine through run_tasks."""
+    if e := _need_agent_api():
+        return e
+
+    def go():
+        p = _progress()
+        running = p["in_progress"] or p["by_status"].get("uploaded")
+        if running:
+            return _err("PROCESSING_NOT_DONE", "documents are still being processed or not started",
+                        "start_processing, then loop run_tasks / wait_for_stage('processing') until done")
+        r = api().start_analysis(_folder.survey_id)
+        return _ok(started=True, message=(r or {}).get("message") if isinstance(r, dict) else None, progress=p)
+    return _wrap(go)
 
 
 @server.tool()

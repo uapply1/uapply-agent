@@ -231,3 +231,31 @@ Details: [architecture/chat-sources.md](../architecture/chat-sources.md).
 - **Should the dashboard show "processing on RCIC machine"** states so a
   colleague understands why a case is waiting? (Yes, minimal: a badge and the
   last agent heartbeat.)
+
+## D14. No server-side AI for local-agent cases; every model call is intercepted at the client
+
+Decided 2026-09-29 by the product owner: for a `local_agent` case nothing starts automatically on
+uApply (not on upload, not after processing) and **no AI runs on uApply's servers** — OCR,
+classification, section extraction, Financial Proof extraction, DOCX/XLSX transcription, analysis,
+reformat/translate, drafts and dashboard field saves all run on the RCIC's plan.
+
+**How.** Instead of turning each of the ~34 call sites into a prepare/continue stage (D2), the
+public methods of the two LLM clients (`GeminiLLM`, `OpenaiLLM`) are wrapped
+(`ai_parse/agent/llm_proxy.py`). Inside an agent context — entered by every Celery task of a local
+case, carried into thread pools and the shared async runner — a call writes an `AgentTask`
+(`llm_call`: system prompt, user prompt, JSON schema or text mode, image/HTML inputs) and waits for
+the agent's answer, which it returns in the shape the caller already reads. LlamaParse is refused.
+
+**Where it waits.** Local-case jobs run on a dedicated `agent_queue` worker: a thread pool, so a
+waiting job costs a thread rather than a prefork slot other customers need, started with
+`UAPPLY_SERVER_LLM=off` so any model call without an agent context raises instead of reaching a
+provider (fail closed). This relaxes D2's "no blocking waits" for that worker only; OCR and
+classification keep their prepare/continue path.
+
+**Alternatives.** Per-call-site hand-offs: no new worker, but analysis (threads, tiers, nested
+reformat calls) would need restructuring, and any missed path silently uses Gemini.
+
+**Consequences.** A case only progresses while the agent runs (`run_tasks`); a call nobody picks up
+fails after 10 min (`AGENT_IDLE_TIMEOUT_S`). Dashboard saves on a local case need an active agent
+(409 `AGENT_REQUIRED` otherwise). The `agent_queue` worker must be deployed.
+

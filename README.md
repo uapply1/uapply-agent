@@ -149,6 +149,7 @@ The agent needs the backend branch that adds the local-agent task queue:
 `AGENT_*` settings, the `expire_agent_tasks` Celery beat entry, and Celery
 workers on `document_queue` / `analysis_queue`. Endpoints live under
 `/api/ai-parse/agent/` (see [docs/reference/backend-api.md](docs/reference/backend-api.md)).
+The document-queue container also starts an `agent_queue` worker (thread pool, server-side AI switched off) that runs every job of an agent case: every model call of those cases is answered by the RCIC's agent, and nothing starts on upload (D14).
 In Auth0, the native client must have the Device Code grant and the API should
 have "Allow Offline Access" enabled so refresh tokens are issued.
 

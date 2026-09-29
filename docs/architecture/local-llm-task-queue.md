@@ -10,6 +10,18 @@ park a running task for hours without holding a worker, so the design below
 never waits inside a worker: a stage task *creates* agent tasks and exits, and
 the API *resumes* the pipeline when the agent's answers arrive.
 
+## Update 2026-09-29: every model call of a local case (D14)
+
+The prepare/continue stages below still carry OCR (`extract_content`) and the passport sub-type
+classifier (`classify_document`). Everything else — section extraction, Financial Proof, DOCX/XLSX,
+analysis, reformat/translate, drafts, dashboard saves — is covered by the client interception in
+`ai_parse/agent/llm_proxy.py`: task kind `llm_call`, payload
+`{system_prompt, user_prompt, output_mode: text|json, output_schema, inputs: [{blob, url, mime}],
+text_files: [{file_name, text}]}`; text answers are `{"text": "..."}`. The agent executor puts
+prompts longer than 6 KB and HTML inputs into files the model reads (Windows command-line limit).
+Jobs run on the `agent_queue` worker (threads, server AI off); the flow is upload → the agent's
+`start_processing` → `run_tasks` loop → `start_analysis` → `run_tasks` loop.
+
 ## Where LLM calls happen today
 
 All providers implement one interface in `ai_parse/integrations/llm/`

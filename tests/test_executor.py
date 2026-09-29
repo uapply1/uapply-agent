@@ -59,8 +59,9 @@ class FakeRunner(Runner):
         self.outputs = list(outputs)
         self.calls = []
 
-    def run(self, *, system_prompt, user_prompt, schema, images, cwd, timeout_s=300):
-        self.calls.append({"system_prompt": system_prompt, "user_prompt": user_prompt, "images": images, "cwd": cwd})
+    def run(self, *, system_prompt, user_prompt, schema, images, cwd, timeout_s=300, text_files=()):
+        self.calls.append({"system_prompt": system_prompt, "user_prompt": user_prompt, "images": images, "cwd": cwd,
+                           "text_files": list(text_files)})
         out = self.outputs.pop(0)
         if isinstance(out, Exception):
             raise out
@@ -150,3 +151,54 @@ def test_runtime_unavailable_stops_the_run_after_one_task(folder):
     stats = Executor(api, folder, runner=runner).run(workers=1)
     assert len(runner.calls) == 1 and "claude auth login" in stats.runtime_error
     assert stats.released == 1 and stats.failed == 0   # the rest of the batch is never started
+
+
+
+def llm_task(tid="L1", prompt="filter the passport", system="SYS", mode="text", inputs=None, text_files=None,
+             rejection=None):
+    schema = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]} if mode == "text" \
+        else {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+    return {"id": tid, "kind": "llm_call", "rejection": rejection, "payload": {
+        "system_prompt": system, "user_prompt": prompt, "output_mode": mode, "output_schema": schema,
+        "inputs": inputs or [], "text_files": text_files or []}}
+
+
+def test_llm_call_text_task_is_answered_and_submitted(folder):
+    api = FakeApi([llm_task()])
+    runner = FakeRunner([{"text": "## Passport\n- Name: ZHANG"}])
+    stats = Executor(api, folder, runner=runner).run()
+    assert stats.accepted == 1 and api.submitted[0][1] == {"text": "## Passport\n- Name: ZHANG"}
+    assert runner.calls[0]["system_prompt"] == "SYS" and runner.calls[0]["user_prompt"] == "filter the passport"
+
+
+def test_long_prompts_and_documents_go_to_files(folder):
+    """Windows caps a command line at ~32 KB; section prompts embed whole documents."""
+    long_doc = "第1页\n" + "姓名 ZHANG WEI\n" * 2000
+    api = FakeApi([llm_task(prompt=long_doc, system="RULES " * 3000,
+                            text_files=[{"file_name": "document.html", "text": "<p>hi</p>"}])])
+    runner = FakeRunner([{"text": "ok"}])
+    Executor(api, folder, runner=runner).run()
+    call = runner.calls[0]
+    names = sorted(p.name for p in call["text_files"])
+    assert names == ["document.html", "instructions.md", "task.md"]
+    assert len(call["user_prompt"]) < 200 and len(call["system_prompt"]) < 200
+    task_md = next(p for p in call["text_files"] if p.name == "task.md")
+    assert task_md.read_text(encoding="utf-8") == long_doc
+
+
+def test_blob_inputs_are_downloaded_from_their_url(folder):
+    api = FakeApi([llm_task(inputs=[{"blob": "agent-inputs/L1/input1.png", "file_name": "input1.png",
+                                     "mime": "image/png", "url": "https://s3/presigned"}])])
+    urls = []
+    api.download_to = lambda url, dest: (urls.append(url), dest.write_bytes(b"\x89PNG"), dest)[2]
+    api.document_download_url = lambda _id: pytest.fail("blob inputs must not be fetched by document id")
+    runner = FakeRunner([{"text": "Passport"}])
+    Executor(api, folder, runner=runner).run()
+    assert urls == ["https://s3/presigned"] and runner.calls[0]["images"]
+
+
+def test_server_rejection_reason_is_given_back_to_the_model(folder):
+    api = FakeApi([llm_task(mode="json", rejection={"code": "SCHEMA_INVALID", "message": "age: field required"})])
+    runner = FakeRunner([{"name": "Zhang"}])
+    Executor(api, folder, runner=runner).run()
+    assert "age: field required" in runner.calls[0]["user_prompt"]

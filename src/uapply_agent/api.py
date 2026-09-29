@@ -175,6 +175,9 @@ class UApplyApi:
                     f.write(chunk)
         return dest
 
+    def start_analysis(self, survey_id: str) -> dict:
+        return self._req("POST", f"/api/ai-parse/surveys/{survey_id}/start_analysis/", json={})
+
     def start_document_processing(self, survey_id: str, document_id: str) -> dict:
         return self._req("POST", f"/api/ai-parse/surveys/{survey_id}/start_document_processing/",
                          json={"document_id": document_id})

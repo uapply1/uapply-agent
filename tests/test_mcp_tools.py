@@ -21,7 +21,8 @@ class FakeApi:
         return self.agent_api
 
     def survey(self, survey_id):
-        return {"id": survey_id, "name": "Zhang Wei", "dependents": [],
+        return {"id": survey_id, "name": "Zhang Wei", "dependents": [], "documents": self.docs,
+                "analyzing_status": "none",
                 "document_types": [{"id": "dt-pass", "name": "Passport & Visa & Permit", "file_name": "current_prev_passports",
                                     "category": "identity", "requirement": "required", "can_process": True}]}
 
@@ -258,3 +259,14 @@ def test_run_tasks_reports_per_document_progress(bound, monkeypatch):
     assert out["accepted"] == 2 and out["remaining"] == 3
     assert p["documents_total"] == 3 and p["documents_finished"] == 2       # pages are not counted
     assert p["in_progress"] == ["passport & sp.pdf"] and p["failed"][0]["file_name"] == "photo.jpg"
+
+
+def test_start_analysis_waits_for_processing_then_starts(bound):
+    bound.docs = [{"id": "a", "file_name": "passport.pdf", "status": "analyzing", "old_doc_id": None}]
+    started = []
+    bound.start_analysis = lambda sid: started.append(sid) or {"message": "started"}
+    r = m.start_analysis()
+    assert r["error"]["code"] == "PROCESSING_NOT_DONE" and started == []
+    bound.docs[0]["status"] = "completed"
+    r = m.start_analysis()
+    assert r["ok"] and started == ["s-1"] and r["progress"]["analysis"] == "none"
