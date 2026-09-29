@@ -2,11 +2,8 @@
 import sys
 from pathlib import Path
 
-import pytest
-
 from uapply_agent import acrobat
 from uapply_agent.autofill import AutoFiller
-from uapply_agent.folder import WorkingFolder
 
 
 class Field:
@@ -118,14 +115,6 @@ class FakeApi:
 def form(i):
     return {"imm_pdf_id": f"id-{i}", "name": f"IMM{i}", "template_url": "https://s3/x", "success_rate": 90.0,
             "ops": [{"op": "set", "node": "n", "value": "v"}], "errors": [], "survey_values_updated_at": None}
-
-
-@pytest.fixture
-def folder(tmp_path):
-    f = WorkingFolder(tmp_path / "client")
-    f.root.mkdir()
-    f.init_case("s-1", "https://api.example")
-    return f
 
 
 def available():

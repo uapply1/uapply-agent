@@ -304,32 +304,8 @@ def test_intake_prompt_attributes_speakers(tmp_path):
     assert "messages from '张伟' are the client's own statements" in runner.calls[0]["user_prompt"]
 
 
-def test_schema_refs_are_inlined_for_the_runtime():
-    from uapply_agent.chat.intake import IntakeHints
-    from uapply_agent.runners.base import inline_schema_refs
-    flat = inline_schema_refs(IntakeHints.model_json_schema())
-    assert "$defs" not in flat and "$ref" not in json.dumps(flat)
-    assert flat["properties"]["applicant"]["properties"]["native_name"]["anyOf"][0]["type"] == "string"
-    assert flat["properties"]["family"]["items"]["properties"]["relationship"]["type"] == "string"
 
 
-def test_codex_runner_sends_prompt_on_stdin(monkeypatch, tmp_path):
-    import subprocess
-
-    from uapply_agent.runners.codex import CodexRunner
-    seen = {}
-
-    def fake_exec(self, cmd, cwd, timeout_s, stdin=None):
-        seen["cmd"], seen["stdin"] = cmd, stdin
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout='{"file_types": ["Visa"]}', stderr="")
-
-    monkeypatch.setattr(CodexRunner, "_exec", fake_exec)
-    big = tmp_path / "big.md"
-    big.write_text("x" * 100_000)
-    rr = CodexRunner().run(system_prompt="S", user_prompt="U", schema={"type": "object"}, images=[], cwd=tmp_path, text_files=[big])
-    assert rr.output == {"file_types": ["Visa"]}
-    assert seen["cmd"][-1] == "-" and "x" * 100_000 in seen["stdin"] and "## Instructions" in seen["stdin"]
-    assert all(len(a) < 1000 for a in seen["cmd"])
 
 
 def test_create_case_without_agent_api_still_binds_the_folder(tools, monkeypatch):

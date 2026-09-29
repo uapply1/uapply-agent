@@ -68,13 +68,6 @@ class FakeRunner(Runner):
         return RunResult(output=out, model="fake-model", usage={"input_tokens": 1, "output_tokens": 1})
 
 
-@pytest.fixture
-def folder(tmp_path):
-    f = WorkingFolder(tmp_path)
-    f.init_case("s-1", "https://api.example")
-    return f
-
-
 def test_accepts_first_valid_answer(folder):
     api = FakeApi([task()])
     runner = FakeRunner([{"file_types": ["Passport"]}])

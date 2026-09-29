@@ -2,11 +2,8 @@
 import io
 import zipfile
 
-import pytest
-
 from uapply_agent import report
 from uapply_agent.config import Settings
-from uapply_agent.folder import WorkingFolder
 
 REPORT = {
     "survey_id": "s-1", "name": "Li, Tianyi", "application_type": "Study Permit", "program": "tra",
@@ -39,14 +36,6 @@ class FakeApi:
             z.writestr("To Submit/Forms/../../evil.pdf", b"x")
         dest.write_bytes(buf.getvalue())
         return dest
-
-
-@pytest.fixture
-def folder(tmp_path):
-    f = WorkingFolder(tmp_path / "client")
-    f.root.mkdir()
-    f.init_case("s-1", "https://api.uapply.io")
-    return f
 
 
 def settings(backend="https://api.uapply.io"):

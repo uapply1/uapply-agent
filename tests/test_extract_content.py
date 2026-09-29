@@ -1,10 +1,7 @@
 """extract_content: text-layer PDFs never reach the model; scans are chunked per runtime."""
 from pathlib import Path
 
-import pytest
-
 from uapply_agent.executor import Executor
-from uapply_agent.folder import WorkingFolder
 from uapply_agent.runners.base import Runner, RunResult
 
 SCHEMA = {"type": "object", "properties": {"pages": {"type": "array"}}, "required": ["pages"]}
@@ -74,14 +71,6 @@ class ChunkRunner(Runner):
         nums = range(1, last - first + 2) if self.relative else range(first, last + 1)
         return RunResult(output={"pages": [{"n": n, "text": f"page {n if not self.relative else n + first - 1}"} for n in nums]},
                          model="fake-model", usage={"input_tokens": 100, "output_tokens": 10})
-
-
-@pytest.fixture
-def folder(tmp_path):
-    f = WorkingFolder(tmp_path / "client")
-    f.root.mkdir()
-    f.init_case("s-1", "https://api.example")
-    return f
 
 
 def test_text_layer_pdf_needs_no_model(folder, tmp_path):

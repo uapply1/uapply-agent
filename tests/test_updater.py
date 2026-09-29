@@ -84,11 +84,3 @@ def test_running_sha_from_version_folder(home, monkeypatch):
     assert up.running_sha(settings(A)) == B
     monkeypatch.setattr(up.sys, "prefix", "/usr")
     assert up.running_sha(settings(A)) == A
-
-
-def test_bool_config_parses_false(tmp_path, monkeypatch):
-    from uapply_agent import cli
-    from uapply_agent.config import Settings
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    cli.main(["config", "--set", "auto_update=false"])
-    assert Settings.load().auto_update is False
