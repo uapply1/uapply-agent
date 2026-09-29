@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from .base import PlanLimited, Runner, RunnerError, RunResult
+from .base import PlanLimited, Runner, RunnerError, RunResult, RuntimeUnavailable
 from .claude_code import ClaudeCodeRunner
 from .codex import CodexRunner
 
@@ -108,4 +108,4 @@ def get_runner(name: str = "auto", model: str = "") -> Runner:
     return runner
 
 
-__all__ = ["Runner", "RunResult", "RunnerError", "PlanLimited", "get_runner", "detect_runtimes", "resolve_binary", "runtime_error", "RUNNERS"]
+__all__ = ["Runner", "RunResult", "RunnerError", "PlanLimited", "RuntimeUnavailable", "get_runner", "detect_runtimes", "resolve_binary", "runtime_error", "RUNNERS"]

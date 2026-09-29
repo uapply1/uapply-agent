@@ -121,6 +121,9 @@ def cmd_run(args, settings):
         if stats.plan_limited:
             print("plan limit reached; run again later", file=sys.stderr)
             return 3
+        if stats.runtime_error:
+            print(f"stopped: {stats.runtime_error}", file=sys.stderr)
+            return 4
         if not args.follow:
             break
         st = api.agent_wait(f.survey_id, "processing", 45)

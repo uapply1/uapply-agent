@@ -44,8 +44,14 @@ def test_claude_runner_parses_structured_output(monkeypatch, tmp_path):
     assert cmd[:3] == ["claude", "-p", cmd[2]] and "page.jpg" in cmd[2]
     assert cmd[cmd.index("--system-prompt") + 1] == "SYS"
     assert cmd[cmd.index("--model") + 1] == "haiku"
-    assert "--json-schema" in cmd and "--bare" in cmd
+    assert "--json-schema" in cmd
+    # --bare would lock out Claude Pro/Max sign-ins (API key only); isolation comes from explicit flags
+    assert "--bare" not in cmd
+    assert "--strict-mcp-config" in cmd and cmd[cmd.index("--mcp-config") + 1] == '{"mcpServers":{}}'
+    assert "--disable-slash-commands" in cmd and cmd[cmd.index("--setting-sources") + 1] == ""
+    assert cmd[cmd.index("--tools") + 1] == "Read"
     assert "CLAUDECODE" not in seen["env"]
+    assert seen["env"]["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] == "1" and seen["env"]["UAPPLY_NO_UPDATE"] == "1"
 
 
 def test_claude_runner_falls_back_to_result_text(monkeypatch, tmp_path):
@@ -121,3 +127,11 @@ def test_claude_headless_gets_a_closed_stdin(tmp_path, monkeypatch):
     monkeypatch.setattr(sp, "run", fake_run)
     ClaudeCodeRunner().run(system_prompt="s", user_prompt="u", schema={}, images=[], cwd=tmp_path)
     assert seen["stdin"] is sp.DEVNULL and seen["encoding"] == "utf-8"
+
+
+def test_not_signed_in_stops_as_runtime_unavailable(tmp_path, monkeypatch):
+    from uapply_agent.runners import RuntimeUnavailable
+    envelope = {"type": "result", "is_error": True, "result": "Not logged in · Please run /login", "usage": {}}
+    monkeypatch.setattr(ClaudeCodeRunner, "_exec_env", lambda self, cmd, cwd, t, env: _completed(stdout=json.dumps(envelope)))
+    with pytest.raises(RuntimeUnavailable, match="claude auth login"):
+        ClaudeCodeRunner().run(system_prompt="s", user_prompt="u", schema={}, images=[], cwd=tmp_path)

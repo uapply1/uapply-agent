@@ -18,6 +18,10 @@ class PlanLimited(RunnerError):
     """The subscription's usage window is exhausted; stop pulling work."""
 
 
+class RuntimeUnavailable(RunnerError):
+    """The runtime cannot work at all (e.g. not signed in): stop the run instead of failing every task."""
+
+
 @dataclass
 class RunResult:
     output: dict

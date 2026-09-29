@@ -14,7 +14,7 @@ from typing import Optional
 from .api import ApiError, UApplyApi
 from .folder import WorkingFolder
 from .local_ops import pdf_page_count, pdf_pages_text, render_pdf_pages, to_image_for_model
-from .runners import PlanLimited, Runner, RunnerError, get_runner
+from .runners import PlanLimited, Runner, RunnerError, RuntimeUnavailable, get_runner
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,7 @@ class RunStats:
     released: int = 0
     failed: int = 0
     plan_limited: bool = False
+    runtime_error: str = ""      # the runtime cannot work (not signed in): the run stopped
     remaining: int = 0
     model_calls: int = 0
     text_layer_docs: int = 0      # documents extracted with pdfplumber, no model look
@@ -241,6 +242,11 @@ class Executor:
             self._release_quietly(task, f"plan limit: {e}")
             stats.bump('released')
             raise
+        except RuntimeUnavailable as e:
+            stats.runtime_error = str(e)
+            self._release_quietly(task, f"runtime unavailable: {e}")
+            stats.bump('released')
+            raise
         except (RunnerError, ApiError, OSError, ValueError) as e:
             logger.error(f"task {task['id']} failed: {e}")
             stats.bump('failed')
@@ -282,7 +288,7 @@ class Executor:
                 else:
                     with ThreadPoolExecutor(max_workers=workers) as pool:
                         list(pool.map(lambda t: self.run_one(t, stats), tasks))
-            except PlanLimited:
+            except (PlanLimited, RuntimeUnavailable):
                 break
             done += len(tasks)
         try:

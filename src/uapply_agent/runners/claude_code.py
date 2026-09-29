@@ -6,10 +6,14 @@ runs with the cache directory as cwd so those reads need no permission prompt.
 from __future__ import annotations
 
 import json
+import re
 import os
 from pathlib import Path
 
-from .base import Runner, RunnerError, RunResult, extract_json, inline_schema_refs
+from .base import Runner, RunnerError, RunResult, extract_json, inline_schema_refs, RuntimeUnavailable
+
+
+NOT_SIGNED_IN = re.compile(r"not logged in|please run /login|invalid api key|oauth token (has )?expired", re.I)
 
 
 class ClaudeCodeRunner(Runner):
@@ -27,19 +31,29 @@ class ClaudeCodeRunner(Runner):
                       f"Read each one with the Read tool (for a PDF, use its `pages` parameter for the page range "
                       f"named in the task; a long text file may need several Reads with offset/limit), "
                       f"then answer with JSON only.")
+        # Not --bare: bare mode only accepts ANTHROPIC_API_KEY, so a Claude Pro/Max sign-in is "Not logged
+        # in". The isolation it gave comes from explicit flags: no MCP servers (else each task would start
+        # the uapply server again), no skills/plugins, no user/project settings or hooks, Read only.
         cmd = [
             self.binary, "-p", prompt,
-            "--bare", "--no-session-persistence",
+            "--no-session-persistence",
             "--output-format", "json",
             "--json-schema", json.dumps(inline_schema_refs(schema)),
             "--system-prompt", system_prompt,
+            "--tools", "Read",
             "--allowedTools", "Read",
             "--permission-mode", "dontAsk",
+            "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+            "--disable-slash-commands",
+            "--setting-sources", "",
         ]
         if self.model:
             cmd += ["--model", self.model]
         # A nested Claude Code session would otherwise inherit the parent's env.
         env = {k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")}
+        env.update({"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_AUTOUPDATER": "1",
+                    "UAPPLY_NO_UPDATE": "1"})
         proc = self._exec_env(cmd, cwd, timeout_s, env)
         raw = proc.stdout.strip()
         if proc.returncode != 0 and not raw:
@@ -53,6 +67,9 @@ class ClaudeCodeRunner(Runner):
         if data.get("is_error"):
             msg = str(data.get("result", ""))
             self._raise_if_limited(msg)
+            if NOT_SIGNED_IN.search(msg):
+                raise RuntimeUnavailable(f"the Claude Code CLI is not signed in ({msg.strip()[:120]}): run "
+                                         "`claude auth login` in a terminal, then run the tasks again")
             raise RunnerError(f"claude error: {msg[:300]}")
         output = data.get("structured_output")
         if not isinstance(output, dict):

@@ -140,3 +140,13 @@ def test_budget_stops_pulling_new_tasks(folder, monkeypatch):
     runner = FakeRunner([{"file_types": ["Passport"]}] * 6)
     stats = Executor(api, folder, runner=runner).run(workers=2, budget_s=60)
     assert stats.accepted == 2 and stats.remaining == 4   # one round of `workers` tasks, then the deadline
+
+
+def test_runtime_unavailable_stops_the_run_after_one_task(folder):
+    """54 identical "Not logged in" failures helped nobody: the first one ends the run with the fix."""
+    from uapply_agent.runners import RuntimeUnavailable
+    api = FakeApi([task(f"t{i}") for i in range(6)])
+    runner = FakeRunner([RuntimeUnavailable("the Claude Code CLI is not signed in: run `claude auth login`")] * 6)
+    stats = Executor(api, folder, runner=runner).run(workers=1)
+    assert len(runner.calls) == 1 and "claude auth login" in stats.runtime_error
+    assert stats.released == 1 and stats.failed == 0   # the rest of the batch is never started

@@ -47,6 +47,8 @@ Always:
   appear. Never make the RCIC wait on a silent call.
 - If `run_tasks` reports `plan_limited`, stop and tell the RCIC; do not switch
   the case to server mode on your own.
+- If `run_tasks` reports `runtime_error` (e.g. the Claude Code CLI is not signed
+  in), stop at once and relay it with its fix; do not call `run_tasks` again.
 - Never ask for, print, or reason about a task's prompt or inputs.
 
 Never: delete anything, contact a client, submit to a government portal, or
