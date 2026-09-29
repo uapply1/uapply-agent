@@ -190,7 +190,11 @@ def test_no_case_hint_offers_create_or_bind(tmp_path, monkeypatch):
     r = m.list_documents()
     assert r["error"]["code"] == "NO_CASE" and "create_case" in r["error"]["hint"] and "init_case" in r["error"]["hint"]
     from uapply_agent import playbook
-    assert "create a new case" in playbook.prompt("run") and "survey id" in playbook.prompt("run")
+    run = playbook.prompt("run")
+    assert "Create a new case" in run and "survey id" in run and "question tool" in run
+    rules = playbook.instructions()
+    assert "AskUserQuestion" in rules and "Never end your turn to ask a question" in rules
+    assert '"Create case"' in rules  # the charge is confirmed by the RCIC picking this option
 
 
 def test_generic_agent_survey_type_listed_once_for_imm_forms(bound):

@@ -526,10 +526,12 @@ def list_application_types(query: str = "") -> dict:
 def create_case(name: str, application_type_id: str, confirmation: str = "") -> dict:
     """Create the survey (this charges the RCIC's account), set llm_mode=local_agent, bind this folder,
     and upload any queued chat transcripts. Refused unless `confirmation` is exactly "create case" or
-    "确认创建" — pass it only after the RCIC typed those words in this conversation."""
+    "确认创建" — pass it only after the RCIC picked "Create case" in your question tool or typed those
+    words in this conversation."""
     if confirmation.strip().lower() not in CREATE_CONFIRMATIONS:
-        return _err("CONFIRMATION_REQUIRED", "the RCIC must type 'create case' (or 确认创建) first",
-                    "show the proposed name and application type, wait for those words, then call again")
+        return _err("CONFIRMATION_REQUIRED", "the RCIC must confirm creating the case first",
+                    "ask with your question tool (first option 'Create case', with name, type and the charge), "
+                    "then call again with confirmation='create case'")
     if _folder.survey_id:
         return _err("CASE_EXISTS", f"this folder is already bound to survey {_folder.survey_id}",
                     "use set_folder for a different client, or init_case to rebind")

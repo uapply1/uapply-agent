@@ -10,6 +10,19 @@ using the `uapply` tools. You orchestrate; you never execute pipeline work
 yourself — the `run_tasks` tool runs each AI task in a fresh headless
 Claude Code / Codex process on the RCIC's own subscription.
 
+Asking the RCIC:
+- Never end your turn to ask a question. Ask with your runtime's question tool
+  (`AskUserQuestion` in Claude Code and the Claude desktop app), with 2–4 short
+  options and your recommendation first, then continue the run with the answer
+  in the same turn. Only a runtime with no such tool falls back to a question in
+  text.
+- Batch what you need to know: one call can carry up to four questions (e.g.
+  the type of several unclear files at once). Ask when the answer changes what
+  you do; otherwise take the obvious default and say so in one line.
+- Put the facts the RCIC needs to decide (client name, dates, the proposed
+  type and its rationale) in the question or its option descriptions, not in a
+  message before it.
+
 Always:
 - Call `case_status` first and trust it over `.uapply/case.json` and over your
   memory of earlier turns.
@@ -40,36 +53,46 @@ Chat history (optional, `chat_*` tools):
   candidate from `chat_find_contact` before `chat_fetch`.
 - Show the intake hints and the suggested application type with its rationale.
   Never print message bodies, quotes, or chat ids into the conversation.
-- `create_case` charges the RCIC's account: propose name + application type,
-  then wait until the RCIC types "create case" (or 确认创建) before calling it.
+- `create_case` charges the RCIC's account. Propose the name and application
+  type in a question whose first option is exactly "Create case" (description:
+  name, type, "charges your account"), plus "Change the type" and "Use an
+  existing survey id". Call `create_case` with confirmation "create case" only
+  when the RCIC picked "Create case" or typed "create case" / 确认创建 —
+  never on your own inference.
 - Transcripts stay under `.uapply/chat/`; the case gets a PDF copy as an
   agent_survey document, filed automatically.
 
 ## prompt: run
 
-Run the uApply case in this folder end to end for Phase 1: check `case_status`.
-If the folder is not bound to a case (`NO_CASE`), stop and ask the RCIC one
-question with two options: (a) create a new case for this client, or (b) use an
-existing case — paste its survey id. For (a), propose the client name from the
-folder (and chat history, if the RCIC offers it), show the matching application
-types from `list_application_types`, and call `create_case` only after the RCIC
-has typed "create case" (or 确认创建). For (b), call `init_case` with the id. Do
-not upload anything before the folder is bound.
+Run the uApply case in this folder end to end for Phase 1, in one turn: ask
+with the question tool whenever you need the RCIC and keep going with the
+answer. Check `case_status`. If the folder is not bound to a case (`NO_CASE`),
+first `preview_document` the identity documents so you can propose the client
+name and application type, then ask one question: "Create a new case" (first
+option; description: proposed name and type, charges the account) or "Use an
+existing case" (the RCIC then pastes the survey id via the tool's free-text
+answer). For a new case, ask the create-case question from the instructions,
+showing close alternatives from `list_application_types` as options when the
+type is uncertain; call `create_case` only on "Create case". For an existing
+case, call `init_case` with the id. Do not upload anything before the folder
+is bound.
 Scan the folder; for each unmanifested file whose type is not obvious from its
 name, `preview_document` it and pick the type from `list_document_types`; filled
-IMM forms go under Agent Survey; ask the RCIC only when the pages do not settle it. Upload with `sync_documents`, then —
+IMM forms go under Agent Survey; ask the RCIC only when the pages do not
+settle it, all unclear files in one question call. Upload with `sync_documents`, then —
 unless `agent_api` is false — loop `run_tasks` / `wait_for_stage("processing")`
 until processing is done. Finish with a short summary: documents by status, tasks
 accepted, anything waiting on the RCIC.
 
 ## prompt: intake-from-chat
 
-Set up a case from the RCIC's chat history with a client. Ask which contact if
-not given; `chat_sources` → `chat_find_contact` → `chat_fetch`. Present the
+Set up a case from the RCIC's chat history with a client, in one turn, asking
+with the question tool and continuing. Ask which contact if not given; `chat_sources` → `chat_find_contact` → `chat_fetch`. Present the
 intake hints (identity, family, key facts, open questions) and the suggested
 application type from `list_application_types` with the rationale. Propose the
-case name (given + family name, native name in brackets). Wait for the RCIC to
-type "create case" (or 确认创建), then `create_case`; the transcript upload
+case name (given + family name, native name in brackets). Ask the create-case
+question from the instructions and call `create_case` only on "Create case"
+(or a typed "create case" / 确认创建); the transcript upload
 completes automatically and starts processing. Then loop `run_tasks` →
 `wait_for_stage("processing")` until done, and finish with `case_status`.
 

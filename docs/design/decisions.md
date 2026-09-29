@@ -200,7 +200,11 @@ documents — need no model at all for OCR.
 **Decision.** `uapply-agent` can read the RCIC's WeChat (and other local chat)
 history through the AnyChat CLI, derive intake hints with one local headless
 call, and always file the transcript on the case as an `agent_survey` text PDF.
-The agent may create the survey after the RCIC types "create case" in chat.
+The agent may create the survey after the RCIC confirms in chat: by picking
+"Create case" in the runtime's question tool (`AskUserQuestion` in Claude Code;
+the RCIC clicks it, the model cannot answer it), or by typing "create case" /
+确认创建. Updated 2026-09-29: the question tool replaced the typed-only rule so a
+run does not stop and wait for a new message.
 
 **Alternatives.**
 - *Reimplement WeChat extraction.* Rejected: AnyChat already does it, is the

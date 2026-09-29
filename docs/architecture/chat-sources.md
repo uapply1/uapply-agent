@@ -63,7 +63,8 @@ system prompt is `chat/prompts/intake.md`. Transcripts longer than
   counts, paths and the redacted hints (`store.redact` strips `wxid_…` and
   `…@chatroom`).
 - `create_case` is refused unless `confirmation` is exactly "create case" or
-  "确认创建". This is consent through the model, a deliberate exception to D10
+  "确认创建", which the model passes only after the RCIC picked "Create case" in
+  the question tool or typed those words. This is consent through the model, a deliberate exception to D10
   chosen by the product owner; the approval-page path replaces it when the
   dashboard approvals exist.
 - `.uapply/chat/` holds the transcript, the PDF and the hints; `uapply-agent
