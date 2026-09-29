@@ -270,3 +270,26 @@ def test_start_analysis_waits_for_processing_then_starts(bound):
     bound.docs[0]["status"] = "completed"
     r = m.start_analysis()
     assert r["ok"] and started == ["s-1"] and r["progress"]["analysis"] == "none"
+
+
+
+def test_photos_never_block_analysis_or_progress(bound, monkeypatch):
+    """A Digital Photo is stored, never processed: it stays 'uploaded' and must not hold analysis back."""
+    types = [{"id": "dt-pass", "name": "Passport", "file_name": "current_prev_passports", "category": "identity",
+              "can_process": True},
+             {"id": "dt-photo", "name": "Digital Photo", "file_name": "digital_photo", "category": "identity",
+              "can_process": False}]
+    orig = bound.survey
+    monkeypatch.setattr(bound, "survey", lambda sid: {**orig(sid), "document_types": types})
+    bound.docs = [{"id": "p", "file_name": "passport.pdf", "status": "completed", "old_doc_id": None,
+                   "document_type_id": "dt-pass"},
+                  {"id": "ph", "file_name": "photo.jpg", "status": "uploaded", "old_doc_id": None,
+                   "document_type_id": "dt-photo"}]
+    started = []
+    bound.start_analysis = lambda sid: started.append(sid) or {"message": "ok"}
+    r = m.start_analysis()
+    assert r["ok"] and started == ["s-1"]
+    p = r["progress"]
+    assert p["documents_total"] == 1 and p["documents_finished"] == 1 and p["not_processed"] == ["photo.jpg"]
+    out = m.start_processing()
+    assert out["started"] == []            # the photo is not sent for processing

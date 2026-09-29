@@ -328,14 +328,17 @@ def list_documents() -> dict:
 
 @server.tool()
 def start_processing(document_ids: Optional[list[str]] = None) -> dict:
-    """(Re)start processing for documents. Uploads already start processing; use this to retry failed ones."""
+    """Start processing the uploaded documents (uploads never start it for agent cases), or retry failed ones."""
     if e := _need_case():
         return e
 
     def go():
-        # Only top-level documents: pages of a split PDF mirror their parent (D12).
-        ids = document_ids or [d["id"] for d in api().documents(_folder.survey_id)
-                               if d.get("status") in ("uploaded", "failed", "stopped") and not d.get("old_doc_id")]
+        survey = api().survey(_folder.survey_id)
+        skip = _unprocessable_types(survey)
+        # Only top-level documents of processable types: pages of a split PDF mirror their parent (D12).
+        ids = document_ids or [d["id"] for d in (survey.get("documents") or [])
+                               if d.get("status") in ("uploaded", "failed", "stopped") and not d.get("old_doc_id")
+                               and str(d.get("document_type_id")) not in skip]
         out = []
         for did in ids:
             try:
@@ -347,10 +350,19 @@ def start_processing(document_ids: Optional[list[str]] = None) -> dict:
     return _wrap(go)
 
 
+def _unprocessable_types(survey: dict) -> set:
+    """Document types the pipeline never processes (e.g. Digital Photo): their files stay 'uploaded'."""
+    return {str(t.get("id")) for t in (survey.get("document_types") or []) if t.get("can_process") is False}
+
+
 def _progress() -> dict:
-    """Per-document progress of the case (top-level documents only; pages mirror their parent)."""
+    """Per-document progress of the case (top-level documents only; pages mirror their parent).
+    Files of types that are never processed are listed apart, not counted as pending."""
     survey = api().survey(_folder.survey_id)
-    docs = [d for d in (survey.get("documents") or []) if not d.get("old_doc_id")]
+    skip = _unprocessable_types(survey)
+    top = [d for d in (survey.get("documents") or []) if not d.get("old_doc_id")]
+    kept_as_is = [d.get("file_name") for d in top if str(d.get("document_type_id")) in skip]
+    docs = [d for d in top if str(d.get("document_type_id")) not in skip]
     by_status: dict[str, int] = {}
     for d in docs:
         by_status[d.get("status") or "?"] = by_status.get(d.get("status") or "?", 0) + 1
@@ -363,6 +375,7 @@ def _progress() -> dict:
         "failed": [{"file_name": d.get("file_name"), "error": (d.get("error") or "")[:160]}
                    for d in docs if d.get("status") == "failed"][:10],
         "analysis": survey.get("analyzing_status") or "none",
+        "not_processed": kept_as_is[:10],   # stored only (e.g. photos): never block analysis
     }
 
 

@@ -255,6 +255,13 @@ classification keep their prepare/continue path.
 **Alternatives.** Per-call-site hand-offs: no new worker, but analysis (threads, tiers, nested
 reformat calls) would need restructuring, and any missed path silently uses Gemini.
 
+**Review fixes (same day).** A dependant counts as local when its principal is (dashboard-created
+dependants default to server mode), and a pull also serves dependants added after the folder was
+bound. Stored images are deleted and prompts/answers cleared as soon as a call ends (sweep as a
+safety net). Once no agent picks up a call, the rest of the job fails at once instead of waiting
+again through each provider "fallback"; a repeated identical request is sent as a retry with the
+reason. Files of never-processed types (photos) do not block progress or analysis.
+
 **Consequences.** A case only progresses while the agent runs (`run_tasks`); a call nobody picks up
 fails after 10 min (`AGENT_IDLE_TIMEOUT_S`). Dashboard saves on a local case need an active agent
 (409 `AGENT_REQUIRED` otherwise). The `agent_queue` worker must be deployed.
