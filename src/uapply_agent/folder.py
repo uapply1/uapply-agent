@@ -8,12 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
 
+from .constants import IMAGE_EXTENSIONS, UPLOADABLE_EXTENSIONS
 from .util import now_iso, read_json, sha256_of, write_text_atomic
 
 logger = logging.getLogger(__name__)
 
 STATE_DIR = ".uapply"
-SUPPORTED = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".heif", ".docx", ".doc", ".xlsx", ".xls"}
 IGNORED_PREFIXES = (".", "~$")
 
 
@@ -35,7 +35,7 @@ def kind_of(path: Path) -> str:
     ext = path.suffix.lower()
     if ext == ".pdf":
         return "pdf"
-    if ext in (".jpg", ".jpeg", ".png", ".heic", ".heif"):
+    if ext in IMAGE_EXTENSIONS:
         return "image"
     return "office"
 
@@ -50,29 +50,33 @@ class WorkingFolder:
 
     # ---- state files ----
 
-    def _read(self, name: str, default):
+    def read_state(self, name: str, default):
+        """A JSON state file under .uapply/ (e.g. case.json, autofill.json)."""
         return read_json(self.state / name, default)
 
-    def _write(self, name: str, data) -> None:
+    def write_state(self, name: str, data) -> None:
         self.state.mkdir(parents=True, exist_ok=True)
         gi = self.state / ".gitignore"
         if not gi.exists():
             gi.write_text("*\n", encoding="utf-8")
         write_text_atomic(self.state / name, json.dumps(data, indent=2, ensure_ascii=False))
 
+    def remove_state(self, name: str) -> None:
+        (self.state / name).unlink(missing_ok=True)
+
     @property
     def case(self) -> dict:
-        return self._read("case.json", {})
+        return self.read_state("case.json", {})
 
     def save_case(self, case: dict) -> None:
-        self._write("case.json", case)
+        self.write_state("case.json", case)
 
     @property
     def manifest(self) -> dict:
-        return self._read("manifest.json", {"schema": 1, "files": {}})
+        return self.read_state("manifest.json", {"schema": 1, "files": {}})
 
     def save_manifest(self, manifest: dict) -> None:
-        self._write("manifest.json", manifest)
+        self.write_state("manifest.json", manifest)
 
     def init_case(self, survey_id: str, backend_url: str, llm_mode: str = "local_agent",
                   name: str = "", dependents: Optional[list] = None) -> dict:
@@ -103,7 +107,7 @@ class WorkingFolder:
                 if fn.startswith(IGNORED_PREFIXES) or fn.endswith(".tmp"):
                     continue
                 p = Path(dirpath) / fn
-                if p.suffix.lower() in SUPPORTED:
+                if p.suffix.lower() in UPLOADABLE_EXTENSIONS:
                     yield p
 
     def applicant_hint(self, rel: Path) -> Optional[str]:

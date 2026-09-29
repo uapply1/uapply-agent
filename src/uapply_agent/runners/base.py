@@ -84,15 +84,18 @@ class Runner:
         raise NotImplementedError
 
     @staticmethod
-    def _exec(cmd: list[str], cwd: Path, timeout_s: int, stdin: Optional[str] = None) -> subprocess.CompletedProcess:
+    def _exec(cmd: list[str], cwd: Path, timeout_s: int, stdin: Optional[str] = None,
+              env: Optional[dict] = None) -> subprocess.CompletedProcess:
+        """Run the CLI. `stdin` is sent on a pipe of our own: never inherit the MCP server's stdin,
+        which is the protocol channel."""
+        feed = {"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}
         try:
-            feed = {"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}
             return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, encoding="utf-8",
-                                  errors="replace", timeout=timeout_s, **feed)
+                                  errors="replace", timeout=timeout_s, env=env, check=False, **feed)
         except FileNotFoundError as e:
-            raise RunnerError(f"{cmd[0]} not found: {e}")
-        except subprocess.TimeoutExpired:
-            raise RunnerError(f"{cmd[0]} timed out after {timeout_s}s")
+            raise RunnerError(f"{cmd[0]} not found: {e}") from e
+        except subprocess.TimeoutExpired as e:
+            raise RunnerError(f"{Path(cmd[0]).name} timed out after {timeout_s}s") from e
 
     @staticmethod
     def _raise_if_limited(text: str) -> None:

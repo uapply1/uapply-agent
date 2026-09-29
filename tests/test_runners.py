@@ -27,13 +27,13 @@ def test_claude_runner_parses_structured_output(monkeypatch, tmp_path):
                 "usage": {"input_tokens": 500, "output_tokens": 12}, "modelUsage": {"claude-fable-5-1": {}}}
     seen = {}
 
-    def fake_exec(self, cmd, cwd, timeout_s, env, prompt):
+    def fake_exec(cmd, cwd, timeout_s, stdin=None, env=None):
         seen["cmd"] = cmd
         seen["env"] = env
-        seen["prompt"] = prompt
+        seen["prompt"] = stdin
         return _completed(stdout=json.dumps(envelope))
 
-    monkeypatch.setattr(ClaudeCodeRunner, "_exec_env", fake_exec)
+    monkeypatch.setattr(ClaudeCodeRunner, "_exec", staticmethod(fake_exec))
     img = tmp_path / "page.jpg"
     img.write_bytes(b"x")
     rr = ClaudeCodeRunner(model="haiku").run(system_prompt="SYS", user_prompt="classify",
@@ -57,20 +57,20 @@ def test_claude_runner_parses_structured_output(monkeypatch, tmp_path):
 
 def test_claude_runner_falls_back_to_result_text(monkeypatch, tmp_path):
     envelope = {"is_error": False, "result": "```json\n{\"file_types\": [\"Visa\"]}\n```", "usage": {}}
-    monkeypatch.setattr(ClaudeCodeRunner, "_exec_env", lambda self, c, cwd, t, env, prompt: _completed(stdout=json.dumps(envelope)))
+    monkeypatch.setattr(ClaudeCodeRunner, "_exec", lambda *a, **k: _completed(stdout=json.dumps(envelope)))
     rr = ClaudeCodeRunner().run(system_prompt="s", user_prompt="u", schema={}, images=[], cwd=tmp_path)
     assert rr.output == {"file_types": ["Visa"]}
 
 
 def test_claude_runner_detects_plan_limit(monkeypatch, tmp_path):
     envelope = {"is_error": True, "result": "You've hit your usage limit. Try again at 3pm."}
-    monkeypatch.setattr(ClaudeCodeRunner, "_exec_env", lambda self, c, cwd, t, env, prompt: _completed(stdout=json.dumps(envelope)))
+    monkeypatch.setattr(ClaudeCodeRunner, "_exec", lambda *a, **k: _completed(stdout=json.dumps(envelope)))
     with pytest.raises(PlanLimited):
         ClaudeCodeRunner().run(system_prompt="s", user_prompt="u", schema={}, images=[], cwd=tmp_path)
 
 
 def test_claude_runner_reports_other_errors(monkeypatch, tmp_path):
-    monkeypatch.setattr(ClaudeCodeRunner, "_exec_env", lambda self, c, cwd, t, env, prompt: _completed(stderr="boom", code=1))
+    monkeypatch.setattr(ClaudeCodeRunner, "_exec", lambda *a, **k: _completed(stderr="boom", code=1))
     with pytest.raises(RunnerError):
         ClaudeCodeRunner().run(system_prompt="s", user_prompt="u", schema={}, images=[], cwd=tmp_path)
 
@@ -78,7 +78,8 @@ def test_claude_runner_reports_other_errors(monkeypatch, tmp_path):
 def test_playbook_sections_load():
     assert "case_status" in playbook.instructions()
     assert playbook.prompt("run") and playbook.prompt("status")
-    assert playbook.prompt("missing") == ""
+    with pytest.raises(KeyError):
+        playbook.prompt("missing")
 
 
 def test_resolve_binary_order(tmp_path, monkeypatch):
@@ -96,13 +97,13 @@ def test_resolve_binary_order(tmp_path, monkeypatch):
 
 def test_get_runner_uses_resolved_path_and_explains_when_missing(tmp_path, monkeypatch):
     from uapply_agent import runners as r
-    monkeypatch.setattr(r, "detect_runtimes", lambda: [{"name": "claude-code", "path": "/opt/claude"}])
+    monkeypatch.setattr(r, "detect_runtimes", lambda settings=None: [{"name": "claude-code", "path": "/opt/claude"}])
     assert r.get_runner("auto").binary == "/opt/claude"
-    monkeypatch.setattr(r, "detect_runtimes", lambda: [{"name": "claude-code", "path": "/opt/claude",
+    monkeypatch.setattr(r, "detect_runtimes", lambda settings=None: [{"name": "claude-code", "path": "/opt/claude",
                                                         "error": "This version is not compatible with the version of Windows"}])
     with pytest.raises(r.RunnerError, match="does not start on this machine"):
         r.get_runner("auto")
-    monkeypatch.setattr(r, "detect_runtimes", lambda: [])
+    monkeypatch.setattr(r, "detect_runtimes", lambda settings=None: [])
     with pytest.raises(r.RunnerError, match="uapply-agent setup"):
         r.get_runner("auto")
 
@@ -135,7 +136,7 @@ def test_claude_prompts_starting_with_a_dash_are_not_options(tmp_path, monkeypat
 def test_not_signed_in_stops_as_runtime_unavailable(tmp_path, monkeypatch):
     from uapply_agent.runners import RuntimeUnavailable
     envelope = {"type": "result", "is_error": True, "result": "Not logged in · Please run /login", "usage": {}}
-    monkeypatch.setattr(ClaudeCodeRunner, "_exec_env", lambda self, cmd, cwd, t, env, prompt: _completed(stdout=json.dumps(envelope)))
+    monkeypatch.setattr(ClaudeCodeRunner, "_exec", lambda *a, **k: _completed(stdout=json.dumps(envelope)))
     with pytest.raises(RuntimeUnavailable, match="claude auth login"):
         ClaudeCodeRunner().run(system_prompt="s", user_prompt="u", schema={}, images=[], cwd=tmp_path)
 
@@ -145,10 +146,10 @@ def test_schema_drops_2020_12_meta_schema_for_claude(monkeypatch, tmp_path):
     seen = {}
     envelope = {"type": "result", "is_error": False, "structured_output": {"a": 1}, "result": "{}", "usage": {}}
 
-    def fake_exec(self, cmd, cwd, timeout_s, env, prompt):
+    def fake_exec(cmd, cwd, timeout_s, stdin=None, env=None):
         seen["schema"] = json.loads(cmd[cmd.index("--json-schema") + 1])
         return _completed(stdout=json.dumps(envelope))
-    monkeypatch.setattr(ClaudeCodeRunner, "_exec_env", fake_exec)
+    monkeypatch.setattr(ClaudeCodeRunner, "_exec", staticmethod(fake_exec))
     schema = {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
               "properties": {"langs": {"type": "array", "items": {"$ref": "#/$defs/L"}}}, "$defs": {"L": {"type": "string"}}}
     ClaudeCodeRunner().run(system_prompt="s", user_prompt="u", schema=schema, images=[], cwd=tmp_path)

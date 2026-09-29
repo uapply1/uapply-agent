@@ -13,16 +13,24 @@ from typing import Optional
 
 from .api import ApiError, UApplyApi
 from .folder import WorkingFolder
+from .constants import IMAGE_EXTENSIONS
 from .local_ops import pdf_page_count, pdf_pages_text, render_pdf_pages, to_image_for_model
-from .runners import PlanLimited, Runner, RunnerError, RuntimeUnavailable, get_runner
+from .runners import PlanLimited, Runner, RunnerError, RuntimeUnavailable
 
 logger = logging.getLogger(__name__)
 
-IMAGE_EXT = (".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp")
-
-
 PROMPT_INLINE_MAX = 6000   # characters; longer prompts are passed as files
 CLASSIFY_PAGES = 3         # a PDF's first pages are enough to classify it
+ATTEMPTS_PER_TASK = 2      # model answers per task and run, the second with the rejection as feedback
+OCR_SECONDS_PER_PAGE = 30  # extra time budget per page for chunked OCR calls
+MAX_WORKERS = 4
+FINAL_TASK_STATUSES = ("failed", "cancelled", "expired")
+
+
+@dataclass
+class SubmitOutcome:
+    done: bool                 # accepted, or the server closed the task: stop working on it
+    retry_note: str = ""       # feedback for the next attempt when the server rejected the answer
 
 
 @dataclass
@@ -69,14 +77,14 @@ def _merge_usage(total: dict, part: dict) -> dict:
 
 
 class Executor:
-    def __init__(self, api: UApplyApi, folder: WorkingFolder, runner: Optional[Runner] = None,
-                 runtime: str = "auto", model: str = "", session_id: Optional[str] = None,
-                 force_ocr: bool = False):
+    def __init__(self, api: UApplyApi, folder: WorkingFolder, runner: Runner, *, force_ocr: bool = False,
+                 timeout_s: int = 300, session_id: Optional[str] = None):
         self.api = api
         self.folder = folder
-        self.runner = runner or get_runner(runtime, model)
-        self.session_id = session_id or f"{self.runner.name}-{uuid.uuid4().hex[:8]}"
+        self.runner = runner
         self.force_ocr = force_ocr
+        self.timeout_s = timeout_s
+        self.session_id = session_id or f"{runner.name}-{uuid.uuid4().hex[:8]}"
 
     # ---- inputs ----
 
@@ -139,19 +147,20 @@ class Executor:
         system_prompt, user_prompt, text_files = self._prompt_files(task, cwd, payload.get("system_prompt", ""),
                                                                     user_prompt)
         note = ""
-        for attempt in range(2):
-            rr = self.runner.run(system_prompt=system_prompt, user_prompt=user_prompt + note,
-                                 schema=schema, images=images, cwd=cwd, text_files=text_files)
-            stats.bump('model_calls')
+        for _ in range(ATTEMPTS_PER_TASK):
+            rr = self.runner.run(system_prompt=system_prompt, user_prompt=user_prompt + note, schema=schema,
+                                 images=images, cwd=cwd, text_files=text_files, timeout_s=self.timeout_s)
+            stats.bump("model_calls")
             local_err = _schema_check(schema, rr.output)
             if local_err:
                 note = f"\n\nYour previous answer was invalid ({local_err}). Return JSON matching the schema exactly."
                 continue
-            if self._submit(task, rr.output, rr.model, rr.usage, stats, note_out := []):
+            outcome = self._submit(task, rr.output, rr.model, rr.usage, stats)
+            if outcome.done:
                 return
-            note = note_out[0]
+            note = outcome.retry_note
         self.api.release_task(task["id"], "executor: could not produce a valid result in this run")
-        stats.bump('released')
+        stats.bump("released")
 
     # ---- extract_content: OCR the whole document once ----
 
@@ -167,17 +176,17 @@ class Executor:
             if text_pages is not None:
                 # Text layer present and sane: no model call at all.
                 pages = [{"n": i, "text": t} for i, t in enumerate(text_pages, start=1)]
-                logger.info(f"task {task['id']}: {len(pages)} pages from text layer, no model call")
-                stats.bump('text_layer_docs')
-                self._submit(task, {"pages": pages}, "pdfplumber", {}, stats, [], runtime="local")
+                logger.info("task %s: %d pages from the text layer, no model call", task["id"], len(pages))
+                stats.bump("text_layer_docs")
+                self._submit(task, {"pages": pages}, "pdfplumber", {}, stats, runtime="local")
                 return
             pages, usage, model = self._ocr_pdf(src, payload, schema, cwd, stats)
-        elif ext in IMAGE_EXT:
+        elif ext in IMAGE_EXTENSIONS:
             img = to_image_for_model(src, cwd)
-            rr = self.runner.run(system_prompt=payload["system_prompt"],
-                                 user_prompt=payload["user_prompt"] + "\n\nThis is a single-page document: return pages=[{n: 1, text}].",
-                                 schema=schema, images=[img], cwd=cwd)
-            stats.bump('model_calls')
+            prompt = payload["user_prompt"] + "\n\nThis is a single-page document: return pages=[{n: 1, text}]."
+            rr = self.runner.run(system_prompt=payload["system_prompt"], user_prompt=prompt, schema=schema,
+                                 images=[img], cwd=cwd, timeout_s=self.timeout_s)
+            stats.bump("model_calls")
             pages = [{"n": 1, "text": (rr.output.get("pages") or [{}])[0].get("text", "")}]
             usage, model = rr.usage, rr.model
         else:
@@ -185,9 +194,9 @@ class Executor:
 
         if not pages:
             raise RunnerError("extract_content: the runtime returned no pages")
-        if not self._submit(task, {"pages": pages}, model, usage, stats, []):
+        if not self._submit(task, {"pages": pages}, model, usage, stats).done:
             self.api.release_task(task["id"], "executor: OCR result rejected")
-            stats.bump('released')
+            stats.bump("released")
 
     def _ocr_pdf(self, src: Path, payload: dict, schema: dict, cwd: Path, stats: RunStats):
         """Chunk a scanned PDF by the runtime's page budget; one headless call per chunk."""
@@ -207,7 +216,7 @@ class Executor:
         missing = [k for k in range(1, n + 1) if k not in seen]
         if missing:
             # One retry, page by page, for whatever the chunked pass skipped.
-            logger.warning(f"OCR missed pages {missing[:10]}; retrying them individually")
+            logger.warning("OCR missed pages %s; retrying them individually", missing[:10])
             for k in missing:
                 got, u, m = self._ocr_range(src, payload, schema, cwd, stats, k, k)
                 usage = _merge_usage(usage, u)
@@ -225,10 +234,12 @@ class Executor:
         images = render_pdf_pages(src, cwd, first, last)
         prompt = (f"{payload['user_prompt']}\n\nThe images are pages {first} to {last} of the document, in order. "
                   f"Return exactly {last - first + 1} entries, numbered n={first} to n={last}.")
-        rr = self.runner.run(system_prompt=payload["system_prompt"], user_prompt=prompt,
-                             schema=schema, images=images, cwd=cwd)
-        stats.bump('model_calls')
+        timeout = max(self.timeout_s, OCR_SECONDS_PER_PAGE * (last - first + 1))
+        rr = self.runner.run(system_prompt=payload["system_prompt"], user_prompt=prompt, schema=schema,
+                             images=images, cwd=cwd, timeout_s=timeout)
+        stats.bump("model_calls")
         got = [p for p in (rr.output.get("pages") or []) if isinstance(p, dict)]
+        # Some models number a chunk's pages from 1; shift them to the document's numbering.
         if got and all(1 <= int(p.get("n", 0)) <= (last - first + 1) for p in got) and first != 1:
             for p in got:
                 p["n"] = int(p["n"]) + first - 1
@@ -237,20 +248,20 @@ class Executor:
     # ---- submit ----
 
     def _submit(self, task: dict, output: dict, model: str, usage: dict, stats: RunStats,
-                note_out: list, runtime: Optional[str] = None) -> bool:
+                runtime: Optional[str] = None) -> SubmitOutcome:
         out = self.api.submit_result(task["id"], output, model, runtime or self.runner.name, usage, self.session_id)
         if out.get("accepted"):
-            stats.bump('accepted')
-            logger.info(f"task {task['id']} ({task['kind']}) accepted: {json.dumps(output)[:120]}")
-            return True
+            stats.bump("accepted")
+            logger.info("task %s (%s) accepted: %s", task["id"], task["kind"], json.dumps(output)[:120])
+            return SubmitOutcome(done=True)
         rej = out.get("rejection") or {}
-        stats.bump('rejected')
-        if out.get("task_status") in ("failed", "cancelled", "expired"):
-            stats.note_failure({"task_id": task["id"], "kind": task["kind"], "reason": rej.get("message", out.get("task_status"))})
-            note_out.append("")
-            return True  # nothing more to do for this task
-        note_out.append(f"\n\nYour previous answer was rejected: {rej.get('code')}: {rej.get('message')}. Fix it and return JSON only.")
-        return False
+        stats.bump("rejected")
+        if out.get("task_status") in FINAL_TASK_STATUSES:
+            stats.note_failure({"task_id": task["id"], "kind": task["kind"],
+                                "reason": rej.get("message", out.get("task_status"))})
+            return SubmitOutcome(done=True)
+        return SubmitOutcome(done=False, retry_note=f"\n\nYour previous answer was rejected: {rej.get('code')}: "
+                                                    f"{rej.get('message')}. Fix it and return JSON only.")
 
     # ---- one task ----
 
@@ -263,12 +274,12 @@ class Executor:
         except PlanLimited as e:
             stats.plan_limited = True
             self._release_quietly(task, f"plan limit: {e}")
-            stats.bump('released')
+            stats.bump("released")
             raise
         except RuntimeUnavailable as e:
             stats.runtime_error = str(e)
             self._release_quietly(task, f"runtime unavailable: {e}")
-            stats.bump('released')
+            stats.bump("released")
             raise
         except (RunnerError, ApiError, OSError, ValueError) as e:
             self._fail(task, stats, str(e))
@@ -286,7 +297,7 @@ class Executor:
         try:
             self.api.release_task(task["id"], reason)
         except Exception as e:
-            logger.warning(f"release {task['id']} failed: {e}")
+            logger.warning("releasing task %s failed: %s", task["id"], e)
 
     # ---- the loop ----
 
@@ -300,7 +311,7 @@ class Executor:
         if not survey_ids:
             raise RunnerError("folder has no case; run `uapply-agent init --survey <id>` first")
         done = 0
-        workers = max(1, min(int(workers or 1), 4))
+        workers = max(1, min(int(workers or 1), MAX_WORKERS))
         if deadline:
             batch = workers  # one round per worker slot keeps each check-in short
         while max_tasks is None or done < max_tasks:
@@ -323,6 +334,6 @@ class Executor:
         try:
             st = self.api.task_stats(survey_ids[0])
             stats.remaining = int(st.get("queued", 0)) + int(st.get("leased", 0))
-        except Exception:
-            pass
+        except ApiError:
+            logger.debug("task stats unavailable", exc_info=True)
         return stats

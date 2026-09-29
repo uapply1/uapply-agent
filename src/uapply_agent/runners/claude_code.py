@@ -6,11 +6,12 @@ runs with the cache directory as cwd so those reads need no permission prompt.
 from __future__ import annotations
 
 import json
-import re
 import os
-from pathlib import Path
+import re
+import subprocess
+from typing import Optional
 
-from .base import Runner, RunnerError, RunResult, extract_json, inline_schema_refs, RuntimeUnavailable
+from .base import Runner, RunnerError, RunResult, RuntimeUnavailable, extract_json, inline_schema_refs
 
 
 NOT_SIGNED_IN = re.compile(r"not logged in|please run /login|invalid api key|oauth token (has )?expired", re.I)
@@ -54,7 +55,7 @@ class ClaudeCodeRunner(Runner):
         env.update({"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
                     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_AUTOUPDATER": "1",
                     "UAPPLY_NO_UPDATE": "1"})
-        proc = self._exec_env(cmd, cwd, timeout_s, env, prompt)
+        proc = self._exec(cmd, cwd, timeout_s, stdin=prompt, env=env)
         raw = proc.stdout.strip()
         if proc.returncode != 0 and not raw:
             self._raise_if_limited(proc.stderr)
@@ -82,17 +83,6 @@ class ClaudeCodeRunner(Runner):
                                 "cost_usd": data.get("total_cost_usd")},
                          raw=raw)
 
-    def _exec_env(self, cmd, cwd, timeout_s, env, prompt):
-        import subprocess
-        try:
-            # Our own stdin pipe carries only the prompt: inherited, it would be the MCP server's protocol pipe.
-            return subprocess.run(cmd, cwd=str(cwd), input=prompt, capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace", timeout=timeout_s, env=env)
-        except FileNotFoundError as e:
-            raise RunnerError(f"claude not found: {e}")
-        except subprocess.TimeoutExpired:
-            raise RunnerError(f"claude timed out after {timeout_s}s")
-
 
 def _main_model(model_usage: dict) -> str:
     """The model that produced the answer: Claude Code also reports helper models (e.g. a small
@@ -100,3 +90,13 @@ def _main_model(model_usage: dict) -> str:
     if not model_usage:
         return ""
     return max(model_usage, key=lambda m: (model_usage[m] or {}).get("outputTokens", 0))
+
+
+def claude_logged_in(claude: str) -> Optional[bool]:
+    """`claude auth status --json` → loggedIn; None when the CLI cannot tell."""
+    try:
+        r = subprocess.run([claude, "auth", "status", "--json"], stdin=subprocess.DEVNULL, capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=30, check=False)
+        return bool(json.loads(r.stdout or "{}").get("loggedIn"))
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None

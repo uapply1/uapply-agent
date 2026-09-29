@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 PD_SAVE_FULL = 1
 
 
+class AcrobatError(RuntimeError):
+    """Acrobat could not open, automate or save a form."""
+
+
 # ---- detection ----
 
 def _registry_has_acrobat() -> Optional[str]:
@@ -98,13 +102,13 @@ class AcrobatDoc:
         self.app = self._dispatch("AcroExch.App")
         self.pd = self._dispatch("AcroExch.PDDoc")
         if not self.pd.Open(str(self.path)):
-            raise RuntimeError(f"Acrobat could not open {self.path.name}")
+            raise AcrobatError(f"Acrobat could not open {self.path.name}")
         self.jso = self.pd.GetJSObject()
         return self
 
     def save(self, out: Path) -> None:
         if not self.pd.Save(PD_SAVE_FULL, str(out)):
-            raise RuntimeError(f"Acrobat could not save {out.name}")
+            raise AcrobatError(f"Acrobat could not save {out.name}")
 
     def __exit__(self, *exc) -> None:
         try:
@@ -196,7 +200,7 @@ def fill(template: Path, ops: list, out: Path, doc_factory: Callable = AcrobatDo
     errors = []
     with DialogClicker(), doc_factory(template) as doc:
         if doc.jso is None:
-            raise RuntimeError("Acrobat returned no JavaScript object (Reader, or Pro not licensed)")
+            raise AcrobatError("Acrobat returned no JavaScript object (Reader, or Pro not licensed)")
         xfa = doc.jso.xfa
         for n, op in enumerate(ops, start=1):
             if err := apply_op(xfa, op):

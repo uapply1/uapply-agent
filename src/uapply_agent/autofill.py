@@ -24,14 +24,14 @@ class AutoFiller:
         self.api, self.folder, self.detect, self.fill = api, folder, detect, fill
 
     def _state(self) -> dict:
-        s = self.folder._read(STATE, {})
+        s = self.folder.read_state(STATE, {})
         return s if s.get("survey_id") == self.folder.survey_id else {}
 
     def _save(self, s: dict) -> None:
-        self.folder._write(STATE, s)
+        self.folder.write_state(STATE, s)
 
     def _clear(self) -> None:
-        (self.folder.state / STATE).unlink(missing_ok=True)
+        self.folder.remove_state(STATE)
 
     def _to_platform(self, reason: str) -> dict:
         self.api.start_auto_filling(self.folder.survey_id)

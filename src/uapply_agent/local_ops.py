@@ -4,6 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+from .constants import HEIC_EXTENSIONS
+
 
 def render_pdf_page(pdf: Path, page: int, out_dir: Path, dpi: int = 150) -> Path:
     import pymupdf  # PyMuPDF
@@ -82,6 +84,6 @@ def to_image_for_model(path: Path, cache: Path) -> Path:
     ext = path.suffix.lower()
     if ext == ".pdf":
         return render_pdf_page(path, 1, cache)
-    if ext in (".heic", ".heif"):
+    if ext in HEIC_EXTENSIONS:
         return heic_to_jpeg(path, cache)
     return path

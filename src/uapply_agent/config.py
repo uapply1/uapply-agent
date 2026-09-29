@@ -5,11 +5,12 @@ import json
 import logging
 import os
 import stat
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
-from .util import write_text_atomic
+from .util import read_json, write_text_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +23,20 @@ def config_dir() -> Path:
     return Path(base) / APP
 
 
+ENV_OVERRIDES = {
+    "backend_url": "UAPPLY_BACKEND_URL", "app_url": "UAPPLY_APP_URL", "runtime": "UAPPLY_RUNTIME",
+    "model": "UAPPLY_MODEL", "team_id": "UAPPLY_TEAM_ID", "chat_source": "UAPPLY_CHAT_SOURCE",
+    "anychat_bin": "ANYCHAT_BIN", "claude_bin": "UAPPLY_CLAUDE_BIN", "codex_bin": "UAPPLY_CODEX_BIN",
+    "force_ocr": "UAPPLY_FORCE_OCR",
+}
+TRUE_WORDS = ("1", "true", "yes", "on")
+RETIRED_KEYS = {"extra"}   # written by older versions; ignored
+
+
 @dataclass
 class Settings:
-    # Production defaults: the same Auth0 native client the desktop app uses
-    # (Device Code + Refresh Token grants enabled). `config --set` switches tenants.
+    # Production defaults: the Auth0 native client of the uApply desktop app (Device Code and
+    # Refresh Token grants). `uapply-agent config --set` points the agent at another tenant.
     backend_url: str = "https://api.uapply.io"
     app_url: str = ""              # dashboard; empty = derived from backend_url (api.x → app.x)
     auth0_domain: str = "uapply-prod-tenant.us.auth0.com"
@@ -34,10 +45,11 @@ class Settings:
     runtime: str = "auto"          # auto | claude-code | codex
     model: str = ""                # runtime default when empty
     installed_sha: str = ""        # commit the installer put in ~/.local/bin (versions/<sha>/ carry their own)
-    auto_update: bool = True       # check GitHub main at `mcp` / `run` start and switch to the newest build
+    auto_update: bool = True       # at `mcp` / `run` start, switch to the newest build of main
     claude_bin: str = ""           # absolute paths recorded by `setup`; GUI apps run with a minimal PATH
     codex_bin: str = ""
     workers: int = 2
+    task_timeout_s: int = 300      # one headless model call; OCR chunks get more per page
     force_ocr: bool = False        # ignore PDF text layers and always OCR with the model
     team_id: str = ""              # team to create cases in (business accounts)
     chat_source: str = "anychat"   # anychat | none
@@ -45,28 +57,37 @@ class Settings:
     chat_default_days: int = 180
     chat_upload: bool = True       # file transcripts on the case (False: local hints only)
     chat_max_chars: int = 200_000  # transcript cap for the local intake call
-    extra: dict = field(default_factory=dict)
+
+    @classmethod
+    def keys(cls) -> list[str]:
+        return [f.name for f in fields(cls)]
+
+    def set(self, key: str, raw) -> None:
+        """Set a setting from JSON or a command-line string, converted to the setting's type."""
+        if key not in self.keys():
+            raise ValueError(f"unknown setting {key!r}")
+        current = getattr(self, key)
+        if isinstance(current, bool):
+            value = raw if isinstance(raw, bool) else str(raw).strip().lower() in TRUE_WORDS
+        elif isinstance(current, int):
+            value = int(raw)
+        else:
+            value = "" if raw is None else str(raw)
+        setattr(self, key, value)
 
     @classmethod
     def load(cls) -> "Settings":
         s = cls()
-        p = config_dir() / "config.json"
-        if p.exists():
-            data = json.loads(p.read_text(encoding="utf-8"))
-            for k, v in data.items():
-                if hasattr(s, k):
-                    setattr(s, k, v)
-        # Environment overrides make CI and tests easy.
-        for k, env in (("backend_url", "UAPPLY_BACKEND_URL"), ("app_url", "UAPPLY_APP_URL"), ("runtime", "UAPPLY_RUNTIME"),
-                       ("model", "UAPPLY_MODEL")):
+        for key, value in read_json(config_dir() / "config.json", {}).items():
+            if key in RETIRED_KEYS:
+                continue
+            try:
+                s.set(key, value)
+            except ValueError as e:
+                logger.warning("config.json: ignoring %s (%s)", key, e)
+        for key, env in ENV_OVERRIDES.items():
             if os.environ.get(env):
-                setattr(s, k, os.environ[env])
-        for k, env in (("team_id", "UAPPLY_TEAM_ID"), ("anychat_bin", "ANYCHAT_BIN"), ("chat_source", "UAPPLY_CHAT_SOURCE"),
-                       ("claude_bin", "UAPPLY_CLAUDE_BIN"), ("codex_bin", "UAPPLY_CODEX_BIN")):
-            if os.environ.get(env):
-                setattr(s, k, os.environ[env])
-        if os.environ.get("UAPPLY_FORCE_OCR"):
-            s.force_ocr = os.environ["UAPPLY_FORCE_OCR"].lower() in ("1", "true", "yes")
+                s.set(key, os.environ[env])
         s.backend_url = s.backend_url.rstrip("/")
         return s
 
@@ -74,7 +95,6 @@ class Settings:
     def dashboard_url(self) -> str:
         if self.app_url:
             return self.app_url.rstrip("/")
-        from urllib.parse import urlsplit
         u = urlsplit(self.backend_url)
         host = u.hostname or ""
         if host in ("localhost", "127.0.0.1"):
@@ -84,9 +104,7 @@ class Settings:
         return f"{u.scheme}://{host}"
 
     def save(self) -> None:
-        d = config_dir()
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "config.json").write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        write_text_atomic(config_dir() / "config.json", json.dumps(asdict(self), indent=2))
 
 
 class Credentials:

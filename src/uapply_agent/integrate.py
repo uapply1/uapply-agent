@@ -11,9 +11,15 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Optional
 
+from .runners.claude_code import claude_logged_in
 from .util import write_text_atomic
 
 SERVER = "uapply"
+
+
+class SetupError(RuntimeError):
+    """Setup cannot continue; the message says what the RCIC should fix."""
+
 PLUGIN_DIR = Path(".claude") / "skills" / "uapply"   # auto-loaded by Claude Code as uapply@skills-dir
 
 
@@ -31,7 +37,7 @@ def own_executable() -> str:
     found = shutil.which("uapply-agent")
     if found:
         return str(Path(found).absolute())
-    raise RuntimeError("cannot locate the uapply-agent executable; run `uapply-agent setup` from the installed command")
+    raise SetupError("cannot locate the uapply-agent executable; run `uapply-agent setup` from the installed command")
 
 
 def _run(cmd: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
@@ -49,7 +55,7 @@ def write_claude_json(exe: str, path: Path) -> None:
     try:
         data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     except json.JSONDecodeError as e:
-        raise RuntimeError(f"{path} is not valid JSON ({e}); fix or remove it, then run setup again") from e
+        raise SetupError(f"{path} is not valid JSON ({e}); fix or remove it, then run setup again") from e
     data.setdefault("mcpServers", {})[SERVER] = _claude_json_entry(exe)
     write_text_atomic(path, json.dumps(data, indent=2))
 
@@ -90,15 +96,6 @@ def install_claude_plugin(home: Path) -> str:
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(content, encoding="utf-8")
     return f"commands written to {root}"
-
-
-def claude_logged_in(claude: str) -> Optional[bool]:
-    """`claude auth status --json` → loggedIn; None when the CLI cannot tell us."""
-    try:
-        r = _run([claude, "auth", "status", "--json"], timeout=30)
-        return bool(json.loads(r.stdout or "{}").get("loggedIn"))
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        return None
 
 
 def ensure_claude_login(claude: str, say: Callable[[str], None] = print, interactive: bool = True) -> Optional[bool]:
@@ -156,13 +153,13 @@ def register_codex(exe: str, home: Path, which: Callable[[str], Optional[str]] =
 def record_runtimes(settings, which: Callable[[str], Optional[str]] = _find) -> dict:
     """Remember where `claude` / `codex` are: the terminal running setup has the full PATH, the
     desktop app that later launches the MCP server usually does not."""
-    from .runners import _known_locations, runtime_error
+    from .runners import known_locations, runtime_error
     found = {}
     for attr, binary in (("claude_bin", "claude"), ("codex_bin", "codex")):
         path = which(binary)
         if path and runtime_error(path):
             # e.g. an npm build Windows refuses to start while the native build in ~/.local/bin works
-            path = next((str(c) for c in _known_locations(binary) if c.exists() and not runtime_error(str(c))), path)
+            path = next((str(c) for c in known_locations(binary) if c.exists() and not runtime_error(str(c))), path)
         if path:
             setattr(settings, attr, str(Path(path).absolute()))
             found[binary] = getattr(settings, attr)

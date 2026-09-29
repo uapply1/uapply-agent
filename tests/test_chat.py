@@ -10,7 +10,8 @@ import pytest
 from uapply_agent.chat.anychat import AnyChatSource
 from uapply_agent.chat.base import ChatError, Transcript
 from uapply_agent.chat.render import transcript_to_pdf
-from uapply_agent.chat.store import ChatStore, redact
+from uapply_agent.chat.store import ChatStore, strip_chat_ids
+from uapply_agent.config import Settings
 from uapply_agent.folder import WorkingFolder
 from uapply_agent.local_ops import pdf_pages_text
 from uapply_agent.runners.base import Runner, RunResult
@@ -108,8 +109,8 @@ def test_render_paginates_long_transcripts(tmp_path):
     assert "消息 299" in pages[-1]
 
 
-def test_redact():
-    assert redact("from wxid_abc_12 in 12345678@chatroom") == "from [id] in [id]"
+def test_strip_chat_ids():
+    assert strip_chat_ids("from wxid_abc_12 in 12345678@chatroom") == "from [id] in [id]"
 
 
 class IntakeRunner(Runner):
@@ -194,16 +195,14 @@ class FakeApi:
 
 
 @pytest.fixture
-def tools(tmp_path, monkeypatch, fake_cli):
+def tools(tmp_path, monkeypatch, fake_cli, use_server):
     from uapply_agent import mcp_server as m
     root = tmp_path / "client"
     root.mkdir()
     api = FakeApi()
-    monkeypatch.setattr(m, "_folder", WorkingFolder(root))
-    monkeypatch.setattr(m, "_api", api)
-    monkeypatch.setattr(m, "get_runner", lambda runtime, model: IntakeRunner())
-    m._settings.chat_source = "anychat"
-    m._settings.anychat_bin = str(fake_cli)
+    settings = Settings(chat_source="anychat", anychat_bin=str(fake_cli))
+    use_server(WorkingFolder(root), api, settings)
+    monkeypatch.setattr(m, "get_runner", lambda runtime, model, settings=None: IntakeRunner())
     return m, api
 
 
@@ -220,20 +219,20 @@ def test_chat_fetch_without_case_queues_then_create_case_uploads(tools):
     assert out["ok"] and out["upload"] == "queued"
     assert out["intake"]["application"]["suggested_application_type_id"] == "at-study"
     assert "wxid" not in json.dumps(out, ensure_ascii=False)
-    assert ChatStore(m._folder).pending_uploads()
+    assert ChatStore(m.ctx.folder).pending_uploads()
 
     refused = m.create_case("Zhang Wei", "at-study", confirmation="yes")
     assert not refused["ok"] and refused["error"]["code"] == "CONFIRMATION_REQUIRED" and api.created == []
 
     ok = m.create_case("Zhang Wei", "at-study", confirmation="create case")
     assert ok["ok"] and ok["survey_id"] == "s-new" and api.created == [("Zhang Wei", "at-study", None)]
-    assert m._folder.survey_id == "s-new"
+    assert m.ctx.folder.survey_id == "s-new"
     assert ok["chat_uploads"][0]["document_id"] == "doc-1"
     assert api.archives == ["Agent Survey"]  # the type's default archive, not a new unnamed one
     assert api.uploads[0][1:3] == ("other", "dt-agent-survey") and api.uploads[0][3].endswith(".pdf")
-    assert ChatStore(m._folder).pending_uploads() == []
+    assert ChatStore(m.ctx.folder).pending_uploads() == []
     # the PDF is in the manifest under .uapply/chat
-    assert any(v["path"].startswith(".uapply/chat/") for v in m._folder.manifest["files"].values())
+    assert any(v["path"].startswith(".uapply/chat/") for v in m.ctx.folder.manifest["files"].values())
     # a second create_case is refused because the folder is bound
     assert m.create_case("X", "at-study", confirmation="确认创建")["error"]["code"] == "CASE_EXISTS"
 
@@ -249,7 +248,7 @@ def test_chat_fetch_with_case_uploads_immediately(tools):
 def test_chat_fetch_reports_intake_failure_but_keeps_transcript(tools, monkeypatch):
     m, api = tools
     from uapply_agent.runners.base import RunnerError
-    monkeypatch.setattr(m, "get_runner", lambda runtime, model: (_ for _ in ()).throw(RunnerError("no runtime")))
+    monkeypatch.setattr(m, "get_runner", lambda runtime, model, settings=None: (_ for _ in ()).throw(RunnerError("no runtime")))
     out = m.chat_fetch("张伟")
     assert out["ok"] and out["intake"] is None and "no runtime" in out["intake_error"]
     assert Path(out["transcript"]["path"]).exists()
@@ -259,7 +258,7 @@ def test_upload_is_deduplicated_on_transcript_content(tools):
     m, api = tools
     m.init_case("s-1")
     first = m.chat_fetch("张伟")
-    second = m.chat_upload(path=first["transcript"]["path"].replace(str(m._folder.root) + "/", ""))
+    second = m.chat_upload(path=first["transcript"]["path"].replace(str(m.ctx.folder.root) + "/", ""))
     assert second["ok"] and second["already_filed"] and second["document_id"] == first["upload"]["document_id"]
     assert len(api.uploads) == 1
     # same contact fetched again on the same day → same content → not filed twice
@@ -270,11 +269,8 @@ def test_upload_is_deduplicated_on_transcript_content(tools):
 def test_chat_upload_can_be_disabled(tools):
     m, api = tools
     m.init_case("s-1")
-    m._settings.chat_upload = False
-    try:
-        out = m.chat_fetch("张伟")
-    finally:
-        m._settings.chat_upload = True
+    m.ctx.settings.chat_upload = False
+    out = m.chat_fetch("张伟")
     assert out["upload"] == "disabled" and api.uploads == [] and out["intake"] is not None
 
 
@@ -343,4 +339,4 @@ def test_create_case_without_agent_api_still_binds_the_folder(tools, monkeypatch
     monkeypatch.setattr(api, "set_llm_mode", lambda *a: (_ for _ in ()).throw(AssertionError("agent API called")))
     out = m.create_case("Zhang Wei", "at-study", confirmation="create case")
     assert out["ok"] and out["case"]["llm_mode"] == "server" and "server mode" in out["warning"]
-    assert m._folder.survey_id == "s-new"
+    assert m.ctx.folder.survey_id == "s-new"

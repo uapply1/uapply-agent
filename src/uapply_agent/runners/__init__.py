@@ -16,7 +16,8 @@ RUNNERS = {"claude-code": ClaudeCodeRunner, "codex": CodexRunner}
 _WIN = sys.platform.startswith("win")
 
 
-def _known_locations(binary: str) -> list[Path]:
+def known_locations(binary: str) -> list[Path]:
+    """Where the installers put the CLIs, for when they are not on PATH."""
     home = Path.home()
     exts = [".exe", ".cmd", ""] if _WIN else [""]
     cands = [home / ".local" / "bin" / f"{binary}{e}" for e in exts]
@@ -35,19 +36,17 @@ def resolve_binary(binary: str, configured: str = "") -> Optional[str]:
     found = shutil.which(binary)
     if found:
         return found
-    for c in _known_locations(binary):
+    for c in known_locations(binary):
         if c.exists():
             return str(c)
     return None
 
 
-def _configured(name: str) -> str:
-    try:
-        from ..config import Settings
-        s = Settings.load()
-    except Exception:
-        return ""
-    return {"claude-code": s.claude_bin, "codex": s.codex_bin}.get(name, "")
+def configured_paths(settings) -> dict[str, str]:
+    """Runtime paths recorded by `setup` (absolute: desktop apps start the server with a minimal PATH)."""
+    if settings is None:
+        return {}
+    return {"claude-code": settings.claude_bin, "codex": settings.codex_bin}
 
 
 _WORKING: set[str] = set()
@@ -69,12 +68,13 @@ def runtime_error(path: str) -> str:
     return ((r.stderr or r.stdout or "").strip().splitlines() or [f"exit code {r.returncode}"])[0][:300]
 
 
-def detect_runtimes(check: bool = True) -> list[dict]:
-    """[{name, path}] for every runtime that is installed and actually starts; a broken install
-    carries `error` instead of being silently used."""
+def detect_runtimes(settings=None, check: bool = True) -> list[dict]:
+    """[{name, path}] for every runtime that is installed; one that does not start carries `error`
+    instead of being silently used."""
+    configured = configured_paths(settings)
     out = []
     for name, cls in RUNNERS.items():
-        path = resolve_binary(cls.binary, _configured(name))
+        path = resolve_binary(cls.binary, configured.get(name, ""))
         if path:
             row = {"name": name, "path": path}
             if check and (err := runtime_error(path)):
@@ -83,8 +83,8 @@ def detect_runtimes(check: bool = True) -> list[dict]:
     return out
 
 
-def get_runner(name: str = "auto", model: str = "") -> Runner:
-    installed = detect_runtimes()
+def get_runner(name: str = "auto", model: str = "", settings=None) -> Runner:
+    installed = detect_runtimes(settings)
     found = [f for f in installed if not f.get("error")]
     if name in (None, "", "auto"):
         if not found and installed:
@@ -93,7 +93,7 @@ def get_runner(name: str = "auto", model: str = "") -> Runner:
                               "Reinstall it with the uApply installer; if Windows reports it is not compatible, this "
                               "Windows version is too old for it.")
         if not found:
-            tried = ", ".join(str(c) for cls in RUNNERS.values() for c in _known_locations(cls.binary))
+            tried = ", ".join(str(c) for cls in RUNNERS.values() for c in known_locations(cls.binary))
             install = ("irm https://claude.ai/install.ps1 | iex" if _WIN
                        else "curl -fsSL https://claude.ai/install.sh | bash")
             raise RunnerError("no runtime found: local tasks need the Claude Code CLI (or Codex CLI); the desktop app "
@@ -112,4 +112,5 @@ def get_runner(name: str = "auto", model: str = "") -> Runner:
     return runner
 
 
-__all__ = ["Runner", "RunResult", "RunnerError", "PlanLimited", "RuntimeUnavailable", "get_runner", "detect_runtimes", "resolve_binary", "runtime_error", "RUNNERS"]
+__all__ = ["RUNNERS", "PlanLimited", "RunResult", "Runner", "RunnerError", "RuntimeUnavailable",
+           "configured_paths", "detect_runtimes", "get_runner", "known_locations", "resolve_binary", "runtime_error"]

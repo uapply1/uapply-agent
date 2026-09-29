@@ -55,15 +55,14 @@ class FakeApi:
 
 
 @pytest.fixture
-def bound(tmp_path, monkeypatch):
+def bound(tmp_path, monkeypatch, use_server):
     root = tmp_path / "client"
     root.mkdir()
     (root / "passport.pdf").write_bytes(b"%PDF-1.4 a")
     (root / "spouse").mkdir()
     (root / "spouse" / "passport.pdf").write_bytes(b"%PDF-1.4 b")
     api = FakeApi()
-    monkeypatch.setattr(m, "_folder", WorkingFolder(root))
-    monkeypatch.setattr(m, "_api", api)
+    use_server(WorkingFolder(root), api)
     m.init_case("s-1")
     return api
 
@@ -81,7 +80,7 @@ def test_duplicate_basenames_map_to_their_own_document_ids(bound):
 
 
 def test_heic_is_converted_locally_and_recorded(bound, monkeypatch, tmp_path):
-    root = m._folder.root
+    root = m.ctx.folder.root
     (root / "IMG_1.HEIC").write_bytes(b"heic")
     def fake_convert(src, cache):
         cache.mkdir(parents=True, exist_ok=True)
@@ -89,11 +88,12 @@ def test_heic_is_converted_locally_and_recorded(bound, monkeypatch, tmp_path):
         out.write_bytes(b"jpg")
         return out
 
-    monkeypatch.setattr(m, "heic_to_jpeg", fake_convert)
+    from uapply_agent import uploads
+    monkeypatch.setattr(uploads, "heic_to_jpeg", fake_convert)
     out = m.sync_documents(document_type_id="dt-pass", paths=["IMG_1.HEIC"])
     assert out["uploaded"] == 1 and out["failed"] == []
     assert bound.uploads[-1][2] == "IMG_1.jpg"
-    entry = next(v for v in m._folder.manifest["files"].values() if v["path"] == "IMG_1.HEIC")
+    entry = next(v for v in m.ctx.folder.manifest["files"].values() if v["path"] == "IMG_1.HEIC")
     assert entry["document_id"] == out["documents"][0]["document_id"]
     assert entry["uploaded_path"].endswith("IMG_1.jpg")
 
@@ -160,18 +160,18 @@ def test_case_status_falls_back_to_survey_documents(bound, monkeypatch):
 
 
 def test_whoami_reports_agent_api_and_runtime_paths(bound, monkeypatch):
-    monkeypatch.setattr(m, "detect_runtimes", lambda: [{"name": "claude-code", "path": "/x/claude"}])
+    monkeypatch.setattr(m, "detect_runtimes", lambda settings=None: [{"name": "claude-code", "path": "/x/claude"}])
     monkeypatch.setattr(m, "_claude_login_state", lambda path: False)
     out = m.whoami()
     assert out["agent_api"] is True and out["runtimes"] == [{"name": "claude-code", "path": "/x/claude", "logged_in": False}]
     assert "claude auth login" in out["hint"]
-    monkeypatch.setattr(m, "detect_runtimes", lambda: [])
+    monkeypatch.setattr(m, "detect_runtimes", lambda settings=None: [])
     assert "installer" in m.whoami()["hint"]
 
 
 def test_preview_document_renders_pdf_pages_locally(bound, tmp_path):
     import pymupdf
-    root = m._folder.root
+    root = m.ctx.folder.root
     doc = pymupdf.open()
     for i in range(4):
         page = doc.new_page(); page.insert_text((72, 72), f"page {i + 1}")
@@ -186,8 +186,8 @@ def test_preview_document_renders_pdf_pages_locally(bound, tmp_path):
     assert m.preview_document("missing.pdf")["error"]["code"] == "NO_FILE"
 
 
-def test_no_case_hint_offers_create_or_bind(tmp_path, monkeypatch):
-    monkeypatch.setattr(m, "_folder", WorkingFolder(tmp_path))
+def test_no_case_hint_offers_create_or_bind(tmp_path, use_server):
+    use_server(WorkingFolder(tmp_path), FakeApi())
     r = m.list_documents()
     assert r["error"]["code"] == "NO_CASE" and "create_case" in r["error"]["hint"] and "init_case" in r["error"]["hint"]
     from uapply_agent import playbook
@@ -215,7 +215,7 @@ def test_unknown_type_is_refused_without_uploading(bound):
 
 
 def test_whoami_flags_an_installed_runtime_that_does_not_start(bound, monkeypatch):
-    monkeypatch.setattr(m, "detect_runtimes", lambda: [{"name": "claude-code", "path": "C:/nodejs/claude.CMD",
+    monkeypatch.setattr(m, "detect_runtimes", lambda settings=None: [{"name": "claude-code", "path": "C:/nodejs/claude.CMD",
                                                         "error": "not compatible with the version of Windows"}])
     out = m.whoami()
     assert "does not start" in out["hint"] and "logged_in" not in out["runtimes"][0]
@@ -223,7 +223,7 @@ def test_whoami_flags_an_installed_runtime_that_does_not_start(bound, monkeypatc
 
 def test_file_already_on_the_case_is_recorded_not_reuploaded(bound):
     """The upload succeeded but the local record was lost: match by type, name and size."""
-    size = (m._folder.root / "passport.pdf").stat().st_size
+    size = (m.ctx.folder.root / "passport.pdf").stat().st_size
     bound.docs = [{"id": "srv-1", "file_name": "passport.pdf", "document_type_id": "dt-pass", "size": size, "old_doc_id": None},
                   {"id": "srv-2", "file_name": "passport.pdf", "document_type_id": "dt-other", "size": size, "old_doc_id": None}]
     out = m.sync_documents("dt-pass", paths=["passport.pdf"])

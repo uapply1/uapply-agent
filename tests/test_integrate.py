@@ -51,7 +51,7 @@ def test_malformed_claude_json_is_reported_not_overwritten(tmp_path):
     import pytest
     cfg = tmp_path / ".claude.json"
     cfg.write_text("{not json")
-    with pytest.raises(RuntimeError, match="not valid JSON"):
+    with pytest.raises(it.SetupError, match="not valid JSON"):
         it.write_claude_json("/x", cfg)
     assert cfg.read_text() == "{not json"
 

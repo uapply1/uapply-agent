@@ -1,4 +1,4 @@
-"""uapply-agent CLI: setup | login | init | status | run | mcp | chat | clean | config."""
+"""The `uapply-agent` command: setup, login, case binding, headless task runs and the MCP server."""
 from __future__ import annotations
 
 import argparse
@@ -6,59 +6,59 @@ import json
 import logging
 import os
 import sys
+from dataclasses import asdict
+from enum import IntEnum
 from pathlib import Path
 
-from . import __version__
-from .api import NO_AGENT_API_HINT, ApiError, UApplyApi
+from . import __version__, cases
+from .api import ApiError, UApplyApi
 from .auth import LoginError, device_login, token_login
 from .chat.base import ChatError
 from .config import Credentials, Settings
+from .context import ToolError
 from .folder import WorkingFolder
-from .integrate import run_setup
+from .integrate import PLUGIN_DIR, SetupError, install_claude_plugin, run_setup
+from .runners import RunnerError, detect_runtimes, get_runner
 from .updater import maybe_delegate, resolve_target, running_sha
-from .runners import RunnerError, detect_runtimes
+
+logger = logging.getLogger(__name__)
 
 
-_ARGV: list[str] = []
+class ExitCode(IntEnum):
+    OK = 0
+    FAILED = 1           # the command ran and reports a negative result (e.g. no Acrobat)
+    USAGE = 2            # bad arguments (argparse uses 2 too)
+    ERROR = 3            # backend, runtime or chat-source error
+    PLAN_LIMITED = 4     # the runtime's subscription limit was reached; run again later
+    RUNTIME_UNAVAILABLE = 5
+    INTERRUPTED = 130
 
 
-def _argv() -> list[str]:
-    return _ARGV or sys.argv[1:]
-
-
-def _refresh_plugin() -> None:
-    """A new version may ship new /uapply:* commands; rewrite them if the plugin is installed."""
-    try:
-        from .integrate import PLUGIN_DIR, install_claude_plugin
-        home = Path(os.environ.get("UAPPLY_HOME") or Path.home())
-        if (home / PLUGIN_DIR).exists():
-            install_claude_plugin(home)
-    except Exception:
-        pass
-
-
-def cmd_update(args, settings):
-    target, reason = resolve_target(settings, wait_s=600, say=print)
-    print(f"uapply-agent: {reason}" + (f" -> {target}" if target else ""))
-    return 0
+class UsageError(Exception):
+    pass
 
 
 def _folder(args) -> WorkingFolder:
     return WorkingFolder(Path(args.folder or os.environ.get("UAPPLY_FOLDER") or os.getcwd()))
 
 
-def cmd_login(args, settings):
-    try:
-        if args.token:
-            token_login(args.token)
-        elif args.token_stdin:
-            token_login(sys.stdin.read())
-        else:
-            device_login(settings)
-    except LoginError as e:
-        print(f"login failed: {e}", file=sys.stderr)
-        return 2
-    return 0
+def _bound_folder(args) -> WorkingFolder:
+    folder = _folder(args)
+    if not folder.survey_id:
+        raise UsageError("this folder has no case; run `uapply-agent init --survey <id>` first")
+    return folder
+
+
+def _print_json(data) -> None:
+    print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+# ---------- commands ----------
+
+def cmd_update(args, settings):
+    target, reason = resolve_target(settings, wait_s=600, say=print)
+    print(f"uapply-agent: {reason}" + (f" -> {target}" if target else ""))
+    return ExitCode.OK
 
 
 def cmd_setup(args, settings):
@@ -67,85 +67,98 @@ def cmd_setup(args, settings):
         settings.installed_sha = sha
         settings.save()
     run_setup(settings=settings, login=not args.no_login)
-    if args.no_login or Credentials.get_token():
-        print("uApply login: already signed in" if Credentials.get_token() else "uApply login: skipped")
+    if Credentials.get_token():
+        print("uApply login: already signed in")
+    elif args.no_login:
+        print("uApply login: skipped")
     else:
         try:
             device_login(settings)
         except LoginError as e:
-            print(f"login failed: {e} — run `uapply-agent login` later", file=sys.stderr)
+            print(f"login failed: {e}; run `uapply-agent login` later", file=sys.stderr)
     print("Done. Open Claude Code or Codex in a client folder and type /uapply:run")
-    return 0
+    return ExitCode.OK
+
+
+def cmd_login(args, settings):
+    if args.token:
+        token_login(args.token)
+    elif args.token_stdin:
+        token_login(sys.stdin.read())
+    else:
+        device_login(settings)
+    return ExitCode.OK
 
 
 def cmd_logout(args, settings):
     Credentials.clear()
     print("credentials removed")
-    return 0
+    return ExitCode.OK
 
 
 def cmd_init(args, settings):
-    api = UApplyApi(settings)
-    f = _folder(args)
-    s = api.survey(args.survey)
-    llm_mode = args.llm_mode
-    if api.agent_api_available():
-        api.set_llm_mode(args.survey, llm_mode)
-    else:
-        llm_mode = "server"
-        print(f"warning: {NO_AGENT_API_HINT}", file=sys.stderr)
-    deps = [{"survey_id": d.get("id"), "name": d.get("name"), "relationship": d.get("relationship")}
-            for d in (s.get("dependents") or []) if isinstance(d, dict)]
-    case = f.init_case(args.survey, settings.backend_url, llm_mode, name=s.get("name", ""), dependents=deps)
-    print(json.dumps(case, indent=2))
-    rt = detect_runtimes()
-    print(f"runtimes detected: {[r['path'] for r in rt] or 'none — install Claude Code or Codex'}", file=sys.stderr)
-    return 0
+    folder = _folder(args)
+    with UApplyApi(settings) as api:
+        case, warning = cases.bind_existing(api, settings, folder, args.survey, args.llm_mode)
+    _print_json(case)
+    if warning:
+        print(f"warning: {warning}", file=sys.stderr)
+    found = [r["path"] for r in detect_runtimes(settings) if not r.get("error")]
+    print(f"runtimes: {', '.join(found) or 'none; install Claude Code or Codex'}", file=sys.stderr)
+    return ExitCode.OK
 
 
 def cmd_status(args, settings):
-    f = _folder(args)
-    if not f.survey_id:
-        print("folder has no case; run `uapply-agent init --survey <id>`", file=sys.stderr)
-        return 2
-    print(json.dumps(UApplyApi(settings).agent_status(f.survey_id), indent=2))
-    return 0
+    folder = _bound_folder(args)
+    with UApplyApi(settings) as api:
+        _print_json(api.agent_status(folder.survey_id))
+    return ExitCode.OK
 
 
 def cmd_run(args, settings):
-    maybe_delegate(_argv(), settings, wait_s=180)
+    maybe_delegate(args.argv, settings, wait_s=180)
     from .executor import Executor
-    f = _folder(args)
-    api = UApplyApi(settings)
-    ex = Executor(api, f, runtime=args.runtime or settings.runtime, model=args.model or settings.model,
-                  force_ocr=args.force_ocr or settings.force_ocr)
-    print(f"executor: {ex.runner.name} session {ex.session_id}", file=sys.stderr)
-    while True:
-        stats = ex.run(max_tasks=args.max_tasks, workers=args.workers or settings.workers, kinds=args.kinds)
-        print(json.dumps(stats.as_dict()), file=sys.stderr)
-        if stats.plan_limited:
-            print("plan limit reached; run again later", file=sys.stderr)
-            return 3
-        if stats.runtime_error:
-            print(f"stopped: {stats.runtime_error}", file=sys.stderr)
-            return 4
-        if not args.follow:
-            break
-        st = api.agent_wait(f.survey_id, "processing", 45)
-        if st.get("done") and stats.remaining == 0:
-            break
-    print(json.dumps(api.agent_status(f.survey_id), indent=2))
-    return 0
+    folder = _bound_folder(args)
+    runner = get_runner(args.runtime or settings.runtime, args.model or settings.model, settings)
+    with UApplyApi(settings) as api:
+        ex = Executor(api, folder, runner, force_ocr=args.force_ocr or settings.force_ocr,
+                      timeout_s=settings.task_timeout_s)
+        print(f"executor: {runner.name}, session {ex.session_id}", file=sys.stderr)
+        while True:
+            stats = ex.run(max_tasks=args.max_tasks, workers=args.workers or settings.workers, kinds=args.kinds)
+            print(json.dumps(stats.as_dict()), file=sys.stderr)
+            if stats.plan_limited:
+                print("plan limit reached; run again later", file=sys.stderr)
+                return ExitCode.PLAN_LIMITED
+            if stats.runtime_error:
+                print(f"stopped: {stats.runtime_error}", file=sys.stderr)
+                return ExitCode.RUNTIME_UNAVAILABLE
+            if not args.follow:
+                break
+            if api.agent_wait(folder.survey_id, "processing", 45).get("done") and stats.remaining == 0:
+                break
+        _print_json(api.agent_status(folder.survey_id))
+    return ExitCode.OK
+
+
+def _refresh_plugin() -> None:
+    """A new version may ship new /uapply:* commands: rewrite them when the plugin is installed."""
+    home = Path(os.environ.get("UAPPLY_HOME") or Path.home())
+    if (home / PLUGIN_DIR).exists():
+        try:
+            install_claude_plugin(home)
+        except OSError:
+            logger.warning("could not refresh the Claude Code plugin", exc_info=True)
 
 
 def cmd_mcp(args, settings):
-    maybe_delegate(_argv(), settings)
+    maybe_delegate(args.argv, settings)
     _refresh_plugin()
     if args.folder:
         os.environ["UAPPLY_FOLDER"] = str(Path(args.folder).resolve())
-    from .mcp_server import main as mcp_main
-    mcp_main()
-    return 0
+    from .mcp_server import main as serve
+    serve()
+    return ExitCode.OK
 
 
 def cmd_chat(args, settings):
@@ -153,127 +166,144 @@ def cmd_chat(args, settings):
     from .chat.store import ChatStore
     src = AnyChatSource(binary=settings.anychat_bin)
     if args.chat_cmd == "sources":
-        print(json.dumps(src.available().as_dict(), indent=2, ensure_ascii=False))
-        return 0
-    if args.chat_cmd == "find":
-        print(json.dumps([c.public() for c in src.resolve(args.name)], indent=2, ensure_ascii=False))
-        return 0
-    f = _folder(args)
-    t = src.fetch(args.contact, args.days or settings.chat_default_days, f.chat)
-    ChatStore(f).record(t)
-    print(json.dumps(t.public(), indent=2, ensure_ascii=False))
-    print("Next: `uapply-agent init --survey <id>` (or the create_case tool) then chat_upload, or use the MCP tools.", file=sys.stderr)
-    return 0
+        _print_json(src.available().as_dict())
+    elif args.chat_cmd == "find":
+        _print_json([c.public() for c in src.resolve(args.name)])
+    else:
+        folder = _folder(args)
+        transcript = src.fetch(args.contact, args.days or settings.chat_default_days, folder.chat)
+        ChatStore(folder).record(transcript)
+        _print_json(transcript.public())
+        print("Next: bind the folder (`uapply-agent init --survey <id>`) and file it with the chat_upload tool.",
+              file=sys.stderr)
+    return ExitCode.OK
 
 
 def cmd_clean(args, settings):
     print(f"removed {_folder(args).clean()} cached files")
-    return 0
+    return ExitCode.OK
 
 
 def cmd_acrobat(args, settings):
-    """Check Acrobat Pro automation; with --pdf, fill that XFA form's first text field as a test."""
+    """Check Acrobat Pro automation; with --pdf, test-fill one field of that form."""
     from . import acrobat
     found = acrobat.detect(probe=True)
-    print(json.dumps(found, indent=2))
-    if not (found["available"] and args.pdf):
-        return 0 if found["available"] else 1
-    src = Path(args.pdf).resolve()
-    out = src.with_name(src.stem + "_uapply_test.pdf")
-    ops = [{"op": "set", "node": args.node, "value": args.value, "event": "change"}]
-    print(json.dumps(acrobat.fill(src, ops, out), indent=2))
-    print(f"saved {out}")
-    return 0
+    _print_json(found)
+    if not found["available"]:
+        return ExitCode.FAILED
+    if args.pdf:
+        src = Path(args.pdf).resolve()
+        out = src.with_name(f"{src.stem}_uapply_test.pdf")
+        ops = [{"op": "set", "node": args.node, "value": args.value, "event": "change"}]
+        try:
+            _print_json(acrobat.fill(src, ops, out))
+        except acrobat.AcrobatError as e:
+            print(f"test fill failed: {e}", file=sys.stderr)
+            return ExitCode.FAILED
+        print(f"saved {out}")
+    return ExitCode.OK
 
 
 def cmd_config(args, settings):
+    for item in args.set or []:
+        key, sep, value = item.partition("=")
+        if not sep:
+            raise UsageError(f"expected KEY=VALUE, got {item!r}")
+        try:
+            settings.set(key, value)
+        except ValueError as e:
+            raise UsageError(str(e)) from e
     if args.set:
-        for kv in args.set:
-            k, _, v = kv.partition("=")
-            if not hasattr(settings, k):
-                print(f"unknown setting {k}", file=sys.stderr)
-                return 2
-            cur = getattr(settings, k)
-            if isinstance(cur, bool):   # bool("false") is True
-                val = v.strip().lower() in ("1", "true", "yes", "on")
-            elif isinstance(cur, dict):
-                val = json.loads(v)
-            else:
-                val = type(cur)(v)
-            setattr(settings, k, val)
         settings.save()
-    print(json.dumps(settings.__dict__, indent=2))
-    return 0
+    _print_json(asdict(settings))
+    return ExitCode.OK
+
+
+# ---------- parser ----------
+
+class _VersionAction(argparse.Action):
+    """Resolves the running commit only when --version is asked for."""
+
+    def __init__(self, option_strings, dest, **kwargs):
+        super().__init__(option_strings, dest, nargs=0, help="show the version and the running commit")
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(f"uapply-agent {__version__} ({(running_sha(Settings.load()) or 'unknown')[:7]})")
+        parser.exit()
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="uapply-agent", description="Run uApply cases from Claude Code / Codex")
-    p.add_argument("--version", action="version", version=f"{__version__} ({(running_sha(Settings.load()) or 'unknown')[:7]})")
-    p.add_argument("-v", "--verbose", action="store_true")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    p = argparse.ArgumentParser(prog="uapply-agent", description="Run uApply cases from Claude Code or Codex.")
+    p.add_argument("--version", action=_VersionAction)
+    p.add_argument("-v", "--verbose", action="store_true", help="log progress to stderr")
+    folder = argparse.ArgumentParser(add_help=False)
+    folder.add_argument("--folder", help="client folder (default: UAPPLY_FOLDER or the current directory)")
+    sub = p.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
 
-    sub.add_parser("update", help="install the latest version now (it also happens at mcp/run start)").set_defaults(fn=cmd_update)
+    def command(name, fn, help_text, parents=()):
+        c = sub.add_parser(name, help=help_text, description=help_text, parents=list(parents))
+        c.set_defaults(fn=fn)
+        return c
 
-    s = sub.add_parser("setup", help="register the MCP server with Claude Code / Codex and log in")
-    s.add_argument("--no-login", action="store_true"); s.set_defaults(fn=cmd_setup)
-
-    s = sub.add_parser("login", help="Auth0 device login, or --token to paste a JWT")
-    s.add_argument("--token"); s.add_argument("--token-stdin", action="store_true")
-    s.set_defaults(fn=cmd_login)
-    sub.add_parser("logout").set_defaults(fn=cmd_logout)
-
-    s = sub.add_parser("init", help="bind this folder to a survey")
-    s.add_argument("--survey", required=True); s.add_argument("--folder")
-    s.add_argument("--llm-mode", default="local_agent", choices=["local_agent", "server"])
-    s.set_defaults(fn=cmd_init)
-
-    s = sub.add_parser("status"); s.add_argument("--folder"); s.set_defaults(fn=cmd_status)
-
-    s = sub.add_parser("run", help="execute queued agent tasks headlessly")
-    s.add_argument("--folder"); s.add_argument("--runtime", choices=["auto", "claude-code", "codex"])
-    s.add_argument("--model"); s.add_argument("--workers", type=int); s.add_argument("--max-tasks", type=int)
-    s.add_argument("--kinds", nargs="*"); s.add_argument("--follow", action="store_true", help="keep going until processing is done")
-    s.add_argument("--force-ocr", action="store_true", help="ignore PDF text layers; always OCR with the model")
-    s.set_defaults(fn=cmd_run)
-
-    s = sub.add_parser("mcp", help="serve the MCP tools over stdio"); s.add_argument("--folder"); s.set_defaults(fn=cmd_mcp)
-    s = sub.add_parser("chat", help="local chat archive (AnyChat): sources | find <name> | fetch <contact>")
-    cs = s.add_subparsers(dest="chat_cmd", required=True)
-    cs.add_parser("sources")
-    c = cs.add_parser("find"); c.add_argument("name")
-    c = cs.add_parser("fetch"); c.add_argument("contact"); c.add_argument("--days", type=int); c.add_argument("--folder")
-    s.set_defaults(fn=cmd_chat)
-    s = sub.add_parser("clean"); s.add_argument("--folder"); s.set_defaults(fn=cmd_clean)
-    s = sub.add_parser("acrobat", help="check Adobe Acrobat Pro auto-fill on this PC (Windows)")
-    s.add_argument("--pdf", help="a blank IMM 5709 to test-fill (writes <name>_uapply_test.pdf next to it)")
-    s.add_argument("--node", default="form1[0].Page1[0].PersonalDetails[0].Name[0].FamilyName[0]")
-    s.add_argument("--value", default="TEST"); s.set_defaults(fn=cmd_acrobat)
-    s = sub.add_parser("config"); s.add_argument("--set", nargs="*", metavar="KEY=VALUE"); s.set_defaults(fn=cmd_config)
+    command("update", cmd_update, "install the latest version now (it also happens when mcp or run starts)")
+    c = command("setup", cmd_setup, "register the MCP server with Claude Code and Codex, then log in")
+    c.add_argument("--no-login", action="store_true", help="skip the uApply and Claude sign-in steps")
+    c = command("login", cmd_login, "log in to uApply (device login, or a pasted token)")
+    c.add_argument("--token", help="an access token to store instead of the device login")
+    c.add_argument("--token-stdin", action="store_true", help="read the access token from stdin")
+    command("logout", cmd_logout, "remove the stored uApply credentials")
+    c = command("init", cmd_init, "bind the client folder to an existing uApply case", [folder])
+    c.add_argument("--survey", required=True, help="the case's survey id")
+    c.add_argument("--llm-mode", default="local_agent", choices=cases.LLM_MODES)
+    command("status", cmd_status, "show the bound case's status", [folder])
+    c = command("run", cmd_run, "run the case's queued tasks headlessly", [folder])
+    c.add_argument("--runtime", choices=["auto", "claude-code", "codex"])
+    c.add_argument("--model", help="runtime model (default: the runtime's own)")
+    c.add_argument("--workers", type=int, help="parallel headless processes (1-4)")
+    c.add_argument("--max-tasks", type=int)
+    c.add_argument("--kinds", nargs="*", help="only these task kinds")
+    c.add_argument("--follow", action="store_true", help="keep going until processing is done")
+    c.add_argument("--force-ocr", action="store_true", help="ignore PDF text layers; always OCR with the model")
+    command("mcp", cmd_mcp, "serve the MCP tools over stdio", [folder])
+    c = command("chat", cmd_chat, "read the local chat archive (AnyChat)")
+    chat = c.add_subparsers(dest="chat_cmd", required=True, metavar="SUBCOMMAND")
+    chat.add_parser("sources", help="whether the chat archive is installed and signed in")
+    chat.add_parser("find", help="find a contact by name").add_argument("name")
+    fetch = chat.add_parser("fetch", help="save a contact's chat history in the client folder", parents=[folder])
+    fetch.add_argument("contact")
+    fetch.add_argument("--days", type=int, help="how far back (default: chat_default_days)")
+    command("clean", cmd_clean, "remove cached files from the client folder", [folder])
+    c = command("acrobat", cmd_acrobat, "check Adobe Acrobat Pro auto-fill on this PC (Windows)")
+    c.add_argument("--pdf", help="a blank IMM 5709 to test-fill (writes <name>_uapply_test.pdf next to it)")
+    c.add_argument("--node", default="form1[0].Page1[0].PersonalDetails[0].Name[0].FamilyName[0]",
+                   help="XFA field to fill")
+    c.add_argument("--value", default="TEST")
+    c = command("config", cmd_config, "show settings, or change them with --set KEY=VALUE")
+    c.add_argument("--set", nargs="*", metavar="KEY=VALUE")
     return p
 
 
-def main(argv=None) -> int:
-    global _ARGV
-    _ARGV = list(argv) if argv is not None else []
+def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(errors="backslashreplace")
+            stream.reconfigure(errors="backslashreplace")   # Windows consoles cannot print every name
         except (AttributeError, ValueError):
             pass
     args = build_parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-    settings = Settings.load()
+    args.argv = list(argv) if argv is not None else sys.argv[1:]
+    logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
+                        format="%(levelname)s %(name)s: %(message)s")
     try:
-        return args.fn(args, settings) or 0
-    except ApiError as e:
-        print(f"error: {e}" + (f" — {e.hint}" if e.hint else ""), file=sys.stderr)
-        return 2
-    except RunnerError as e:
+        return int(args.fn(args, Settings.load()))
+    except KeyboardInterrupt:
+        return ExitCode.INTERRUPTED
+    except UsageError as e:
         print(f"error: {e}", file=sys.stderr)
-        return 2
-    except ChatError as e:
-        print(f"error: {e}" + (f" — {e.hint}" if e.hint else ""), file=sys.stderr)
-        return 2
+        return ExitCode.USAGE
+    except (ApiError, ChatError, LoginError, RunnerError, SetupError, ToolError) as e:
+        hint = getattr(e, "hint", "")
+        print(f"error: {e}" + (f" ({hint})" if hint else ""), file=sys.stderr)
+        return ExitCode.ERROR
 
 
 if __name__ == "__main__":
