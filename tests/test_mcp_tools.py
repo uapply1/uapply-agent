@@ -295,3 +295,29 @@ def test_photos_never_block_analysis_or_progress(bound, monkeypatch):
     assert p["documents_total"] == 1 and p["documents_finished"] == 1 and p["not_processed"] == ["photo.jpg"]
     out = m.start_processing()
     assert out["started"] == []            # the photo is not sent for processing
+
+
+FAILED_JOB = {"status": "completed", "total_sections": 3, "completed_sections": 1, "sections_progress": {
+    "passport": {"status": "failed", "error": "LLM returned no result"},
+    "language": {"status": "completed"}, "national_id": {"status": "no_data", "error": "No data to analyze"}}}
+
+
+def test_analysis_outcome_lists_failed_sections():
+    from uapply_agent import cases
+    out = cases.analysis_outcome({"analysis_job": FAILED_JOB})
+    assert out == {"status": "completed", "sections": 3, "completed": 1, "no_data": ["national_id"],
+                   "failed": [{"section": "passport", "error": "LLM returned no result"}]}
+    assert cases.analysis_outcome({}) is None
+
+
+def test_confirm_refuses_after_failed_sections_unless_the_rcic_continues(bound, monkeypatch):
+    survey = bound.survey("s-1")
+    monkeypatch.setattr(bound, "survey", lambda sid: {**survey, "analyzing_status": "completed",
+                                                      "analysis_job": FAILED_JOB})
+    monkeypatch.setattr(bound, "generate_archive_files", lambda sid: {"results": [1, 2], "status": "ok"}, raising=False)
+    refused = m.confirm_documents()
+    assert refused["error"]["code"] == "ANALYSIS_INCOMPLETE" and "passport" in refused["error"]["message"]
+    assert "start_analysis" in refused["error"]["hint"]
+    assert m.confirm_documents(continue_with_failed_sections=True) == {"ok": True, "archives": 2,
+                                                                       "failed_documents": [], "status": "ok"}
+

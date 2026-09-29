@@ -241,7 +241,8 @@ def start_processing(document_ids: list[str] | None = None) -> dict:
 @tool(requires="agent_api")
 def start_analysis() -> dict:
     """Start the case analysis once every document is processed (uploads never start it for agent
-    cases). Every model call it makes runs on this machine through run_tasks."""
+    cases), or run it again after sections failed. Every model call it makes runs on this machine
+    through run_tasks."""
     p = cases.progress(ctx.api.survey(ctx.survey_id))
     if p["in_progress"] or p["by_status"].get("uploaded"):
         raise ToolError("PROCESSING_NOT_DONE", "documents are still being processed or not started",
@@ -251,13 +252,25 @@ def start_analysis() -> dict:
 
 
 @tool(requires="agent_api")
-def confirm_documents() -> dict:
+def confirm_documents(continue_with_failed_sections: bool = False) -> dict:
     """After the analysis: the dashboard's Confirm step — merge each archive into one PDF and queue
-    compression on uApply (no AI). Moves the case on from "Not started"; then call autofill_forms."""
-    status = ctx.api.agent_status(ctx.survey_id).get("analyzing_status")
+    compression on uApply (no AI). Moves the case on from "Not started"; then call autofill_forms.
+    Refused while analysis sections have failed, unless the RCIC chose to continue with them
+    (continue_with_failed_sections=true)."""
+    survey = ctx.api.survey(ctx.survey_id)
+    status = survey.get("analyzing_status")
     if status not in DONE_ANALYSIS:
         raise ToolError("ANALYSIS_NOT_DONE", f"analysis is {status}",
                         "loop run_tasks / wait_for_stage('analysis') until done, then confirm_documents")
+    outcome = cases.analysis_outcome(survey) or {}
+    if outcome.get("failed") and not continue_with_failed_sections:
+        names = ", ".join(f["section"] for f in outcome["failed"])
+        raise ToolError("ANALYSIS_INCOMPLETE",
+                        f"{len(outcome['failed'])} of {outcome['sections']} analysis sections failed ({names}); "
+                        "the forms would be filled without that data",
+                        "ask the RCIC: run the analysis again (start_analysis, then run_tasks / "
+                        "wait_for_stage('analysis')), or continue anyway (confirm_documents with "
+                        "continue_with_failed_sections=true)")
     r = ctx.api.generate_archive_files(ctx.survey_id) or {}
     return ok(archives=len(r.get("results") or []), failed_documents=r.get("failed_documents") or [],
               status=r.get("status"))

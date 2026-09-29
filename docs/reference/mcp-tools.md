@@ -60,7 +60,7 @@ local-agent API (`AGENT_API_UNAVAILABLE` otherwise).
 | Tool | Input | Output |
 |---|---|---|
 | `start_processing` | `document_ids?` (default: every uploaded, failed or stopped top-level document of a processable type) | `started`: `document_id`, `ok`, `message` per document. Uploads alone never start processing for agent cases; this also retries failed documents |
-| `start_analysis` | none | `started`, `message`, `progress`; refused with `PROCESSING_NOT_DONE` while documents are still processing or not started |
+| `start_analysis` | none | starts the analysis, or runs it again after sections failed. `started`, `message`, `progress`; refused with `PROCESSING_NOT_DONE` while documents are still processing or not started |
 | `run_tasks` | `max_tasks?`, `workers?` (default 2, at most 4), `kinds?`, `budget_s?` (default 90, clamped to 20-300) | runs queued agent tasks in fresh headless runtime processes, then returns `runtime`, `accepted`, `rejected`, `released`, `failed`, `plan_limited`, `runtime_error`, `remaining`, `model_calls`, `text_layer_docs`, `failures`, and `progress` (per-document snapshot). Call again while `remaining` > 0 |
 | `wait_for_stage` | `stage` (`processing` \| `analysis` \| `filling`, default `processing`), `timeout_s?` (default 45, at most 60) | the backend's stage status (including `done`) plus `progress`; returns early when the stage completes |
 | `task_stats` | none | `stats`: agent task counts by status for the case |
@@ -81,7 +81,7 @@ their own MCP tool-call timeouts. The playbook alternates `run_tasks` and
 
 | Tool | Input | Output |
 |---|---|---|
-| `confirm_documents` | none | the dashboard's Confirm step: each archive merged into one PDF and compression queued on uApply (no AI). Returns `archives` (count), `failed_documents`, `status`; refused with `ANALYSIS_NOT_DONE` before the analysis is done |
+| `confirm_documents` | `continue_with_failed_sections?: bool` (default false) | the dashboard's Confirm step: each archive merged into one PDF and compression queued on uApply (no AI). Returns `archives` (count), `failed_documents`, `status`; refused with `ANALYSIS_NOT_DONE` before the analysis is done, and with `ANALYSIS_INCOMPLETE` (naming the failed sections) when analysis sections failed, unless the RCIC chose to continue |
 | `autofill_forms` | `budget_s?` (default 90, clamped to 20-300) | fills the case's IMM PDFs. With Adobe Acrobat Pro on this PC (Windows): `mode: local`, `filled`, `failed`, `skipped`, `remaining` (call again while > 0), copies in `.uapply/output/imm_pdfs/`, and `automation_status` / `imm_pdfs` when finished. Otherwise: `mode: platform` with a `reason`; uApply's platform filler fills the forms (no AI) and the caller loops `wait_for_stage("filling")` |
 | `final_report` | `download?` (default `true`) | `report_markdown` (shown to the RCIC as is), `report_path` (`uApply output/report.md`), `links` (`case`, `ai_check`, `submit`, `online_portal`), `files` (`package`, `forms`, or an `error`), `status`, `ai_check` (`conflict`, `doubtful`, `missing`), `online_portal`. With `download` the final package zip is saved in `uApply output/` and its forms unpacked into `uApply output/Forms/` |
 

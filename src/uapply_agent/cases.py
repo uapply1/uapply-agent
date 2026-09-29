@@ -93,8 +93,23 @@ def progress(survey: dict) -> dict:
         "failed": [{"file_name": d.get("file_name"), "error": (d.get("error") or "")[:160]}
                    for d in docs if d.get("status") == DocStatus.FAILED][:10],
         "analysis": survey.get("analyzing_status") or "none",
+        "analysis_failed_sections": (analysis_outcome(survey) or {}).get("failed", []),
         "not_processed": [d.get("file_name") for d in top if str(d.get("document_type_id")) in skip][:10],
     }
+
+
+def analysis_outcome(survey: dict) -> dict | None:
+    """The latest analysis job in brief: section counts and the sections that failed, with the
+    reason. A job can finish as "completed" with most of its sections failed."""
+    job = survey.get("analysis_job")
+    if not isinstance(job, dict):
+        return None
+    sections = job.get("sections_progress") or {}
+    failed = [{"section": name, "error": (s.get("error") or "")[:200]}
+              for name, s in sections.items() if isinstance(s, dict) and s.get("status") == "failed"]
+    no_data = sorted(name for name, s in sections.items() if isinstance(s, dict) and s.get("status") == "no_data")
+    return {"status": job.get("status"), "sections": job.get("total_sections") or len(sections),
+            "completed": job.get("completed_sections") or 0, "failed": failed, "no_data": no_data}
 
 
 def server_mode_status(survey: dict) -> dict:

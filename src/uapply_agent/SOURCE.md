@@ -43,6 +43,12 @@ Always:
   for them: every model call (OCR, sections, analysis) is a task this machine
   runs. After uploading, call `start_processing`; once processing is done, call
   `start_analysis`, then run the analysis the same way.
+- When the analysis is done, check `progress.analysis_failed_sections`. If any
+  section failed, do not continue silently: ask the RCIC with the question tool,
+  naming the sections and reasons, with the options "Run the analysis again"
+  (recommended: `start_analysis`, then the same run_tasks loop), "Continue
+  anyway" (`confirm_documents` with `continue_with_failed_sections=true`) and
+  "Stop here".
 - Once the analysis is done, finish the case: `confirm_documents` (the
   dashboard's Confirm — archives and compression on uApply), then
   `autofill_forms` until `remaining` is 0. It fills the IMM PDFs with Adobe

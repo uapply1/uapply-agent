@@ -27,6 +27,9 @@ class FakeApi:
     def report(self, sid):
         return self.r
 
+    def survey(self, sid):
+        return {"id": sid, "analysis_job": self.job} if getattr(self, "job", None) else {"id": sid}
+
     def download_submit_package(self, sid, dest):
         dest.parent.mkdir(parents=True, exist_ok=True)
         buf = io.BytesIO()
@@ -82,3 +85,16 @@ def test_status_label_matches_the_dashboard():
     assert report.status_label({"automation_status": "none"}) == "Not started"
     assert report.status_label({"automation_status": "filling", "analyzing_status": "completed"}) == "Filling forms"
     assert report.status_label({"automation_status": "completed", "analyzing_status": "completed"}) == "Completed"
+
+
+def test_failed_analysis_sections_lead_the_report(folder):
+    api = FakeApi()
+    api.job = {"status": "completed", "total_sections": 16, "completed_sections": 3, "sections_progress": {
+        "passport": {"status": "failed", "error": "no uApply agent picked up the task in 600 s"},
+        "header": {"status": "completed"}, "national_id": {"status": "no_data"}}}
+    out = report.build(api, folder, settings(), download=False)
+    md = out["report_markdown"]
+    assert md.index("Analysis incomplete") < md.index("Review before submitting")
+    assert "- passport: no uApply agent picked up" in md
+    assert out["analysis"]["failed"] == [{"section": "passport", "error": "no uApply agent picked up the task in 600 s"}]
+

@@ -12,6 +12,7 @@ import zipfile
 from pathlib import Path
 
 from .api import ApiError, UApplyApi
+from .cases import analysis_outcome
 from .config import Settings
 from .folder import OUTPUT_DIR, WorkingFolder
 from .util import write_text_atomic
@@ -74,6 +75,12 @@ def download_package(api: UApplyApi, folder: WorkingFolder, r: dict) -> dict:
 def render(r: dict, lk: dict, files: dict) -> str:
     L = [f"# uApply report — {r['name']}", "",
          f"{r.get('application_type') or 'Case'} · **{status_label(r)}**", ""]
+    analysis = r.get("analysis") or {}
+    if analysis.get("failed"):
+        L += [f"**Analysis incomplete:** {len(analysis['failed'])} of {analysis.get('sections')} sections failed, so "
+              "their fields are empty and the forms are filled without them. Run the analysis again "
+              "(`/uapply:run`) before submitting.", ""]
+        L += [f"- {f['section']}: {f['error']}" for f in analysis["failed"][:10]] + [""]
     ai = r.get("ai_check") or {}
     if ai.get("conflict") or ai.get("doubtful"):
         L += [f"**Review before submitting:** AI Check has {ai.get('conflict', 0)} conflict(s) and "
@@ -118,6 +125,7 @@ def render(r: dict, lk: dict, files: dict) -> str:
 
 def build(api: UApplyApi, folder: WorkingFolder, settings: Settings, download: bool = True) -> dict:
     r = api.report(folder.survey_id)
+    r["analysis"] = analysis_outcome(api.survey(folder.survey_id))
     lk = links(settings, folder.survey_id)
     files = {}
     if download:
@@ -133,4 +141,5 @@ def build(api: UApplyApi, folder: WorkingFolder, settings: Settings, download: b
     ai = r.get("ai_check") or {}
     return {"report_markdown": md, "report_path": f"{OUTPUT_DIR}/report.md", "links": lk, "files": files,
             "status": status_label(r), "ai_check": {k: ai.get(k) for k in ("conflict", "doubtful", "missing")},
+            "analysis": r["analysis"],
             "online_portal": r.get("online_portal")}
