@@ -15,6 +15,7 @@ from .folder import WorkingFolder
 logger = logging.getLogger(__name__)
 
 STATE = "autofill.json"
+MAX_REFILLS = 1          # re-claims after survey values changed mid-fill
 
 
 class AutoFiller:
@@ -48,6 +49,10 @@ class AutoFiller:
     def run(self, budget_s: int = 240) -> dict:
         s = self._state()
         if s.get("mode") == "platform":
+            status = self.api.agent_status(self.folder.survey_id).get("automation_status")
+            if status in ("completed", "failed"):
+                self._clear()                   # done on uApply; a later run starts afresh
+                return {"mode": "platform", "remaining": 0, "automation_status": status}
             return {"mode": "platform", "reason": s.get("reason"), "remaining": 0,
                     "next": "loop wait_for_stage('filling') until done"}
         if not s:
@@ -78,10 +83,13 @@ class AutoFiller:
         if remaining:
             return {**result, "next": "call autofill_forms again"}
         fin = self.api.autofill_finish(self.folder.survey_id)
-        if fin.get("need_restart") and s.get("restarts", 0) < 1:
+        if fin.get("need_restart") and s.get("restarts", 0) < MAX_REFILLS:
             s = self._claim(restarts=s.get("restarts", 0) + 1)
             return {**result, "remaining": len(s["forms"]),
                     "next": "survey values changed during the fill: call autofill_forms again to refill"}
+        if result["failed"]:
+            names = ", ".join(r["name"] for r in result["failed"])
+            return {**result, **self._to_platform(f"{len(result['failed'])} form(s) failed locally ({names})")}
         self._clear()
         return {**result, "automation_status": fin.get("automation_status"), "imm_pdfs": fin.get("imm_pdfs", [])}
 

@@ -5,7 +5,6 @@ import os
 import shutil
 import subprocess
 import sys
-from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -51,16 +50,21 @@ def _configured(name: str) -> str:
     return {"claude-code": s.claude_bin, "codex": s.codex_bin}.get(name, "")
 
 
-@lru_cache(maxsize=16)
+_WORKING: set[str] = set()
+
+
 def runtime_error(path: str) -> str:
-    """'' when `<path> --version` runs; otherwise why not (e.g. a build this Windows cannot start)."""
+    """'' when `<path> --version` runs; otherwise why not (e.g. a build this Windows cannot start).
+    Only successes are cached, so a runtime reinstalled while the server runs is picked up."""
+    if path in _WORKING:
+        return ""
     try:
         r = subprocess.run([path, "--version"], stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace",
-                           timeout=60, check=False)
+                           encoding="utf-8", errors="replace", timeout=60, check=False)
     except (OSError, subprocess.TimeoutExpired) as e:
         return str(e)[:300]
     if r.returncode == 0:
+        _WORKING.add(path)
         return ""
     return ((r.stderr or r.stdout or "").strip().splitlines() or [f"exit code {r.returncode}"])[0][:300]
 

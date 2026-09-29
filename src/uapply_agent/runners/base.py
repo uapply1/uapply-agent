@@ -7,7 +7,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-LIMIT_PATTERNS = re.compile(r"(usage limit|rate limit|limit reached|too many requests|quota|out of credits|429)", re.I)
+LIMIT_PATTERNS = re.compile(
+    r"\b(usage limit|rate limit|limit reached|too many requests|quota exceeded|exceeded your .*quota|"
+    r"out of credits|HTTP 429|status 429)\b", re.I)
 
 
 class RunnerError(RuntimeError):

@@ -86,10 +86,11 @@ def _need_agent_api():
 def _bind(survey_id: str, llm_mode: str, name: str, dependents=None) -> tuple[dict, str]:
     """Bind the folder; on a backend without the agent API the case stays in server mode."""
     warning = ""
-    if llm_mode == "local_agent" and not api().agent_api_available():
-        llm_mode, warning = "server", NO_AGENT_API_HINT
-    elif llm_mode in ("local_agent", "server"):
+    if api().agent_api_available():
         api().set_llm_mode(survey_id, llm_mode)
+    else:
+        # The mode is stored through the agent API; without it the case is processed by the server.
+        llm_mode, warning = "server", NO_AGENT_API_HINT
     case = _folder.init_case(survey_id, _settings.backend_url, llm_mode, name=name, dependents=dependents)
     return case, warning
 
@@ -517,7 +518,7 @@ def _chat_source():
 def _upload_transcript(md_path: Path) -> dict:
     """Render the transcript to a text PDF and file it on the case as an agent_survey document."""
     from .chat.render import transcript_to_pdf
-    from .folder import sha256_of
+    from .util import sha256_of
     store = ChatStore(_folder)
     row = next((r for r in store.index() if r.get("path") == str(md_path)), {})
     md_sha = sha256_of(md_path)
@@ -660,11 +661,7 @@ def create_case(name: str, application_type_id: str, confirmation: str = "") -> 
         s = api().create_survey(name, application_type_id, team_id=team_id,
                                 imm_pdf_types=types[application_type_id].get("default_imm_pdf_types") or [])
         survey_id = s.get("id")
-        # The create body already asked for local_agent; a branch backend honoured it.
-        case, warning = _bind(survey_id, "local_agent" if api().agent_api_available() else "server",
-                              s.get("name", name))
-        if not api().agent_api_available():
-            warning = NO_AGENT_API_HINT
+        case, warning = _bind(survey_id, "local_agent", s.get("name", name))
         out = _ok(survey_id=survey_id, team_id=team_id, case=case, chat_uploads=_flush_pending_uploads())
         if warning:
             out["warning"] = warning

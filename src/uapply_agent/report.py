@@ -13,7 +13,8 @@ from pathlib import Path
 
 from .api import UApplyApi
 from .config import Settings
-from .folder import WorkingFolder, write_text_atomic
+from .folder import WorkingFolder
+from .util import write_text_atomic
 
 logger = logging.getLogger(__name__)
 

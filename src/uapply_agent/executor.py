@@ -271,10 +271,16 @@ class Executor:
             stats.bump('released')
             raise
         except (RunnerError, ApiError, OSError, ValueError) as e:
-            logger.error(f"task {task['id']} failed: {e}")
-            stats.bump('failed')
-            stats.note_failure({"task_id": task["id"], "kind": task["kind"], "reason": str(e)[:300]})
-            self._release_quietly(task, str(e))
+            self._fail(task, stats, str(e))
+        except Exception as e:  # never let one task abort the run with its lease held
+            logger.exception("task %s failed unexpectedly", task["id"])
+            self._fail(task, stats, f"{type(e).__name__}: {e}")
+
+    def _fail(self, task: dict, stats: RunStats, reason: str) -> None:
+        logger.error("task %s failed: %s", task["id"], reason)
+        stats.bump("failed")
+        stats.note_failure({"task_id": task["id"], "kind": task["kind"], "reason": reason[:300]})
+        self._release_quietly(task, reason)
 
     def _release_quietly(self, task: dict, reason: str) -> None:
         try:

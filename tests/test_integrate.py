@@ -33,6 +33,27 @@ def test_codex_toml_appended_and_replaced(tmp_path):
     import tomllib
     parsed = tomllib.loads(text)
     assert parsed["mcp_servers"]["uapply"]["args"] == ["mcp"] and parsed["mcp_servers"]["other"]["command"] == "y"
+    assert "mcp" not in parsed          # no stray `["mcp"]` line left behind (it parses as a table)
+
+
+def test_codex_toml_rewrite_is_idempotent_between_tables(tmp_path):
+    import tomllib
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[mcp_servers.uapply]\ncommand = "old"\nargs = ["mcp"]\n\n[profiles.fast]\nmodel = "mini"\n')
+    for _ in range(3):
+        it.write_codex_toml("/new/uapply-agent", cfg)
+    parsed = tomllib.loads(cfg.read_text())
+    assert parsed["mcp_servers"]["uapply"] == {"command": "/new/uapply-agent", "args": ["mcp"]}
+    assert parsed["profiles"]["fast"]["model"] == "mini" and set(parsed) == {"mcp_servers", "profiles"}
+
+
+def test_malformed_claude_json_is_reported_not_overwritten(tmp_path):
+    import pytest
+    cfg = tmp_path / ".claude.json"
+    cfg.write_text("{not json")
+    with pytest.raises(RuntimeError, match="not valid JSON"):
+        it.write_claude_json("/x", cfg)
+    assert cfg.read_text() == "{not json"
 
 
 def test_codex_skipped_without_cli_or_dir(tmp_path):
@@ -120,7 +141,7 @@ def test_record_runtimes_prefers_a_build_that_starts(tmp_path, monkeypatch):
     broken = tmp_path / "nodejs" / "claude"; broken.parent.mkdir(); broken.write_text("#!/bin/sh\nexit 216\n"); broken.chmod(0o755)
     native = tmp_path / ".local" / "bin" / "claude"; native.parent.mkdir(parents=True)
     native.write_text("#!/bin/sh\necho 2.1.0\n"); native.chmod(0o755)
-    runners.runtime_error.cache_clear()
+    runners._WORKING.clear()
     found = it.record_runtimes(Settings(), which=lambda n: str(broken) if n == "claude" else None)
     assert found == {"claude": str(native)}
 

@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from uapply_agent.folder import WorkingFolder, sha256_of
+from uapply_agent.folder import WorkingFolder
+from uapply_agent.util import sha256_of
 
 
 def make_folder(tmp_path: Path) -> WorkingFolder:

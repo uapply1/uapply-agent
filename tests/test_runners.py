@@ -153,3 +153,31 @@ def test_schema_drops_2020_12_meta_schema_for_claude(monkeypatch, tmp_path):
               "properties": {"langs": {"type": "array", "items": {"$ref": "#/$defs/L"}}}, "$defs": {"L": {"type": "string"}}}
     ClaudeCodeRunner().run(system_prompt="s", user_prompt="u", schema=schema, images=[], cwd=tmp_path)
     assert seen["schema"] == {"type": "object", "properties": {"langs": {"type": "array", "items": {"type": "string"}}}}
+
+
+def test_limit_patterns_match_real_messages_only():
+    from uapply_agent.runners.base import LIMIT_PATTERNS
+    for msg in ("Claude AI usage limit reached|1760000000", "You've hit your usage limit.",
+                "Error: 429 Too Many Requests", "You exceeded your current quota, please check your plan",
+                "rate limit exceeded"):
+        assert LIMIT_PATTERNS.search(msg), msg
+    for msg in ("retrying request 1/3 after 1s", "section quotas_table parsed", "invoice 4291 loaded"):
+        assert not LIMIT_PATTERNS.search(msg), msg
+
+
+def test_codex_success_with_noisy_stderr_is_not_a_plan_limit(tmp_path, monkeypatch):
+    from uapply_agent.runners.codex import CodexRunner
+
+    def fake_exec(cmd, cwd, timeout_s, stdin=None):
+        out = cmd[cmd.index("--output-last-message") + 1]
+        Path(out).write_text('{"file_types": ["Passport"]}', encoding="utf-8")
+        return _completed(stderr="warning: rate limit headroom low, request 2 retried")
+    monkeypatch.setattr(CodexRunner, "_exec", staticmethod(fake_exec))
+    rr = CodexRunner().run(system_prompt="s", user_prompt="u", schema={}, images=[], cwd=tmp_path)
+    assert rr.output == {"file_types": ["Passport"]}
+
+
+def test_reported_model_is_the_one_that_answered():
+    from uapply_agent.runners.claude_code import _main_model
+    usage = {"claude-haiku-4-5": {"outputTokens": 12}, "claude-fable-5-1": {"outputTokens": 900}}
+    assert _main_model(usage) == "claude-fable-5-1" and _main_model({}) == ""

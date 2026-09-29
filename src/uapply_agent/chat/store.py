@@ -5,7 +5,8 @@ import json
 import re
 from pathlib import Path
 
-from ..folder import WorkingFolder, now_iso, read_json, write_text_atomic
+from ..folder import WorkingFolder
+from ..util import now_iso, read_json, write_text_atomic
 from .base import Transcript
 
 RAW_ID = re.compile(r"\bwxid_[A-Za-z0-9_-]+\b|\b[A-Za-z0-9_-]{6,}@chatroom\b")

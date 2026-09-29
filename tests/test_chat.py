@@ -334,3 +334,13 @@ def test_codex_runner_sends_prompt_on_stdin(monkeypatch, tmp_path):
     assert rr.output == {"file_types": ["Visa"]}
     assert seen["cmd"][-1] == "-" and "x" * 100_000 in seen["stdin"] and "## Instructions" in seen["stdin"]
     assert all(len(a) < 1000 for a in seen["cmd"])
+
+
+def test_create_case_without_agent_api_still_binds_the_folder(tools, monkeypatch):
+    """The case is created (and billed) first; binding must not fail afterwards on the agent API."""
+    m, api = tools
+    monkeypatch.setattr(api, "agent_api_available", lambda: False)
+    monkeypatch.setattr(api, "set_llm_mode", lambda *a: (_ for _ in ()).throw(AssertionError("agent API called")))
+    out = m.create_case("Zhang Wei", "at-study", confirmation="create case")
+    assert out["ok"] and out["case"]["llm_mode"] == "server" and "server mode" in out["warning"]
+    assert m._folder.survey_id == "s-new"

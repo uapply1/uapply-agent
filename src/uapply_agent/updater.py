@@ -105,10 +105,10 @@ def start_install(sha: str) -> Optional[subprocess.Popen]:
     source = os.environ.get("UAPPLY_AGENT_ARCHIVE", ARCHIVE).format(repo=REPO, sha=sha)
     env = {**os.environ, "UV_TOOL_DIR": str(root / "tools"), "UV_TOOL_BIN_DIR": str(root / "bin"),
            "UV_NO_MODIFY_PATH": "1"}
-    log = open(root / "install.log", "ab")
     detach = {"creationflags": subprocess.CREATE_NO_WINDOW} if _WIN else {"start_new_session": True}
-    return subprocess.Popen([uv, "tool", "install", "--force", "--quiet", f"uapply-agent @ {source}"],
-                            stdin=subprocess.DEVNULL, stdout=log, stderr=log, env=env, **detach)
+    with open(root / "install.log", "ab") as log:   # the child keeps its own handle
+        return subprocess.Popen([uv, "tool", "install", "--force", "--quiet", f"uapply-agent @ {source}"],
+                                stdin=subprocess.DEVNULL, stdout=log, stderr=log, env=env, **detach)
 
 
 def prune(keep: set[str], max_versions: int = 3) -> None:

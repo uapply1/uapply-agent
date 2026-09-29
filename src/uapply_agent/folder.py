@@ -1,63 +1,20 @@
 """The client working folder: scan, hash, manifest and case.json under .uapply/."""
 from __future__ import annotations
 
-import hashlib
 import json
-import locale
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
+
+from .util import now_iso, read_json, sha256_of, write_text_atomic
 
 logger = logging.getLogger(__name__)
 
 STATE_DIR = ".uapply"
 SUPPORTED = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".heif", ".docx", ".doc", ".xlsx", ".xls"}
 IGNORED_PREFIXES = (".", "~$")
-
-
-def write_text_atomic(path: Path, text: str) -> None:
-    """UTF-8 (never the Windows code page), via a temp file so a failed write cannot truncate the original."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def read_json(path: Path, default):
-    """UTF-8 JSON; files from older builds may be in the local code page, or truncated by a failed
-    write — those are set aside as `<name>.corrupt-<time>` and `default` is returned."""
-    if not path.exists():
-        return default
-    raw = path.read_bytes()
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        text = raw.decode(locale.getpreferredencoding(False), errors="replace")
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        aside = path.with_name(f"{path.name}.corrupt-{datetime.now(timezone.utc):%Y%m%d%H%M%S}")
-        os.replace(path, aside)
-        logger.warning("unreadable %s moved to %s", path, aside)
-        return default
-
-
-def sha256_of(path: Path, chunk: int = 1 << 20) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while True:
-            b = f.read(chunk)
-            if not b:
-                break
-            h.update(b)
-    return h.hexdigest()
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 @dataclass

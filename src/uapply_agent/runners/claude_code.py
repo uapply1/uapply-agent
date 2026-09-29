@@ -75,7 +75,7 @@ class ClaudeCodeRunner(Runner):
         if not isinstance(output, dict):
             output = extract_json(str(data.get("result", "")))
         usage = data.get("usage") or {}
-        model = next(iter((data.get("modelUsage") or {}).keys()), "") or self.model
+        model = _main_model(data.get("modelUsage") or {}) or self.model
         return RunResult(output=output, model=model,
                          usage={"input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
                                 "duration_s": (data.get("duration_ms") or 0) / 1000.0,
@@ -92,3 +92,11 @@ class ClaudeCodeRunner(Runner):
             raise RunnerError(f"claude not found: {e}")
         except subprocess.TimeoutExpired:
             raise RunnerError(f"claude timed out after {timeout_s}s")
+
+
+def _main_model(model_usage: dict) -> str:
+    """The model that produced the answer: Claude Code also reports helper models (e.g. a small
+    model for titles), so take the one with the most output tokens."""
+    if not model_usage:
+        return ""
+    return max(model_usage, key=lambda m: (model_usage[m] or {}).get("outputTokens", 0))

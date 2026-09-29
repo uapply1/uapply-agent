@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .api import ApiError, UApplyApi
+from .api import NO_AGENT_API_HINT, ApiError, UApplyApi
 from .auth import LoginError, device_login, token_login
 from .chat.base import ChatError
 from .config import Credentials, Settings
@@ -88,10 +88,15 @@ def cmd_init(args, settings):
     api = UApplyApi(settings)
     f = _folder(args)
     s = api.survey(args.survey)
-    api.set_llm_mode(args.survey, args.llm_mode)
+    llm_mode = args.llm_mode
+    if api.agent_api_available():
+        api.set_llm_mode(args.survey, llm_mode)
+    else:
+        llm_mode = "server"
+        print(f"warning: {NO_AGENT_API_HINT}", file=sys.stderr)
     deps = [{"survey_id": d.get("id"), "name": d.get("name"), "relationship": d.get("relationship")}
             for d in (s.get("dependents") or []) if isinstance(d, dict)]
-    case = f.init_case(args.survey, settings.backend_url, args.llm_mode, name=s.get("name", ""), dependents=deps)
+    case = f.init_case(args.survey, settings.backend_url, llm_mode, name=s.get("name", ""), dependents=deps)
     print(json.dumps(case, indent=2))
     rt = detect_runtimes()
     print(f"runtimes detected: {[r['path'] for r in rt] or 'none — install Claude Code or Codex'}", file=sys.stderr)

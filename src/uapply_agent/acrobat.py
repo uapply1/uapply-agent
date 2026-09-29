@@ -61,7 +61,7 @@ def detect(probe: bool = True) -> dict:
             doc.new_page()
             doc.save(str(pdf))
             doc.close()
-            with AcrobatDoc(pdf) as d:
+            with DialogClicker(), AcrobatDoc(pdf) as d:   # a first-run dialog must not hang the probe
                 if d.jso is None:
                     return {"available": False, "path": path,
                             "reason": "Acrobat is installed but its automation is unavailable (Reader or no Pro licence)"}
@@ -71,6 +71,12 @@ def detect(probe: bool = True) -> dict:
 
 
 # ---- one open document ----
+
+def _co_initialize() -> bool:
+    import pythoncom
+    pythoncom.CoInitialize()
+    return True
+
 
 def _dispatch(prog_id: str):
     import win32com.client
@@ -84,8 +90,11 @@ class AcrobatDoc:
     def __init__(self, path: Path, dispatch: Callable = _dispatch):
         self.path, self._dispatch = Path(path), dispatch
         self.app = self.pd = self.jso = None
+        self._com = False
 
     def __enter__(self) -> "AcrobatDoc":
+        # MCP tools run on worker threads, and COM must be initialised on each thread that uses it.
+        self._com = self._dispatch is _dispatch and _co_initialize()
         self.app = self._dispatch("AcroExch.App")
         self.pd = self._dispatch("AcroExch.PDDoc")
         if not self.pd.Open(str(self.path)):
@@ -103,8 +112,13 @@ class AcrobatDoc:
                 self.pd.Close()
             if self.app is not None and not self.app.GetNumAVDocs():
                 self.app.Exit()
-        except Exception as e:
-            logger.debug(f"closing Acrobat: {e}")
+        except Exception:  # closing must not mask the fill's own error
+            logger.debug("closing Acrobat failed", exc_info=True)
+        finally:
+            self.app = self.pd = self.jso = None
+            if self._com:
+                import pythoncom
+                pythoncom.CoUninitialize()
 
 
 # ---- choice matching (pdf_auto ChoiceMapper) ----
@@ -180,21 +194,16 @@ def fill(template: Path, ops: list, out: Path, doc_factory: Callable = AcrobatDo
          on_progress: Optional[Callable[[int, int], None]] = None) -> dict:
     """Open the blank IMM template, replay the ops, save to `out`."""
     errors = []
-    clicker = DialogClicker()
-    clicker.start()
-    try:
-        with doc_factory(template) as doc:
-            if doc.jso is None:
-                raise RuntimeError("Acrobat returned no JavaScript object (Reader, or Pro not licensed)")
-            xfa = doc.jso.xfa
-            for n, op in enumerate(ops, start=1):
-                if err := apply_op(xfa, op):
-                    errors.append(err)
-                if on_progress and n % 50 == 0:
-                    on_progress(n, len(ops))
-            doc.save(out)
-    finally:
-        clicker.stop()
+    with DialogClicker(), doc_factory(template) as doc:
+        if doc.jso is None:
+            raise RuntimeError("Acrobat returned no JavaScript object (Reader, or Pro not licensed)")
+        xfa = doc.jso.xfa
+        for n, op in enumerate(ops, start=1):
+            if err := apply_op(xfa, op):
+                errors.append(err)
+            if on_progress and n % 50 == 0:
+                on_progress(n, len(ops))
+        doc.save(out)
     return {"applied": len(ops) - len(errors), "failed": len(errors), "errors": errors[:50]}
 
 
@@ -212,8 +221,16 @@ class DialogClicker:
     def start(self) -> None:
         if sys.platform != "win32":
             return
-        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="acrobat-dialogs")
         self._thread.start()
+
+    def __enter__(self) -> "DialogClicker":
+        self.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.stop()
 
     def stop(self) -> None:
         self._stop.set()
@@ -229,8 +246,8 @@ class DialogClicker:
         while not self._stop.wait(self.interval_s):
             try:
                 win32gui.EnumWindows(lambda hwnd, _: self._maybe_click(hwnd, win32gui, win32con), None)
-            except Exception:
-                pass
+            except Exception:  # a window closing mid-enumeration; try again next tick
+                logger.debug("dialog scan failed", exc_info=True)
 
     @staticmethod
     def _owner_is_acrobat(hwnd) -> bool:

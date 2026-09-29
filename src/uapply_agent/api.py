@@ -1,15 +1,21 @@
 """Typed client for the uApply backend. Every call the agent makes goes through here."""
 from __future__ import annotations
 
+import logging
 import mimetypes
+import threading
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 import httpx
 
+from . import __version__
 from .config import Credentials, Settings
 
 
+logger = logging.getLogger(__name__)
+
+USER_AGENT = f"uapply-agent/{__version__}"
 AGENT_PREFIX = "/api/ai-parse/agent/"
 NO_AGENT_API_HINT = ("the backend has no local-agent API (branch not deployed); the case runs in server mode "
                      "and its documents are processed by uApply's server models")
@@ -29,9 +35,19 @@ class UApplyApi:
         self._client = httpx.Client(base_url=self.settings.backend_url, timeout=timeout,
                                     headers=self._headers())
         self._agent_api: Optional[bool] = None
+        self._refresh_lock = threading.Lock()
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> "UApplyApi":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
     def _headers(self) -> dict:
-        h = {"Accept": "application/json", "User-Agent": "uapply-agent/0.1"}
+        h = {"Accept": "application/json", "User-Agent": USER_AGENT}
         if self.token:
             h["Authorization"] = f"Bearer {self.token}"
         return h
@@ -40,37 +56,43 @@ class UApplyApi:
     def logged_in(self) -> bool:
         return bool(self.token)
 
-    def _refresh_token(self) -> bool:
-        """Exchange the stored refresh token once; False when there is nothing to refresh with."""
-        s = self.settings
-        try:
-            import keyring
-            refresh = keyring.get_password("uapply-agent", "refresh_token")
-        except Exception:
-            refresh = None
-        if not (refresh and s.auth0_domain and s.auth0_client_id):
-            return False
-        try:
-            r = httpx.post(f"https://{s.auth0_domain}/oauth/token", timeout=30, data={
-                "grant_type": "refresh_token", "client_id": s.auth0_client_id, "refresh_token": refresh})
+    def _refresh_token(self, rejected: Optional[str]) -> bool:
+        """Exchange the stored refresh token for a new access token. Serialised: executor workers
+        hit 401 together, and Auth0 revokes the whole token family when a rotated token is reused."""
+        with self._refresh_lock:
+            if self.token and self.token != rejected:
+                return True                     # another thread already refreshed
+            s = self.settings
+            refresh = Credentials.get_refresh_token()
+            if not (refresh and s.auth0_domain and s.auth0_client_id):
+                return False
+            try:
+                r = httpx.post(f"https://{s.auth0_domain}/oauth/token", timeout=30, data={
+                    "grant_type": "refresh_token", "client_id": s.auth0_client_id, "refresh_token": refresh})
+            except httpx.HTTPError as e:
+                logger.warning("token refresh failed: %s", e)
+                return False
             if r.status_code != 200:
+                logger.warning("token refresh rejected (HTTP %s)", r.status_code)
                 return False
             body = r.json()
             Credentials.set_token(body["access_token"], body.get("refresh_token") or refresh)
             self.token = body["access_token"]
             self._client.headers.update(self._headers())
             return True
-        except Exception:
-            return False
 
     def _req(self, method: str, path: str, _retry: bool = True, **kw) -> Any:
-        r = self._client.request(method, path, **kw)
-        if r.status_code == 401 and _retry and self._refresh_token():
+        sent_token = self.token
+        try:
+            r = self._client.request(method, path, **kw)
+        except httpx.HTTPError as e:
+            raise ApiError(0, f"{type(e).__name__}: {e}", "check the network connection to the uApply backend") from e
+        if r.status_code == 401 and _retry and self._refresh_token(sent_token):
             return self._req(method, path, _retry=False, **kw)
         if r.status_code >= 400:
             try:
                 body = r.json()
-            except Exception:
+            except ValueError:
                 body = r.text
             hint = body.get("hint", "") if isinstance(body, dict) else ""
             if r.status_code == 404 and path.startswith(AGENT_PREFIX) and not isinstance(body, dict):
@@ -167,12 +189,21 @@ class UApplyApi:
         return self._req("GET", f"/api/survey/documents/{document_id}/download/")["url"]
 
     def download_to(self, url: str, dest: Path) -> Path:
+        """Fetch a presigned storage URL. Not through `self._client`: the bearer token must not be
+        sent to the storage host. Written to `<dest>.part` first, so an interrupted download is
+        never mistaken for the file."""
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with httpx.stream("GET", url, timeout=300, follow_redirects=True) as r:
-            r.raise_for_status()
-            with open(dest, "wb") as f:
-                for chunk in r.iter_bytes():
-                    f.write(chunk)
+        part = dest.with_name(dest.name + ".part")
+        try:
+            with httpx.stream("GET", url, timeout=300, follow_redirects=True) as r:
+                r.raise_for_status()
+                with open(part, "wb") as f:
+                    for chunk in r.iter_bytes():
+                        f.write(chunk)
+        except httpx.HTTPError as e:
+            part.unlink(missing_ok=True)
+            raise ApiError(getattr(getattr(e, "response", None), "status_code", 0), f"download failed: {e}") from e
+        part.replace(dest)
         return dest
 
     def start_analysis(self, survey_id: str) -> dict:

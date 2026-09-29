@@ -89,8 +89,13 @@ class FakeApi:
         self.forms, self.need_restart = forms, need_restart
         self.calls, self.results = [], []
 
+    automation_status = "filling"
+
     def start_auto_filling(self, sid):
         self.calls.append("start_auto_filling")
+
+    def agent_status(self, sid):
+        return {"automation_status": self.automation_status}
 
     def autofill_claim(self, sid):
         self.calls.append("claim")
@@ -173,3 +178,27 @@ def test_values_changed_during_the_fill_refill_once(folder):
     r = filler.run()
     assert r["remaining"] == 1 and api.calls == ["claim", "finish", "claim"]
     assert filler.run()["automation_status"] == "completed"
+
+
+def test_forms_that_fail_locally_go_to_the_platform(folder):
+    calls = {"n": 0}
+
+    def flaky(template, ops, out):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("Acrobat crashed")
+        return local_fill(template, ops, out)
+    api = FakeApi([form(1), form(2)])
+    r = AutoFiller(api, folder, detect=available, fill=flaky).run()
+    assert [x["name"] for x in r["filled"]] == ["IMM1"] and [x["name"] for x in r["failed"]] == ["IMM2"]
+    assert r["mode"] == "platform" and "IMM2" in r["reason"]
+    assert api.calls == ["claim", "finish", "start_auto_filling"]
+
+
+def test_platform_state_clears_once_filling_is_done(folder):
+    api = FakeApi([form(1)])
+    filler = AutoFiller(api, folder, detect=lambda: {"available": False, "reason": "Reader only"})
+    filler.run()
+    api.automation_status = "completed"
+    assert filler.run() == {"mode": "platform", "remaining": 0, "automation_status": "completed"}
+    assert not (folder.state / "autofill.json").exists()

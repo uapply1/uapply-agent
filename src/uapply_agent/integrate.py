@@ -11,6 +11,8 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Optional
 
+from .util import write_text_atomic
+
 SERVER = "uapply"
 PLUGIN_DIR = Path(".claude") / "skills" / "uapply"   # auto-loaded by Claude Code as uapply@skills-dir
 
@@ -44,9 +46,12 @@ def _claude_json_entry(exe: str) -> dict:
 
 
 def write_claude_json(exe: str, path: Path) -> None:
-    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"{path} is not valid JSON ({e}); fix or remove it, then run setup again") from e
     data.setdefault("mcpServers", {})[SERVER] = _claude_json_entry(exe)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    write_text_atomic(path, json.dumps(data, indent=2))
 
 
 def register_claude(exe: str, home: Path, which: Callable[[str], Optional[str]] = _find) -> str:
@@ -118,18 +123,20 @@ def ensure_claude_login(claude: str, say: Callable[[str], None] = print, interac
 
 # ---- Codex (~/.codex/config.toml) ----
 
-_SECTION = re.compile(r"^\[mcp_servers\.uapply\][^\[]*", re.M | re.S)
+# The whole [mcp_servers.uapply] table: its header and every line up to the next table header.
+_SECTION = re.compile(r"^\[mcp_servers\.uapply\][ \t]*\n(?:(?!\[)[^\n]*\n?)*", re.M)
 
 
 def write_codex_toml(exe: str, path: Path) -> None:
     text = path.read_text(encoding="utf-8") if path.exists() else ""
     block = f'[mcp_servers.{SERVER}]\ncommand = {json.dumps(exe)}\nargs = ["mcp"]\n'
-    if _SECTION.search(text):
-        text = _SECTION.sub(block, text, count=1)
+    if m := _SECTION.search(text):
+        rest = text[m.end():]
+        text = text[:m.start()] + block + ("\n" + rest if rest else "")
     else:
         text = text.rstrip("\n") + ("\n\n" if text.strip() else "") + block
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    write_text_atomic(path, text)
 
 
 def register_codex(exe: str, home: Path, which: Callable[[str], Optional[str]] = _find) -> str:

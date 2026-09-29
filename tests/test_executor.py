@@ -202,3 +202,11 @@ def test_server_rejection_reason_is_given_back_to_the_model(folder):
     runner = FakeRunner([{"name": "Zhang"}])
     Executor(api, folder, runner=runner).run()
     assert "age: field required" in runner.calls[0]["user_prompt"]
+
+
+def test_unexpected_error_fails_the_task_but_not_the_run(folder):
+    api = FakeApi([task("t1"), task("t2")])
+    runner = FakeRunner([KeyError("pages"), {"file_types": ["Passport"]}])
+    stats = Executor(api, folder, runner=runner).run(workers=1)
+    assert stats.failed == 1 and stats.accepted == 1
+    assert api.released[0][0] == "t1" and "KeyError" in api.released[0][1]

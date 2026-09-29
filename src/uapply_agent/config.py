@@ -2,11 +2,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import stat
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
+
+from .util import write_text_atomic
+
+logger = logging.getLogger(__name__)
 
 APP = "uapply-agent"
 KEYRING_USER = "access_token"
@@ -85,52 +90,74 @@ class Settings:
 
 
 class Credentials:
-    """Access token in the OS keychain; a 0600 file when no keychain is available."""
+    """Access and refresh tokens in the OS keychain; a 0600 file when no keychain is available.
+    `UAPPLY_TOKEN` overrides the stored access token (CI, tests)."""
+
+    ACCESS, REFRESH = KEYRING_USER, "refresh_token"
 
     @staticmethod
     def _file() -> Path:
         return config_dir() / "credentials.json"
 
     @classmethod
-    def get_token(cls) -> Optional[str]:
-        if os.environ.get("UAPPLY_TOKEN"):
-            return os.environ["UAPPLY_TOKEN"]
+    def _read_file(cls) -> dict:
+        p = cls._file()
+        try:
+            return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        except (OSError, json.JSONDecodeError):
+            logger.warning("ignoring unreadable %s", p)
+            return {}
+
+    @classmethod
+    def _get(cls, key: str) -> Optional[str]:
         try:
             import keyring
-            tok = keyring.get_password(APP, KEYRING_USER)
-            if tok:
-                return tok
-        except Exception:
-            pass
-        p = cls._file()
-        if p.exists():
-            return json.loads(p.read_text(encoding="utf-8")).get("access_token")
-        return None
+            value = keyring.get_password(APP, key)
+            if value:
+                return value
+        except Exception:  # no usable keychain backend on this machine
+            logger.debug("keyring read failed", exc_info=True)
+        return cls._read_file().get("access_token" if key == cls.ACCESS else "refresh_token")
+
+    @classmethod
+    def get_token(cls) -> Optional[str]:
+        return os.environ.get("UAPPLY_TOKEN") or cls._get(cls.ACCESS)
+
+    @classmethod
+    def get_refresh_token(cls) -> Optional[str]:
+        return cls._get(cls.REFRESH)
 
     @classmethod
     def set_token(cls, token: str, refresh_token: Optional[str] = None) -> str:
+        """Store a new login. Without a refresh token any previous one is removed, so a pasted
+        token can never be silently refreshed back into an earlier account."""
         try:
             import keyring
-            keyring.set_password(APP, KEYRING_USER, token)
+            keyring.set_password(APP, cls.ACCESS, token)
             if refresh_token:
-                keyring.set_password(APP, "refresh_token", refresh_token)
+                keyring.set_password(APP, cls.REFRESH, refresh_token)
+            else:
+                cls._delete_keyring(cls.REFRESH)
             return "keyring"
         except Exception:
-            pass
+            logger.debug("keyring write failed, using the credentials file", exc_info=True)
         d = config_dir()
         d.mkdir(parents=True, exist_ok=True)
         p = cls._file()
-        p.write_text(json.dumps({"access_token": token, "refresh_token": refresh_token}), encoding="utf-8")
+        write_text_atomic(p, json.dumps({"access_token": token, "refresh_token": refresh_token}))
         p.chmod(stat.S_IRUSR | stat.S_IWUSR)
         return str(p)
 
-    @classmethod
-    def clear(cls) -> None:
+    @staticmethod
+    def _delete_keyring(key: str) -> None:
         try:
             import keyring
-            keyring.delete_password(APP, KEYRING_USER)
-        except Exception:
-            pass
-        p = cls._file()
-        if p.exists():
-            p.unlink()
+            keyring.delete_password(APP, key)
+        except Exception:  # absent entry or no backend
+            logger.debug("keyring delete of %s skipped", key, exc_info=True)
+
+    @classmethod
+    def clear(cls) -> None:
+        cls._delete_keyring(cls.ACCESS)
+        cls._delete_keyring(cls.REFRESH)
+        cls._file().unlink(missing_ok=True)

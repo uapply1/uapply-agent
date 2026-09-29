@@ -39,5 +39,4 @@ class CodexRunner(Runner):
         if proc.returncode != 0 and not text.strip():
             self._raise_if_limited(proc.stderr)
             raise RunnerError(f"codex exited {proc.returncode}: {proc.stderr.strip()[:300]}")
-        self._raise_if_limited(proc.stderr)
         return RunResult(output=extract_json(text), model=self.model or "codex-default", usage={}, raw=text)
