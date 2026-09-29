@@ -19,7 +19,6 @@ NOT_SIGNED_IN = re.compile(r"not logged in|please run /login|invalid api key|oau
 class ClaudeCodeRunner(Runner):
     name = "claude-code"
     binary = "claude"
-    supports_pdf = True    # the Read tool reads PDFs, ≤ 20 pages per call
     pages_per_call = 20
 
     def run(self, *, system_prompt, user_prompt, schema, images, cwd, timeout_s=300, text_files=()) -> RunResult:
@@ -28,8 +27,7 @@ class ClaudeCodeRunner(Runner):
         if files:
             listing = "\n".join(f"- {p.name}" for p in files)
             prompt = (f"{user_prompt}\n\nThe file(s) to look at are in the current directory:\n{listing}\n"
-                      f"Read each one with the Read tool (for a PDF, use its `pages` parameter for the page range "
-                      f"named in the task; a long text file may need several Reads with offset/limit), "
+                      f"Read each one with the Read tool (a long text file may need several Reads with offset/limit), "
                       f"then answer with JSON only.")
         # Not --bare: bare mode only accepts ANTHROPIC_API_KEY, so a Claude Pro/Max sign-in is "Not logged
         # in". The isolation it gave comes from explicit flags: no MCP servers (else each task would start

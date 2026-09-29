@@ -16,7 +16,6 @@ from .base import Runner, RunnerError, RunResult, extract_json, inline_schema_re
 class CodexRunner(Runner):
     name = "codex"
     binary = "codex"
-    supports_pdf = False   # images only; the executor renders PDF pages
     pages_per_call = 10
 
     def run(self, *, system_prompt, user_prompt, schema, images, cwd, timeout_s=300, text_files=()) -> RunResult:

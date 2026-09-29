@@ -69,7 +69,6 @@ def extract_json(text: str) -> dict:
 class Runner:
     name = "base"
     binary = ""
-    supports_pdf = False   # can the runtime read a PDF file directly (else the executor renders pages)
     pages_per_call = 20    # how many pages one headless call may look at
 
     def __init__(self, model: str = ""):

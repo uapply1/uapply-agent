@@ -22,6 +22,7 @@ IMAGE_EXT = (".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp")
 
 
 PROMPT_INLINE_MAX = 6000   # characters; longer prompts are passed as files
+CLASSIFY_PAGES = 3         # a PDF's first pages are enough to classify it
 
 
 @dataclass
@@ -115,11 +116,11 @@ class Executor:
             user_prompt = "The task is in task.md in the current directory. Read the whole file, then answer."
         return system_prompt, user_prompt, text_files
 
-    def _for_model(self, path: Path, cache: Path) -> Path:
-        """A PDF goes to the runtime as-is when it can read PDFs; otherwise page 1 as an image."""
-        if path.suffix.lower() == ".pdf" and self.runner.supports_pdf:
-            return path
-        return to_image_for_model(path, cache)
+    def _for_model(self, path: Path, cache: Path) -> list[Path]:
+        """Images the model looks at: a PDF's first pages rendered locally (Read's `pages` needs poppler)."""
+        if path.suffix.lower() == ".pdf":
+            return render_pdf_pages(path, cache, 1, min(CLASSIFY_PAGES, pdf_page_count(path)))
+        return [to_image_for_model(path, cache)]
 
     # ---- generic kinds (classification, sections, ...) ----
 
@@ -128,11 +129,8 @@ class Executor:
         schema = payload["output_schema"]
         cwd = self.folder.cache / task["id"]
         files = self._download_inputs(task)
-        images = [self._for_model(p, cwd) for p in files]
+        images = [img for p in files for img in self._for_model(p, cwd)]
         user_prompt = payload.get("user_prompt", "")
-        if any(p.suffix.lower() == ".pdf" for p in images):
-            user_prompt += ("\n\nFor a PDF, read only its first pages: call Read with pages=\"1-3\" "
-                            "(never without a page range) and classify from those.")
         for t in payload.get("text_inputs", []):
             user_prompt += f"\n\n--- document {t.get('document_id')} ---\n{t.get('text', '')}"
         rejection = task.get("rejection") or {}
@@ -223,15 +221,10 @@ class Executor:
         return [seen[k] for k in sorted(seen)], usage, model
 
     def _ocr_range(self, src, payload, schema, cwd, stats, first, last):
-        if self.runner.supports_pdf:
-            images = [src]
-            prompt = (f"{payload['user_prompt']}\n\nTranscribe pages {first} to {last} of {src.name} "
-                      f"(read it with pages=\"{first}-{last}\"). Return exactly {last - first + 1} entries, "
-                      f"numbered n={first} to n={last}.")
-        else:
-            images = render_pdf_pages(src, cwd, first, last)
-            prompt = (f"{payload['user_prompt']}\n\nThe images are pages {first} to {last} of the document, in order. "
-                      f"Return exactly {last - first + 1} entries, numbered n={first} to n={last}.")
+        # Rendered here with PyMuPDF: Claude's Read needs poppler for a page range, which Windows lacks.
+        images = render_pdf_pages(src, cwd, first, last)
+        prompt = (f"{payload['user_prompt']}\n\nThe images are pages {first} to {last} of the document, in order. "
+                  f"Return exactly {last - first + 1} entries, numbered n={first} to n={last}.")
         rr = self.runner.run(system_prompt=payload["system_prompt"], user_prompt=prompt,
                              schema=schema, images=images, cwd=cwd)
         stats.bump('model_calls')
