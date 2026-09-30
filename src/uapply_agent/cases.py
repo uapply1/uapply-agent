@@ -78,6 +78,25 @@ def startable_document_ids(survey: dict) -> list[str]:
             and str(d.get("document_type_id")) not in skip]
 
 
+def not_processable(survey: dict, document_ids: list[str]) -> dict[str, str]:
+    """{document id: reason} for requested documents the pipeline will refuse, so the caller does not
+    ask the backend and get a 400: stored-only types (e.g. Digital Photo, Custodianship Declaration)
+    and pages of a split PDF."""
+    skip = unprocessable_types(survey)
+    types = {str(t.get("id")): t.get("name") for t in survey.get("document_types") or []}
+    docs = {str(d.get("id")): d for d in survey.get("documents") or []}
+    out = {}
+    for did in document_ids:
+        d = docs.get(str(did))
+        if d is None:
+            out[did] = "not a document of this case"
+        elif d.get("old_doc_id"):
+            out[did] = "a page of a split PDF; start its parent document"
+        elif str(d.get("document_type_id")) in skip:
+            out[did] = f"{types.get(str(d.get('document_type_id')), 'this type')} is stored only, never processed"
+    return out
+
+
 def progress(survey: dict) -> dict:
     """Per-document progress of the case (top-level documents only). Files of types that are never
     processed are listed apart, not counted as pending."""

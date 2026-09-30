@@ -5,6 +5,7 @@ import json
 import logging
 import mimetypes
 import threading
+import time
 from collections.abc import Iterable
 from contextlib import ExitStack
 from pathlib import Path
@@ -19,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 USER_AGENT = f"uapply-agent/{__version__}"
 AGENT_PREFIX = "/api/ai-parse/agent/"
+TRANSIENT_STATUSES = (500, 502, 503, 504)
+TRANSIENT_ATTEMPTS = 3
+TRANSIENT_BACKOFF_S = 1.5
 NO_AGENT_API_HINT = ("this uApply backend does not offer the local-agent API; the case runs in server mode "
                      "and its documents are processed by uApply's server models")
 
@@ -85,10 +89,21 @@ class UApplyApi:
 
     def _req(self, method: str, path: str, _retry: bool = True, **kw) -> Any:
         sent_token = self.token
-        try:
-            r = self._client.request(method, path, **kw)
-        except httpx.HTTPError as e:
-            raise ApiError(0, f"{type(e).__name__}: {e}", "check the network connection to the uApply backend") from e
+        for attempt in range(TRANSIENT_ATTEMPTS):
+            try:
+                r = self._client.request(method, path, **kw)
+            except httpx.HTTPError as e:
+                if method == "GET" and attempt + 1 < TRANSIENT_ATTEMPTS:
+                    time.sleep(TRANSIENT_BACKOFF_S * (attempt + 1))
+                    continue
+                raise ApiError(0, f"{type(e).__name__}: {e}",
+                               "check the network connection to the uApply backend") from e
+            # A read that hits a passing server error (deploy, restart) is tried again before it fails a task.
+            if method == "GET" and r.status_code in TRANSIENT_STATUSES and attempt + 1 < TRANSIENT_ATTEMPTS:
+                logger.warning("GET %s answered HTTP %s; retrying", path, r.status_code)
+                time.sleep(TRANSIENT_BACKOFF_S * (attempt + 1))
+                continue
+            break
         if r.status_code == 401 and _retry and self._refresh_token(sent_token):
             return self._req(method, path, _retry=False, **kw)
         if r.status_code >= 400:

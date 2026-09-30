@@ -335,3 +335,17 @@ def test_playbook_treats_folder_names_as_hints():
     from uapply_agent import playbook
     rules = playbook.instructions()
     assert "Subfolder names" in rules and "Proof of Relationship" in rules
+
+
+def test_start_processing_skips_stored_only_types_with_the_reason(bound, monkeypatch):
+    survey = bound.survey("s-1")
+    survey["document_types"].append({"id": "dt-photo", "name": "Digital Photo", "can_process": False})
+    survey["documents"] = [{"id": "d-photo", "file_name": "photo.jpg", "status": "uploaded", "document_type_id": "dt-photo"},
+                           {"id": "d-pass", "file_name": "p.pdf", "status": "uploaded", "document_type_id": "dt-pass"}]
+    monkeypatch.setattr(bound, "survey", lambda sid: survey)
+    out = m.start_processing(document_ids=["d-photo", "d-pass", "zzz"])
+    by = {r["document_id"]: r for r in out["started"]}
+    assert by["d-pass"]["ok"] and bound.started == ["d-pass"]
+    assert by["d-photo"]["skipped"] and "stored only" in by["d-photo"]["message"]
+    assert by["zzz"]["skipped"]
+

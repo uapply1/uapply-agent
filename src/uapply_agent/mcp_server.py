@@ -243,9 +243,12 @@ def list_documents() -> dict:
 @tool(requires="case")
 def start_processing(document_ids: list[str] | None = None) -> dict:
     """Start processing the uploaded documents (uploads alone never start it for agent cases), or retry
-    failed ones."""
-    ids = document_ids or cases.startable_document_ids(ctx.api.survey(ctx.survey_id))
-    started = []
+    failed ones. Documents of stored-only types (see `progress.not_processed`) are skipped with the
+    reason: the pipeline never processes them and they do not block the analysis."""
+    survey = ctx.api.survey(ctx.survey_id)
+    skipped = cases.not_processable(survey, document_ids or [])
+    ids = [d for d in document_ids if d not in skipped] if document_ids else cases.startable_document_ids(survey)
+    started = [{"document_id": did, "ok": False, "skipped": True, "message": why} for did, why in skipped.items()]
     for did in ids:
         try:
             r = ctx.api.start_document_processing(ctx.survey_id, did)

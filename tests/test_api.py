@@ -120,3 +120,36 @@ def test_credentials_fall_back_to_a_private_file_without_a_keychain(monkeypatch)
     assert (Credentials.get_token(), Credentials.get_refresh_token()) == ("a1", "r1")
     Credentials.clear()
     assert not Credentials._file().exists()
+
+
+def test_reads_retry_a_passing_server_error(monkeypatch):
+    from uapply_agent import api as api_mod
+    monkeypatch.setattr(api_mod.time, "sleep", lambda s: None)
+    answers = iter([500, 502, 200])
+
+    def handler(req):
+        code = next(answers)
+        return httpx.Response(code, json={"url": "https://s3/x"} if code == 200 else {},
+                              headers={"content-type": "application/json"})
+    assert client(handler).document_download_url("d1") == "https://s3/x"
+
+
+def test_writes_are_not_retried_and_a_lasting_error_surfaces(monkeypatch):
+    from uapply_agent import api as api_mod
+    monkeypatch.setattr(api_mod.time, "sleep", lambda s: None)
+    calls = []
+
+    def handler(req):
+        calls.append(req.method)
+        return httpx.Response(500, text="<html>Server Error (500)</html>")
+    try:
+        client(handler).start_analysis("s-1")
+        assert False, "expected ApiError"
+    except ApiError as e:
+        assert e.status == 500 and calls == ["POST"]
+    try:
+        client(handler).survey("s-1")
+        assert False, "expected ApiError"
+    except ApiError as e:
+        assert e.status == 500 and calls.count("GET") == 3
+
