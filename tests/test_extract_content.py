@@ -177,3 +177,9 @@ def test_classification_of_long_pdf_renders_only_three_pages(folder, tmp_path):
     runner = ClassifyRunner(pages_per_call=20)
     Executor(FakeApi(src, [t]), folder, runner=runner).run()
     assert len(runner.calls[0]["images"]) == 3
+
+
+def test_extracted_text_drops_characters_the_backend_cannot_store():
+    from uapply_agent.local_ops import clean_extracted_text
+    assert clean_extracted_text("Offer\x00 letter\x07\n\tok \ud83d") == "Offer letter\n\tok "
+

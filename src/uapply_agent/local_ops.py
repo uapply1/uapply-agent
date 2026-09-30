@@ -1,6 +1,7 @@
 """Non-LLM local work: page rendering, text-layer extraction, HEIC conversion."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from .constants import HEIC_EXTENSIONS
@@ -43,6 +44,15 @@ def looks_like_real_text(text: str, min_ratio: float = 0.85) -> bool:
     return ok / len(chars) >= min_ratio
 
 
+# Control characters (except newline, tab, return) and lone surrogates: PDF text layers can carry
+# them, and the backend's database cannot store them.
+_UNSTORABLE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff]")
+
+
+def clean_extracted_text(text: str) -> str:
+    return _UNSTORABLE.sub("", text)
+
+
 def pdf_pages_text(pdf: Path, min_chars_per_page: int = 40, force_ocr: bool = False) -> list[str] | None:
     """One string per page from the text layer, or None when the PDF is a scan
     (or its text layer does not look like real text, or OCR is forced)."""
@@ -52,7 +62,7 @@ def pdf_pages_text(pdf: Path, min_chars_per_page: int = 40, force_ocr: bool = Fa
     pages = []
     with pdfplumber.open(pdf) as doc:
         for page in doc.pages:
-            pages.append(page.extract_text() or "")
+            pages.append(clean_extracted_text(page.extract_text() or ""))
     joined = "".join(pages)
     if not pages or sum(len(t.strip()) for t in pages) < min_chars_per_page * len(pages):
         return None
