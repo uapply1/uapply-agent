@@ -46,6 +46,7 @@ class FakeApi:
 
 
 def test_mode_follows_the_setting_then_the_client():
+    assert runner_mode("auto", "claude-code") == "session"   # what Claude Code actually sends
     assert runner_mode("auto", "Claude Code") == "session"
     assert runner_mode("auto", "Claude Code Desktop") == "session"
     assert runner_mode("auto", "codex") == "cli"

@@ -24,7 +24,7 @@ def ok(**data) -> dict:
     return {"ok": True, **data}
 
 
-CLAUDE_CODE_CLIENT = "Claude Code"      # what the Claude Code MCP client sends as its name
+CLAUDE_CODE_CLIENT = "claude-code"      # Claude Code's MCP clientInfo.name ("Claude Code" is only its title)
 TASK_RUNNERS = ("auto", "session", "cli")
 
 
@@ -33,7 +33,8 @@ def runner_mode(setting: str, client_name: str | None) -> str:
     headless CLI ("cli")."""
     if setting in ("session", "cli"):
         return setting
-    return "session" if (client_name or "").startswith(CLAUDE_CODE_CLIENT) else "cli"
+    name = (client_name or "").strip().lower().replace(" ", "-")
+    return "session" if name.startswith(CLAUDE_CODE_CLIENT) else "cli"
 
 
 NO_CASE_HINT = ("ask the RCIC: create a new case (list_application_types → confirmation → create_case) "
