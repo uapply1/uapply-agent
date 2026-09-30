@@ -1,8 +1,8 @@
-"""IMM PDF auto-fill with the RCIC's own Adobe Acrobat Pro (Windows, IAC COM through pywin32).
+"""IMM PDF auto-fill with the RCIC's own Adobe Acrobat Pro (Windows).
 
 The backend records each form fill as a list of operations (pdf_auto record mode); this module
-replays them in Acrobat exactly as the platform's filler does: `formattedValue` + event, and
-choice lists matched with the same ChoiceMapper rules.
+replays them through XfaFormLib.dll with the same calls as pdf_auto's XfaHelper: `formattedValue`
++ event, and choice lists matched with the same ChoiceMapper rules.
 """
 from __future__ import annotations
 
@@ -14,9 +14,12 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from . import xfaform
+
 logger = logging.getLogger(__name__)
 
 PD_SAVE_FULL = 1
+SET_PROPERTY, INVOKE_METHOD = 8192, 256    # System.Reflection.BindingFlags, as pdf_auto's XfaHelper
 NO_AUTOMATION = "Acrobat is installed but its automation is unavailable (Reader, or no Pro licence)"
 
 
@@ -69,9 +72,24 @@ def detect(probe: bool = True) -> dict:
             with DialogClicker(), AcrobatDoc(pdf) as d:   # a first-run dialog must not hang the probe
                 if d.jso is None:
                     return {"available": False, "path": path, "reason": NO_AUTOMATION}
+        if err := xfaform.ensure_registered() or _xfaform_load_error():
+            return {"available": False, "path": path, "reason": err}
         return {"available": True, "path": path, "reason": ""}
     except Exception as e:  # noqa: BLE001  (COM/registry errors of any kind mean "not usable")
         return {"available": False, "path": None, "reason": f"Acrobat automation failed: {e}"[:300]}
+
+
+def _xfaform_load_error() -> str | None:
+    """Loads XfaFormLib through COM, as a fill will (needs .NET Framework 4)."""
+    _co_initialize()
+    try:
+        _dispatch(xfaform.PROG_ID)
+        return None
+    except Exception as e:  # noqa: BLE001  (any COM/.NET error means the fill cannot run)
+        return f"XfaFormLib did not load: {e}"[:300]
+    finally:
+        import pythoncom
+        pythoncom.CoUninitialize()
 
 
 # ---- one open document ----
@@ -88,8 +106,8 @@ def _dispatch(prog_id: str):
 
 
 class AcrobatDoc:
-    """AcroExch.PDDoc + its JavaScript object. Never kills Acrobat; quits it only if we started it
-    with nothing else open."""
+    """AcroExch.PDDoc + its JavaScript object, for the probe. Never kills Acrobat; quits it only if
+    we started it with nothing else open."""
 
     def __init__(self, path: Path, dispatch: Callable = _dispatch):
         self.path, self._dispatch = Path(path), dispatch
@@ -125,6 +143,53 @@ class AcrobatDoc:
                 pythoncom.CoUninitialize()
 
 
+class XfaForm:
+    """An IMM form opened through XfaFormLib.XfaFormHelper, the COM DLL pdf_auto fills with. Unlike
+    pdf_auto it never kills Acrobat; the DLL's Close() quits it, which Acrobat declines while the
+    RCIC has documents open."""
+
+    def __init__(self, path: Path, dispatch: Callable = _dispatch):
+        self.path, self._dispatch = Path(path), dispatch
+        self.helper = None
+        self._com = False
+
+    def __enter__(self) -> XfaForm:
+        if self._dispatch is _dispatch:
+            if err := xfaform.ensure_registered():   # again after an update moved the DLL
+                raise AcrobatError(err)
+            self._com = _co_initialize()
+        try:
+            self.helper = self._dispatch(xfaform.PROG_ID)
+            if not self.helper.Open(str(self.path)):
+                raise AcrobatError(f"Acrobat could not open {self.path.name}")
+        except BaseException:
+            self.__exit__()
+            raise
+        return self
+
+    def resolve(self, node: str):
+        return self.helper.ResolveNode(node)
+
+    def invoke(self, obj, member: str, args: list, flags: int):
+        return self.helper.InvokeMember(obj, member, args, flags)
+
+    def save(self, out: Path) -> None:
+        if not self.helper.Save(str(out)):
+            raise AcrobatError(f"Acrobat could not save {out.name}")
+
+    def __exit__(self, *exc) -> None:
+        try:
+            if self.helper is not None:
+                self.helper.Close()
+        except Exception:  # closing must not mask the fill's own error
+            logger.debug("closing Acrobat failed", exc_info=True)
+        finally:
+            self.helper = None
+            if self._com:
+                import pythoncom
+                pythoncom.CoUninitialize()
+
+
 # ---- choice matching (pdf_auto ChoiceMapper) ----
 
 def _normalize(text) -> str:
@@ -153,11 +218,11 @@ def choice_matches(option: str, value: str, mapper: dict | None) -> bool:
 
 # ---- replay ----
 
-def _display_items(field) -> list[str]:
+def _display_items(form: XfaForm, field) -> list[str]:
     # As pdf_auto's XfaHelper: items from index 1 until an empty one; setItemState uses the same numbering.
     items, i = [], 1
     while i < 1000:
-        item = field.getDisplayItem(i)
+        item = form.invoke(field, "getDisplayItem", [i], INVOKE_METHOD)
         if item is None or item == "":
             break
         items.append(str(item))
@@ -165,26 +230,26 @@ def _display_items(field) -> list[str]:
     return items
 
 
-def apply_op(xfa, op: dict) -> str | None:
+def apply_op(form: XfaForm, op: dict) -> str | None:
     """Apply one recorded operation; returns an error string or None."""
     node = op.get("node")
     try:
-        field = xfa.resolveNode(node)
+        field = form.resolve(node)
         if field is None:
             return f"{node}: not found in the form"
         kind = op.get("op")
         if kind == "set":
             value = op.get("value")
-            field.formattedValue = "" if value is None else str(value)
+            form.invoke(field, "formattedValue", ["" if value is None else str(value)], SET_PROPERTY)
             if op.get("event"):
-                field.execEvent(op["event"])
+                form.invoke(field, "execEvent", [op["event"]], INVOKE_METHOD)
         elif kind == "event":
-            field.execEvent(op["event"])
+            form.invoke(field, "execEvent", [op["event"]], INVOKE_METHOD)
         elif kind == "choice":
-            for index, option in enumerate(_display_items(field)):
+            for index, option in enumerate(_display_items(form, field)):
                 if choice_matches(option, op.get("value"), op.get("mapper")):
-                    field.setItemState(index + 1, True)
-                    field.execEvent("exit")
+                    form.invoke(field, "setItemState", [index + 1, True], INVOKE_METHOD)
+                    form.invoke(field, "execEvent", ["exit"], INVOKE_METHOD)
                     return None
             return f"{node}: no option matches {op.get('value')!r}"
         else:
@@ -194,16 +259,13 @@ def apply_op(xfa, op: dict) -> str | None:
         return f"{node}: {e}"[:300]
 
 
-def fill(template: Path, ops: list, out: Path, doc_factory: Callable = AcrobatDoc,
+def fill(template: Path, ops: list, out: Path, doc_factory: Callable = XfaForm,
          on_progress: Callable[[int, int], None] | None = None) -> dict:
     """Open the blank IMM template, replay the ops, save to `out`."""
     errors = []
     with DialogClicker(), doc_factory(template) as doc:
-        if doc.jso is None:
-            raise AcrobatError("Acrobat returned no JavaScript object (Reader, or Pro not licensed)")
-        xfa = doc.jso.xfa
         for n, op in enumerate(ops, start=1):
-            if err := apply_op(xfa, op):
+            if err := apply_op(doc, op):
                 errors.append(err)
             if on_progress and n % 50 == 0:
                 on_progress(n, len(ops))

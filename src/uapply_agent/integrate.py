@@ -201,6 +201,11 @@ def run_setup(say: Callable[[str], None] = print, home: Path | None = None, sett
             say({True: "Claude Code CLI: signed in",
                  False: "Claude Code CLI: NOT signed in — run `claude auth login`, or local tasks cannot run",
                  None: "Claude Code CLI: sign-in state unknown — run `claude auth status`"}[state])
+    if sys.platform == "win32":
+        from .xfaform import ensure_registered
+        err = ensure_registered()
+        out["xfaform"] = err or "registered"
+        say(f"XfaFormLib (IMM auto-fill with Acrobat Pro): {err or 'registered'}")
     out["claude"] = register_claude(exe, home)
     say(f"Claude Code: {out['claude']}")
     if not out["claude"].startswith("skipped"):

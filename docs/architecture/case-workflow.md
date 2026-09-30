@@ -123,8 +123,9 @@ a dashboard case.
    `ANALYSIS_NOT_DONE` before the analysis is done.
 2. `autofill_forms()` until `remaining` is 0. With Adobe Acrobat Pro on the
    RCIC's Windows PC, the backend sends each form's recorded field operations,
-   the agent replays them through Acrobat and uploads the result (copies in
-   `.uapply/output/imm_pdfs/`). Otherwise, or when Acrobat fails, it returns
+   the agent replays them through Acrobat with XfaFormLib.dll, as pdf_auto does,
+   and uploads the result (copies in `.uapply/output/imm_pdfs/`). Otherwise, or
+   when Acrobat fails or a form gets no field written, it returns
    `mode: platform`: uApply's platform filler fills the forms (no AI) and the
    agent loops `wait_for_stage("filling")`.
 3. `final_report()`: status, AI Check counts (conflict, doubtful, missing),

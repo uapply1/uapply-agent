@@ -21,12 +21,19 @@ class Field:
         self.selected = i
 
 
-class Xfa:
+class Form:
+    """XfaFormLib's calls: ResolveNode on xfa.form, then InvokeMember with explicit BindingFlags."""
     def __init__(self, fields):
-        self.fields = fields
+        self.fields, self.calls = fields, []
 
-    def resolveNode(self, node):
+    def resolve(self, node):
         return self.fields.get(node)
+
+    def invoke(self, obj, member, args, flags):
+        self.calls.append((member, flags))
+        if flags == acrobat.SET_PROPERTY:
+            return setattr(obj, member, *args)
+        return getattr(obj, member)(*args)
 
 
 def test_choice_matching_follows_pdf_auto_mappers():
@@ -40,23 +47,25 @@ def test_choice_matching_follows_pdf_auto_mappers():
 
 def test_apply_op_sets_values_events_and_choices():
     name, dob, sex = Field(), Field(), Field(items=["F Female", "M Male", "U Unknown"])
-    xfa = Xfa({"n": name, "d": dob, "s": sex})
-    assert acrobat.apply_op(xfa, {"op": "set", "node": "n", "value": "LI", "event": None}) is None
-    assert acrobat.apply_op(xfa, {"op": "set", "node": "d", "value": 2007, "event": "change"}) is None
-    assert acrobat.apply_op(xfa, {"op": "choice", "node": "s", "value": "Male",
-                                  "mapper": {"compare": "equals", "mapping": {"M Male": "Male"}}}) is None
+    form = Form({"n": name, "d": dob, "s": sex})
+    assert acrobat.apply_op(form, {"op": "set", "node": "n", "value": "LI", "event": None}) is None
+    assert acrobat.apply_op(form, {"op": "set", "node": "d", "value": 2007, "event": "change"}) is None
+    assert acrobat.apply_op(form, {"op": "choice", "node": "s", "value": "Male",
+                                   "mapper": {"compare": "equals", "mapping": {"M Male": "Male"}}}) is None
     assert (name.formattedValue, dob.formattedValue, dob.events) == ("LI", "2007", ["change"])
     assert sex.selected == 2 and sex.events == ["exit"]                       # 1-based, as XfaHelper
-    assert "no option" in acrobat.apply_op(xfa, {"op": "choice", "node": "s", "value": "Other", "mapper": {"compare": "equals"}})
-    assert "not found" in acrobat.apply_op(xfa, {"op": "set", "node": "missing", "value": "x"})
+    assert form.calls[:3] == [("formattedValue", acrobat.SET_PROPERTY), ("formattedValue", acrobat.SET_PROPERTY),
+                              ("execEvent", acrobat.INVOKE_METHOD)]
+    assert "no option" in acrobat.apply_op(form, {"op": "choice", "node": "s", "value": "Other", "mapper": {"compare": "equals"}})
+    assert "not found" in acrobat.apply_op(form, {"op": "set", "node": "missing", "value": "x"})
 
 
-class FakeDoc:
+class FakeDoc(Form):
     opened = []
 
     def __init__(self, path, fields=None):
+        super().__init__(fields if fields is not None else {"n": Field()})
         self.path = path
-        self.jso = type("J", (), {"xfa": Xfa(fields if fields is not None else {"n": Field()})})()
 
     def __enter__(self):
         FakeDoc.opened.append(self.path)
@@ -153,6 +162,22 @@ def test_fill_is_time_boxed_and_resumes(folder):
     first = filler.run(budget_s=-1)
     assert first["remaining"] == 2 and api.calls == ["claim"]
     assert filler.run()["remaining"] == 0 and api.calls == ["claim", "finish"]           # no second claim
+
+
+def test_a_form_with_no_field_written_goes_to_the_platform(folder):
+    def blank(template, ops, out):
+        return acrobat.fill(template, ops, out, doc_factory=lambda p: FakeDoc(p, fields={}))
+    api = FakeApi([form(1), form(2)])
+    r = AutoFiller(api, folder, detect=available, fill=blank).run()
+    assert r["mode"] == "platform" and "wrote no fields" in r["reason"] and "n: not found" in r["reason"]
+    assert api.calls == ["claim", "start_auto_filling"]
+    assert api.results == [("id-1", False, api.results[0][2], None)]         # the blank PDF is not uploaded
+
+
+def test_field_errors_are_reported_with_the_filled_form(folder):
+    f = {**form(1), "ops": [{"op": "set", "node": "n", "value": "v"}, {"op": "set", "node": "zz", "value": "w"}]}
+    r = AutoFiller(FakeApi([f]), folder, detect=available, fill=local_fill).run()
+    assert r["filled"][0]["applied"] == 1 and r["filled"][0]["field_errors"] == ["zz: not found in the form"]
 
 
 def test_acrobat_that_cannot_automate_hands_over_to_the_platform(folder):

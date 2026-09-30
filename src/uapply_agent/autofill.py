@@ -119,10 +119,16 @@ class AutoFiller:
             logger.warning("%s: local fill failed: %s", name, e)
             self.api.autofill_result(sid, pid, error=f"local Acrobat fill failed: {e}"[:2000])
             return {"name": name, "ok": False, "error": str(e)[:300], "acrobat_failed": True}
+        if form.get("ops") and not r["applied"]:
+            # Every field failed: a blank form is no fill, so the platform fills it instead.
+            error = "local Acrobat fill wrote no fields: " + "; ".join(r["errors"][:3])
+            logger.warning("%s: %s", name, error)
+            self.api.autofill_result(sid, pid, error=error[:2000])
+            return {"name": name, "ok": False, "error": error[:300], "acrobat_failed": True}
         ops = max(1, len(form.get("ops", [])))
         rate = float(form.get("success_rate") or 0.0) * r["applied"] / ops
         self.api.autofill_result(sid, pid, pdf=out, success_rate=rate,
                                  errors=list(form.get("errors", [])) + r["errors"],
                                  survey_values_updated_at=form.get("survey_values_updated_at"))
         return {"name": name, "ok": True, "applied": r["applied"], "failed_fields": r["failed"],
-                "path": str(out.relative_to(self.folder.root))}
+                "field_errors": r["errors"][:5], "path": str(out.relative_to(self.folder.root))}

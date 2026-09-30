@@ -234,9 +234,10 @@ After the analysis `/uapply:run` finishes the case: `confirm_documents` (the
 dashboard's Confirm: archives + compression on uApply) and `autofill_forms`.
 With **Adobe Acrobat Pro on Windows** the IMM PDFs are filled on the RCIC's PC
 (uApply sends the recorded field operations; the agent replays them through
-Acrobat's IAC automation and uploads the result; copies land in
-`.uapply/output/imm_pdfs/`). Without it — Reader only, macOS, or automation
-failing — uApply's own filler does it (no AI). `uapply-agent acrobat` checks the
+XfaFormLib.dll, the same COM bridge uApply's platform filler uses, which `setup`
+registers without admin; copies land in `.uapply/output/imm_pdfs/`). Without it
+— Reader only, macOS, automation failing, or a form where no field could be
+written — uApply's own filler does it (no AI). `uapply-agent acrobat` checks the
 PC; `uapply-agent acrobat --pdf IMM5709.pdf` test-fills one field.
 
 The run ends with `final_report`: the dashboard's Submit step in the chat — status,
@@ -266,7 +267,8 @@ src/uapply_agent/
   runners/        claude_code.py (supported), codex.py (experimental); all runtime flags live here
   local_ops.py    page rendering, pdf text, HEIC → JPEG
   autofill.py     IMM PDF auto-fill: local Acrobat Pro or uApply's platform filler
-  acrobat.py      Adobe Acrobat Pro automation (Windows)
+  acrobat.py      Adobe Acrobat Pro automation (Windows) through XfaFormLib, as pdf_auto
+  xfaform.py      registers the shipped bin/XfaFormLib.dll (no regasm, no admin)
   report.py       end-of-run report + final package download
   api.py          typed backend client
   auth.py         Auth0 device login / pasted token
