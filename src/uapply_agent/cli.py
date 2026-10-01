@@ -76,7 +76,8 @@ def cmd_setup(args, settings):
             device_login(settings)
         except LoginError as e:
             print(f"login failed: {e}; run `uapply-agent login` later", file=sys.stderr)
-    print("Done. Open Claude Code or Codex in a client folder and type /uapply:run")
+    print("Done. Open a client folder in the Claude desktop app's Code tab (not Chat), the `claude` CLI, "
+          "or Codex, and type /uapply:run")
     return ExitCode.OK
 
 

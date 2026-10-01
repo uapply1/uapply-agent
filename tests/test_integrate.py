@@ -14,8 +14,17 @@ def test_claude_json_written_when_desktop_config_exists(tmp_path):
 
 
 def test_claude_skipped_without_cli_or_config(tmp_path):
-    assert it.register_claude("/x", tmp_path, which=lambda _: None).startswith("skipped")
+    msg = it.register_claude("/x", tmp_path, which=lambda _: None, desktop=lambda _: False)
+    assert msg.startswith("skipped")
     assert not (tmp_path / ".claude.json").exists()
+
+
+def test_claude_json_created_when_only_desktop_app_installed(tmp_path):
+    (tmp_path / "Library" / "Application Support" / "Claude").mkdir(parents=True)
+    msg = it.register_claude("/x/uapply-agent", tmp_path, which=lambda _: None)
+    assert msg.startswith("written")
+    import json
+    assert json.loads((tmp_path / ".claude.json").read_text())["mcpServers"]["uapply"]["command"] == "/x/uapply-agent"
 
 
 def test_codex_toml_appended_and_replaced(tmp_path):

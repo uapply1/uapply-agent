@@ -46,8 +46,8 @@ elevated window can fail with "Program 'powershell.exe' failed to run: Access
 is denied".
 
 The browser opens once, to confirm a code and sign in to uApply. Then open
-Claude Code (desktop app or terminal) or Codex in a client folder and type
-`/uapply:run`. The installer prints what it did, for example:
+a client folder in Claude Code (the desktop app's **Code** tab, not Chat, or
+the terminal) or Codex and type `/uapply:run`. The installer prints what it did, for example:
 
 ```
 uapply-agent: /Users/anna/.local/bin/uapply-agent
@@ -56,7 +56,7 @@ Claude Code: registered via `claude mcp add` (user scope)
 Claude Code: commands written to /Users/anna/.claude/skills/uapply
 Codex: skipped: Codex not found (no `codex` command, no ~/.codex)
 Logged in; token stored in keyring
-Done. Open Claude Code or Codex in a client folder and type /uapply:run
+Done. Open a client folder in the Claude desktop app's Code tab (not Chat), the `claude` CLI, or Codex, and type /uapply:run
 ```
 
 The agent updates itself at each start (see Updates); re-running the installer also upgrades. `uapply-agent setup` alone re-registers
@@ -169,6 +169,7 @@ in server mode, and uApply's own models process the documents.
 | Windows: `Access is denied` starting the installer, or "running as Administrator" | run it in a normal PowerShell window, not "Run as administrator"; the installer refuses elevated windows |
 | Claude sign-in: browser did not open, or `Login failed: Request failed with status code 400` | in a normal PowerShell window run `claude auth login`, open the printed link, sign in, and paste the code back; then start a new Claude session |
 | Windows: `failed to remove directory …\uv\tools\uapply-agent` | the exe is in use or owned by an elevated install: close Claude Code / Codex sessions, delete `%APPDATA%\uv\tools\uapply-agent`, rerun the installer |
+| Claude desktop app: "I don't recognize `/uapply:run`" | you are in the **Chat** tab; switch to the **Code** tab (`</>`, needs a paid Claude plan) and open the client folder |
 | `Unknown command: /uapply:run` | run `uapply-agent setup` (writes the plugin and registers the server), then start a **new** session; `claude plugin list` should show `uapply@skills-dir` and `/mcp` the connected server |
 | `401` from the API | `uapply-agent login` again (no refresh token yet) |
 | `chat sources` → `not_installed` / `not_logged_in` | install the AnyChat plugin and run its own login; the agent never handles that token |

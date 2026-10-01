@@ -60,7 +60,17 @@ def write_claude_json(exe: str, path: Path) -> None:
     write_text_atomic(path, json.dumps(data, indent=2))
 
 
-def register_claude(exe: str, home: Path, which: Callable[[str], str | None] = _find) -> str:
+def claude_desktop_installed(home: Path) -> bool:
+    """The Claude desktop app is installed; it creates ~/.claude.json only once the Code tab is opened."""
+    candidates = [home / "Applications" / "Claude.app", home / "Library" / "Application Support" / "Claude",
+                  home / "AppData" / "Local" / "AnthropicClaude", home / "AppData" / "Roaming" / "Claude"]
+    if sys.platform == "darwin":
+        candidates.append(Path("/Applications/Claude.app"))
+    return any(c.exists() for c in candidates)
+
+
+def register_claude(exe: str, home: Path, which: Callable[[str], str | None] = _find,
+                    desktop: Callable[[Path], bool] = claude_desktop_installed) -> str:
     claude = which("claude")
     cfg = home / ".claude.json"
     if claude:
@@ -68,10 +78,10 @@ def register_claude(exe: str, home: Path, which: Callable[[str], str | None] = _
         r = _run([claude, "mcp", "add", "--scope", "user", SERVER, "--", exe, "mcp"])
         if r.returncode == 0:
             return "registered via `claude mcp add` (user scope)"
-    if cfg.exists() or claude:
+    if cfg.exists() or claude or desktop(home):
         write_claude_json(exe, cfg)
         return f"written to {cfg}"
-    return "skipped: Claude Code not found (no `claude` command, no ~/.claude.json)"
+    return "skipped: Claude Code not found (no `claude` command, no ~/.claude.json, no Claude desktop app)"
 
 
 def verify_claude(which: Callable[[str], str | None] = _find) -> bool | None:
