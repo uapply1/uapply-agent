@@ -361,11 +361,18 @@ def release_task(task_id: str, reason: str) -> dict:
 
 
 @tool(requires="agent_api")
-def wait_for_stage(stage: Literal["processing", "analysis", "filling"] = "processing", timeout_s: int = 45) -> dict:
+def wait_for_stage(stage: Literal["processing", "analysis", "filling"] = "processing", timeout_s: int = 25) -> dict:
     """Long-poll (at most 60 s) until a stage is done for the case — processing, analysis or filling
     (the platform auto-fill) — and return the status either way."""
     timeout = max(1, min(int(timeout_s), LONG_POLL_MAX_S))
-    return _with_progress(ok(**ctx.api.agent_wait(ctx.survey_id, stage, timeout)))
+    try:
+        res = ctx.api.agent_wait(ctx.survey_id, stage, timeout)
+    except ApiError as e:
+        if e.status != 504:
+            raise
+        # A proxy in front of uApply cut the long poll short: not done yet, same as a timeout.
+        res = {**ctx.api.agent_status(ctx.survey_id), "done": False, "stage": stage}
+    return _with_progress(ok(**res))
 
 
 @tool(requires="agent_api")

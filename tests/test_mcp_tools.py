@@ -349,3 +349,16 @@ def test_start_processing_skips_stored_only_types_with_the_reason(bound, monkeyp
     assert by["d-photo"]["skipped"] and "stored only" in by["d-photo"]["message"]
     assert by["zzz"]["skipped"]
 
+
+
+def test_wait_for_stage_treats_a_gateway_timeout_as_not_done(bound, monkeypatch):
+    from uapply_agent.api import ApiError
+    m.init_case("s-1")
+
+    def gateway_timeout(survey_id, stage, timeout_s):
+        raise ApiError(504, "<html><title>504 Gateway Time-out</title></html>")
+    monkeypatch.setattr(bound, "agent_wait", gateway_timeout, raising=False)
+    monkeypatch.setattr(bound, "agent_status", lambda sid: {"documents": {"analyzing": 9}}, raising=False)
+    monkeypatch.setattr(m, "_with_progress", lambda out: out)
+    out = m.wait_for_stage("processing")
+    assert out["ok"] and out["done"] is False and out["documents"] == {"analyzing": 9}

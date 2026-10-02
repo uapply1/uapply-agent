@@ -143,7 +143,7 @@ def cmd_run(args, settings):
                 return ExitCode.RUNTIME_UNAVAILABLE
             if not args.follow:
                 break
-            if api.agent_wait(folder.survey_id, "processing", 45).get("done") and stats.remaining == 0:
+            if api.agent_wait(folder.survey_id, "processing", 25).get("done") and stats.remaining == 0:
                 break
         _print_json(api.agent_status(folder.survey_id))
     return ExitCode.OK

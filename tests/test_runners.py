@@ -211,3 +211,58 @@ def test_codex_runner_sends_prompt_on_stdin(monkeypatch, tmp_path):
     assert rr.output == {"file_types": ["Visa"]}
     assert seen["cmd"][-1] == "-" and "x" * 100_000 in seen["stdin"] and "## Instructions" in seen["stdin"]
     assert all(len(a) < 1000 for a in seen["cmd"])
+
+
+def test_codex_gets_a_strict_schema_and_optional_nulls_are_dropped(monkeypatch, tmp_path):
+    import subprocess
+
+    from pydantic import BaseModel, Field
+
+    from uapply_agent.runners.codex import CodexRunner
+
+    class Page(BaseModel):
+        n: int = Field(ge=1)
+        text: str
+        note: str = ""
+
+    class Pages(BaseModel):
+        pages: list[Page] = Field(min_length=1)
+        language: str | None = None
+
+    seen = {}
+
+    def fake_exec(self, cmd, cwd, timeout_s, stdin=None):
+        seen["schema"] = json.loads(Path(cmd[cmd.index("--output-schema") + 1]).read_text())
+        out = cmd[cmd.index("--output-last-message") + 1]
+        Path(out).write_text('{"pages": [{"n": 1, "text": "hi", "note": null}], "language": null}')
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(CodexRunner, "_exec", fake_exec)
+    rr = CodexRunner().run(system_prompt="S", user_prompt="U", schema=Pages.model_json_schema(), images=[], cwd=tmp_path)
+    s = seen["schema"]
+    page = s["properties"]["pages"]["items"]
+    assert s["additionalProperties"] is False and s["required"] == ["pages", "language"]
+    assert page["additionalProperties"] is False and page["required"] == ["n", "text", "note"]
+    assert page["properties"]["note"]["type"] == ["string", "null"]
+    assert "minimum" not in json.dumps(s) and "title" not in json.dumps(s) and "$defs" not in s
+    assert rr.output == {"pages": [{"n": 1, "text": "hi"}]}
+    Pages.model_validate(rr.output)
+
+
+def test_codex_without_strict_schema_and_error_from_stdout(monkeypatch, tmp_path):
+    import subprocess
+
+    from uapply_agent.runners.base import RunnerError
+    from uapply_agent.runners.codex import CodexRunner, strict_schema
+    assert strict_schema({"type": "object", "additionalProperties": {"type": "string"}}) is None
+    seen = {}
+
+    def fake_exec(self, cmd, cwd, timeout_s, stdin=None):
+        seen["cmd"] = cmd
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="ERROR: Invalid schema for response_format",
+                                           stderr="")
+
+    monkeypatch.setattr(CodexRunner, "_exec", fake_exec)
+    with pytest.raises(RunnerError, match="Invalid schema"):
+        CodexRunner().run(system_prompt="S", user_prompt="U", schema={"type": "object"}, images=[], cwd=tmp_path)
+    assert "--output-schema" not in seen["cmd"]
