@@ -29,7 +29,6 @@ from .executor import Executor
 from .folder import WorkingFolder
 from .local_ops import heic_to_jpeg, pdf_page_count, render_pdf_page
 from .runners import RunnerError, detect_runtimes, get_runner
-from .runners.claude_code import claude_logged_in
 from .session_runner import RUNTIME as SESSION_RUNTIME
 from .session_runner import SessionRunner
 
@@ -99,30 +98,14 @@ def _with_progress(out: dict) -> dict:
 
 # ---------- session ----------
 
-_claude_signed_in: set[str] = set()
-
-
-def _claude_login_state(path: str) -> bool | None:
-    """Cached once signed in; a signed-out CLI is checked again on the next call."""
-    if path in _claude_signed_in:
-        return True
-    state = claude_logged_in(path)
-    if state:
-        _claude_signed_in.add(path)
-    return state
-
-
 @tool()
 def whoami(mcp_ctx: Context | None = None) -> dict:
     """Backend URL, login state, whether the backend serves the local-agent API, where model tasks run
-    (`task_runner`: "session" = subagents of this session on your login, "cli" = a headless Claude Code /
-    Codex CLI), detected CLI runtimes, Adobe Acrobat availability, and the working folder."""
+    (`task_runner`: "session" = subagents of this session on your login, "cli" = a headless Codex CLI),
+    detected CLI runtimes, Adobe Acrobat availability, and the working folder."""
     api = ctx.api
     mode = _mode(mcp_ctx)
     runtimes = detect_runtimes(ctx.settings)
-    for r in runtimes:
-        if r["name"] == "claude-code" and not r.get("error"):
-            r["logged_in"] = _claude_login_state(r["path"])
     out = ok(backend=ctx.settings.backend_url, logged_in=api.logged_in,
              agent_api=api.agent_api_available() if api.logged_in else None, task_runner=mode, runtimes=runtimes,
              acrobat=detect_acrobat(probe=False), folder=str(ctx.folder.root), case=ctx.folder.case or None)
@@ -132,9 +115,7 @@ def whoami(mcp_ctx: Context | None = None) -> dict:
         out["hint"] = (f"{runtimes[0]['name']} is installed but does not start on this machine "
                        f"({runtimes[0]['error']}); local tasks cannot run — tell the RCIC, do not retry")
     elif not runtimes:
-        out["hint"] = "no Claude Code / Codex CLI: local tasks cannot run; rerun the uApply installer"
-    elif all(r.get("logged_in") is False for r in runtimes):
-        out["hint"] = "the Claude Code CLI is not signed in: ask the RCIC to run `claude auth login` in a terminal"
+        out["hint"] = "no Codex CLI: local tasks cannot run; install the Codex CLI, then rerun the uApply installer"
     return out
 
 

@@ -29,12 +29,12 @@ TASK_RUNNERS = ("auto", "session", "cli")
 
 
 def runner_mode(setting: str, client_name: str | None) -> str:
-    """Where model tasks run: subagents of the connected session ("session", Claude Code only) or a
-    headless CLI ("cli")."""
-    if setting in ("session", "cli"):
-        return setting
+    """Where model tasks run: subagents of the connected session ("session"; always in Claude Code,
+    which never runs a headless CLI) or the headless Codex CLI ("cli")."""
     name = (client_name or "").strip().lower().replace(" ", "-")
-    return "session" if name.startswith(CLAUDE_CODE_CLIENT) else "cli"
+    if name.startswith(CLAUDE_CODE_CLIENT):
+        return "session"
+    return setting if setting in ("session", "cli") else "cli"
 
 
 NO_CASE_HINT = ("ask the RCIC: create a new case (list_application_types → confirmation → create_case) "

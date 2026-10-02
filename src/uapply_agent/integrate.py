@@ -5,12 +5,10 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from .runners.claude_code import claude_logged_in
 from .util import write_text_atomic
 
 SERVER = "uapply"
@@ -40,12 +38,6 @@ def own_executable() -> str:
     raise SetupError("cannot locate the uapply-agent executable; run `uapply-agent setup` from the installed command")
 
 
-def _run(cmd: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace",
-                          timeout=timeout, check=False)
-
-
 # ---- Claude Code / Claude desktop (Code tab reads ~/.claude.json) ----
 
 def _claude_json_entry(exe: str) -> dict:
@@ -72,29 +64,13 @@ def claude_desktop_installed(home: Path) -> bool:
 
 def register_claude(exe: str, home: Path, which: Callable[[str], str | None] = _find,
                     desktop: Callable[[Path], bool] = claude_desktop_installed) -> str:
-    claude = which("claude")
+    """User-scope server in ~/.claude.json, which the CLI and the desktop app's Code tab both read.
+    Written directly: setup never runs the `claude` command."""
     cfg = home / ".claude.json"
-    if claude:
-        _run([claude, "mcp", "remove", "--scope", "user", SERVER])
-        r = _run([claude, "mcp", "add", "--scope", "user", SERVER, "--", exe, "mcp"])
-        if r.returncode == 0:
-            return "registered via `claude mcp add` (user scope)"
-    if cfg.exists() or claude or desktop(home):
+    if cfg.exists() or (home / ".claude").is_dir() or which("claude") or desktop(home):
         write_claude_json(exe, cfg)
         return f"written to {cfg}"
     return "skipped: Claude Code not found (no `claude` command, no ~/.claude.json, no Claude desktop app)"
-
-
-def verify_claude(which: Callable[[str], str | None] = _find) -> bool | None:
-    claude = which("claude")
-    if not claude:
-        return None
-    try:
-        r = _run([claude, "mcp", "list"], timeout=90)
-    except subprocess.TimeoutExpired:
-        return None
-    line = next((ln for ln in r.stdout.splitlines() if ln.startswith(f"{SERVER}:")), "")
-    return ("Connected" in line) if line else False
 
 
 def install_claude_plugin(home: Path) -> str:
@@ -123,33 +99,13 @@ def next_step(out: dict) -> str:
     """The closing line of setup: how to start a case in the runtimes setup actually registered."""
     ways = []
     if not out.get("claude", "skipped").startswith("skipped"):
-        ways.append("open the client folder in the Claude desktop app's Code tab (not Chat) or the `claude` CLI "
-                    "and type /uapply:run")
+        ways.append("open the client folder in Claude Code (the desktop app's Code tab, not Chat, or the "
+                    "terminal) and type /uapply:run")
     if not out.get("codex", "skipped").startswith("skipped"):
         ways.append("open the client folder in Codex and type $uapply-run")
     if not ways:
         return "Claude Code and Codex were not found: install one, then run `uapply-agent setup`"
     return "; or ".join(ways)
-
-
-def ensure_claude_login(claude: str, say: Callable[[str], None] = print, interactive: bool = True) -> bool | None:
-    """The CLI has its own login, separate from the desktop app; headless tasks fail without it."""
-    state = claude_logged_in(claude)
-    if state is False and interactive:
-        say("Claude Code CLI: not signed in. Opening the Claude sign-in (use your Claude Pro/Max account)...")
-        kw = {}
-        if os.name == "nt":
-            # Own console window: under `irm | iex` the child's stdin is not the keyboard, so the
-            # "Paste code here" prompt read an empty line and the token exchange failed with 400.
-            kw["creationflags"] = subprocess.CREATE_NEW_CONSOLE
-            say("  A new window opens for the Claude sign-in. If no browser appears, open the link shown "
-                "there, sign in, and paste the code into that window.")
-        try:
-            subprocess.run([claude, "auth", "login"], check=False, timeout=900, **kw)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-        state = claude_logged_in(claude)
-    return state
 
 
 # ---- Codex (~/.codex/config.toml) ----
@@ -183,11 +139,11 @@ def register_codex(exe: str, home: Path, which: Callable[[str], str | None] = _f
 
 
 def record_runtimes(settings, which: Callable[[str], str | None] = _find) -> dict:
-    """Remember where `claude` / `codex` are: the terminal running setup has the full PATH, the
-    desktop app that later launches the MCP server usually does not."""
+    """Remember where `codex` is: the terminal running setup has the full PATH, the desktop app that
+    later launches the MCP server usually does not."""
     from .runners import known_locations, runtime_error
     found = {}
-    for attr, binary in (("claude_bin", "claude"), ("codex_bin", "codex")):
+    for attr, binary in (("codex_bin", "codex"),):
         path = which(binary)
         if path and runtime_error(path):
             # e.g. an npm build Windows refuses to start while the native build in ~/.local/bin works
@@ -220,19 +176,9 @@ def run_setup(say: Callable[[str], None] = print, home: Path | None = None, sett
             out["broken"] = broken_runtimes(out["runtimes"])
             for b, err in out["broken"].items():
                 say(f"Runtimes: {b} at {out['runtimes'][b]} does NOT start on this machine: {err}")
-                if "not compatible" in err.lower():
-                    say("  Windows reports this build is incompatible with this Windows version: Claude Code needs "
-                        "a newer Windows (see the README), or use the Codex CLI instead.")
         else:
-            say("Runtimes: no `claude` or `codex` CLI found. Claude Code does not need one (tasks run inside "
-                "your session); Codex runs tasks through the `codex` CLI.")
-        cli_mode = getattr(settings, "task_runner", "auto") == "cli"
-        if cli_mode and (claude := out["runtimes"].get("claude")) and "claude" not in out.get("broken", {}):
-            state = ensure_claude_login(claude, say, interactive=login and sys.stdin.isatty())
-            out["claude_logged_in"] = state
-            say({True: "Claude Code CLI: signed in",
-                 False: "Claude Code CLI: NOT signed in — run `claude auth login`, or local tasks cannot run",
-                 None: "Claude Code CLI: sign-in state unknown — run `claude auth status`"}[state])
+            say("Runtimes: no `codex` CLI found. Claude Code needs none (tasks run as subagents of your "
+                "session); Codex runs tasks through the `codex` CLI.")
     if sys.platform == "win32":
         from .xfaform import ensure_registered
         err = ensure_registered()
@@ -251,9 +197,4 @@ def run_setup(say: Callable[[str], None] = print, home: Path | None = None, sett
         if settings is not None and "codex" not in out.get("runtimes", {}):
             say("Codex: no `codex` CLI found; local tasks run through it. Install the Codex CLI, "
                 "then run `uapply-agent setup` again")
-    if not out["claude"].startswith("skipped"):
-        ok = verify_claude()
-        out["claude_connected"] = ok
-        if ok is False:
-            say("Claude Code: server registered but `claude mcp list` does not report it connected")
     return out

@@ -75,7 +75,7 @@ uapply-agent/
     ├── briefs.py            # task preparation shared by both runners; briefs for subagents
     ├── session_runner.py    # tasks as subagents of the Claude Code session
     ├── executor.py          # headless runner: pull task, prepare, spawn runtime, validate, submit
-    ├── runners/             # headless runtime drivers: claude_code.py (supported), codex.py (experimental)
+    ├── runners/             # headless runtime driver: codex.py (Claude Code never runs headless)
     ├── local_ops.py         # page rendering, PDF text layer, HEIC to JPEG (no model)
     ├── autofill.py          # IMM PDF auto-fill: local Acrobat Pro, or uApply's platform filler
     ├── acrobat.py           # Adobe Acrobat Pro automation on Windows (XfaFormLib, as pdf_auto)

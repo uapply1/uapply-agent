@@ -51,7 +51,8 @@ def test_mode_follows_the_setting_then_the_client():
     assert runner_mode("auto", "Claude Code Desktop") == "session"
     assert runner_mode("auto", "codex") == "cli"
     assert runner_mode("auto", None) == "cli"
-    assert runner_mode("cli", "Claude Code") == "cli"
+    assert runner_mode("cli", "Claude Code") == "session"    # Claude Code never runs a headless CLI
+    assert runner_mode("cli", "codex") == "cli"
     assert runner_mode("session", None) == "session"
 
 

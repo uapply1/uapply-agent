@@ -112,7 +112,8 @@ def cmd_init(args, settings):
     if warning:
         print(f"warning: {warning}", file=sys.stderr)
     found = [r["path"] for r in detect_runtimes(settings) if not r.get("error")]
-    print(f"runtimes: {', '.join(found) or 'none; install Claude Code or Codex'}", file=sys.stderr)
+    none = "none; Claude Code needs none, Codex needs the codex CLI"
+    print(f"runtimes: {', '.join(found) or none}", file=sys.stderr)
     return ExitCode.OK
 
 
@@ -260,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     command("update", cmd_update, "install the latest version now (it also happens when mcp or run starts)")
     c = command("setup", cmd_setup, "register the MCP server with Claude Code and Codex, then log in")
-    c.add_argument("--no-login", action="store_true", help="skip the uApply and Claude sign-in steps")
+    c.add_argument("--no-login", action="store_true", help="skip the uApply sign-in")
     c = command("login", cmd_login, "log in to uApply (device login, or a pasted token)")
     c.add_argument("--token", help="an access token to store instead of the device login")
     c.add_argument("--token-stdin", action="store_true", help="read the access token from stdin")
@@ -270,7 +271,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--llm-mode", default="local_agent", choices=cases.LLM_MODES)
     command("status", cmd_status, "show the bound case's status", [folder])
     c = command("run", cmd_run, "run the case's queued tasks headlessly", [folder])
-    c.add_argument("--runtime", choices=["auto", "claude-code", "codex"])
+    c.add_argument("--runtime", choices=["auto", "codex"])
     c.add_argument("--model", help="runtime model (default: the runtime's own)")
     c.add_argument("--workers", type=int, help="parallel headless processes (1-4)")
     c.add_argument("--max-tasks", type=int)

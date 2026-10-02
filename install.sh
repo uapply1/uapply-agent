@@ -7,8 +7,6 @@
 #
 # Environment:
 #   UAPPLY_AGENT_SOURCE        install from this pip source instead of the latest commit of main
-#   UAPPLY_INSTALL_CLAUDE_CLI  also install the Claude Code CLI (for `uapply-agent run` in a
-#                              terminal; Claude Code sessions run tasks without it)
 #
 # Everything runs inside main(), so a download cut short by the network cannot run half a script.
 
@@ -80,16 +78,6 @@ main() {
   uv tool update-shell >/dev/null 2>&1 || say "Note: add $(uv tool dir --bin) to your PATH."
   agent="$(uv tool dir --bin)/uapply-agent"
   [ -x "$agent" ] || fail "uapply-agent was not installed at $agent"
-
-  # In Claude Code the tasks run inside the RCIC's own session. The CLI is only for `uapply-agent run`
-  # in a terminal (or Codex users, who have their own CLI), so it is optional.
-  if [ -n "${UAPPLY_INSTALL_CLAUDE_CLI:-}" ] && ! command -v claude >/dev/null 2>&1 \
-     && [ ! -x "$HOME/.local/bin/claude" ]; then
-    say "Installing the Claude Code CLI (for uapply-agent run in a terminal)..."
-    # A failure here must not undo the uApply install; setup reports a missing CLI as well.
-    curl -fsSL https://claude.ai/install.sh | bash || \
-      say "WARNING: the Claude Code CLI is not installed. Run this installer again, or: curl -fsSL https://claude.ai/install.sh | bash"
-  fi
 
   # Sign-in prompts need the keyboard; under `curl | sh` stdin is the script itself.
   if (exec </dev/tty) 2>/dev/null; then

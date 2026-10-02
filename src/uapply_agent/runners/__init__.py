@@ -8,10 +8,10 @@ import sys
 from pathlib import Path
 
 from .base import PlanLimited, Runner, RunnerError, RunResult, RuntimeUnavailable
-from .claude_code import ClaudeCodeRunner
 from .codex import CodexRunner
 
-RUNNERS = {"claude-code": ClaudeCodeRunner, "codex": CodexRunner}
+# Headless runtimes only. Claude Code never runs headless: its sessions run tasks as subagents.
+RUNNERS = {"codex": CodexRunner}
 _WIN = sys.platform.startswith("win")
 
 
@@ -20,8 +20,6 @@ def known_locations(binary: str) -> list[Path]:
     home = Path.home()
     exts = [".exe", ".cmd", ""] if _WIN else [""]
     cands = [home / ".local" / "bin" / f"{binary}{e}" for e in exts]
-    if binary == "claude":
-        cands.append(home / ".claude" / "local" / "claude")
     if binary == "codex":
         cands += _codex_locations(home)
     if _WIN and os.environ.get("APPDATA"):
@@ -64,7 +62,7 @@ def configured_paths(settings) -> dict[str, str]:
     """Runtime paths recorded by `setup` (absolute: desktop apps start the server with a minimal PATH)."""
     if settings is None:
         return {}
-    return {"claude-code": settings.claude_bin, "codex": settings.codex_bin}
+    return {"codex": settings.codex_bin}
 
 
 _WORKING: set[str] = set()
@@ -113,12 +111,9 @@ def get_runner(name: str = "auto", model: str = "", settings=None) -> Runner:
                               "Windows version is too old for it.")
         if not found:
             tried = ", ".join(str(c) for cls in RUNNERS.values() for c in known_locations(cls.binary))
-            install = ("irm https://claude.ai/install.ps1 | iex" if _WIN
-                       else "curl -fsSL https://claude.ai/install.sh | bash")
-            raise RunnerError("no runtime found: headless tasks need the Claude Code CLI (or Codex CLI); the desktop "
-                              f"app does not provide one. Looked on PATH and at {tried}. Install it with `{install}`, "
-                              "sign in with `claude auth login`, then run `uapply-agent setup`. In a Claude Code "
-                              "session no CLI is needed: /uapply:run runs the tasks as subagents.")
+            raise RunnerError("no runtime found: headless tasks need the Codex CLI. Looked on PATH and at "
+                              f"{tried}. Install it, sign in with `codex login`, then run `uapply-agent setup`. "
+                              "In Claude Code no CLI is needed: /uapply:run runs the tasks as subagents.")
         name = found[0]["name"]
     if name not in RUNNERS:
         raise RunnerError(f"unknown runtime {name!r}; choose from {list(RUNNERS)}")

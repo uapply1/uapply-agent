@@ -81,8 +81,10 @@ Always:
   Never make the RCIC wait on a silent call.
 - If `run_tasks` reports `plan_limited`, stop and tell the RCIC; do not switch
   the case to server mode on your own.
-- If `run_tasks` (cli mode) reports `runtime_error` (e.g. the Claude Code CLI is
-  not signed in), stop at once and relay it with its fix; do not call it again.
+- If `run_tasks` (cli mode) reports `runtime_error` (e.g. the Codex CLI is not
+  signed in), stop at once and relay it with its fix; do not call it again.
+- In Claude Code, never suggest, install or run the Claude Code CLI (`claude`):
+  tasks always run as `uapply:task-runner` subagents of this session.
 - Never ask for, print, or reason about a task's prompt or inputs.
 
 Never: delete anything, contact a client, submit to a government portal, or

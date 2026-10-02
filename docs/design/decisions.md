@@ -314,6 +314,19 @@ same usage limits as the conversation. `submit_task` repeats the local schema
 check and relays uApply's rejection as feedback for one more attempt. The
 Claude Code CLI is optional (`UAPPLY_INSTALL_CLAUDE_CLI=1`).
 
+## D16. The Claude Code CLI is never used
+
+**Decision.** In Claude Code, tasks always run as `uapply:task-runner`
+subagents, even with `task_runner=cli`. uapply-agent never installs, signs in
+to or runs `claude`: no headless `claude -p` runner, no `claude mcp add` (setup
+writes `~/.claude.json` itself), no `claude auth login`. The headless runner,
+for `uapply-agent run` and Codex sessions, is Codex only. Supersedes the
+optional CLI of D15.
+
+**Why.** The CLI needed a second Claude sign-in and a ~250 MB download, and
+RCICs were asked to install it although their Claude Code session already runs
+the tasks.
+
 ## Open questions
 
 - **Billing model.** Local-token cases cost uApply almost nothing in LLM spend;

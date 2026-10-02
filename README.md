@@ -6,9 +6,9 @@ subscription. Design docs are in [docs/](docs/README.md).
 What it does today: bind a client folder to an existing uApply case, or
 create one after the RCIC confirms (optionally drafting the intake from the
 client's WeChat history through the AnyChat CLI); upload the folder's
-documents; run every model call of the case's processing and analysis in fresh
-headless `claude -p` processes on the RCIC's plan (`codex exec` is
-experimental); then finish the case with archives and compression on uApply,
+documents; run every model call of the case's processing and analysis on the
+RCIC's plan, as subagents of the Claude Code session (or headless `codex exec`
+processes in Codex, experimental); then finish the case with archives and compression on uApply,
 IMM PDF auto-fill (Adobe Acrobat Pro on the RCIC's Windows PC, otherwise
 uApply's platform filler) and an end-of-run report.
 
@@ -17,14 +17,12 @@ uApply's platform filler) and an end-of-run report.
 One command installs everything: `uv` (Python tool manager), the
 `uapply-agent` CLI, the MCP registration for Claude Code and Codex, and the
 uApply sign-in. The only prerequisites are a uApply account and Claude Code
-(desktop app or CLI) signed in to a Claude Pro/Max plan, or Codex.
+(the desktop app's Code tab, or the terminal) on a Claude Pro/Max plan, or Codex.
 
-In Claude Code the AI tasks run as subagents of the RCIC's own session, on the
-login and plan that session already has: there is no second Claude sign-in and
-no separate CLI to install. The Claude Code CLI is only needed for
-`uapply-agent run` in a terminal (batch mode); set `UAPPLY_INSTALL_CLAUDE_CLI=1`
-when running the installer to install it, and sign it in with
-`claude auth login`. Codex users need the `codex` CLI (setup also finds the one bundled with
+In Claude Code the AI tasks always run as subagents of the RCIC's own session,
+on the login and plan that session already has. uapply-agent never installs,
+signs in to or runs the Claude Code CLI (`claude`) on its own: no second
+Claude sign-in and no headless `claude -p`. Codex users need the `codex` CLI (setup also finds the one bundled with
 the Codex desktop app); the app and CLI share one login. Setup writes the
 commands as Codex skills in `~/.agents/skills`: type `$uapply-run`,
 `$uapply-status` or `$uapply-intake-from-chat`.
@@ -53,12 +51,12 @@ the terminal) or Codex and type `/uapply:run`. The installer prints what it did,
 
 ```
 uapply-agent: /Users/anna/.local/bin/uapply-agent
-Runtimes: no `claude` or `codex` CLI found. Claude Code does not need one (tasks run inside your session); Codex runs tasks through the `codex` CLI.
-Claude Code: registered via `claude mcp add` (user scope)
+Runtimes: no `codex` CLI found. Claude Code needs none (tasks run as subagents of your session); Codex runs tasks through the `codex` CLI.
+Claude Code: written to /Users/anna/.claude.json
 Claude Code: commands written to /Users/anna/.claude/skills/uapply
 Codex: skipped: Codex not found (no `codex` command, no ~/.codex)
 Logged in; token stored in keyring
-Done. Next: open the client folder in the Claude desktop app's Code tab (not Chat) or the `claude` CLI and type /uapply:run
+Done. Next: open the client folder in Claude Code (the desktop app's Code tab, not Chat, or the terminal) and type /uapply:run
 ```
 
 The agent updates itself at each start (see Updates); re-running the installer also upgrades. `uapply-agent setup` alone re-registers
@@ -75,14 +73,13 @@ PyPI name once published, or a local checkout).
 
 1. `uv` from https://astral.sh/uv, then `uv tool install --force "uapply-agent @ https://github.com/uapply1/uapply-agent/archive/refs/heads/main.zip"`
    (puts `uapply-agent` in `~/.local/bin`).
-2. `uapply-agent setup`: registers the MCP server **by absolute path** with
-   `claude mcp add --scope user uapply -- ~/.local/bin/uapply-agent mcp`
-   (or writes `~/.claude.json` when only the desktop app is installed) and
+2. `uapply-agent setup`: registers the MCP server **by absolute path** as a
+   user-scope server in `~/.claude.json` (read by Claude Code in the terminal
+   and in the desktop app; written directly, never via `claude mcp add`) and
    `[mcp_servers.uapply]` in `~/.codex/config.toml` (with
    `default_tools_approval_mode = "approve"`, or Codex refuses the tools under
    approval policy "never"). The absolute path matters: GUI apps start with a
-   minimal `PATH`. It then checks `claude mcp list` reports the server
-   connected, and writes a small Claude Code plugin to
+   minimal `PATH`. It then writes a small Claude Code plugin to
    `~/.claude/skills/uapply/` (generated from the same playbook prompts) so
    that `/uapply:run`, `/uapply:status` and `/uapply:intake-from-chat` are
    plain slash commands.
@@ -126,9 +123,9 @@ running program's files); versions live in `~/.local/share/uapply-agent/versions
 | `app_url` | derived | dashboard used in report links; empty means `backend_url` with `api.` replaced by `app.` |
 | `auto_update` | `true` | install and switch to the latest `main` at session / run start |
 | `auth0_domain` / `auth0_client_id` / `auth0_audience` | production tenant | change only together with `backend_url` |
-| `runtime` | `auto` | `claude-code` or `codex` when both are installed |
+| `runtime` | `auto` | headless runtime for `uapply-agent run` and Codex sessions: `codex` (Claude Code never runs headless) |
 | `model` | runtime default | model passed to the headless runtime |
-| `claude_bin` / `codex_bin` | recorded by `setup` | absolute paths of the runtime CLIs |
+| `codex_bin` | recorded by `setup` | absolute path of the Codex CLI |
 | `workers` | `2` | parallel headless processes (at most 4) |
 | `task_timeout_s` | `300` | time limit for one headless model call |
 | `force_ocr` | `false` | ignore PDF text layers and always OCR with the model |
@@ -141,14 +138,17 @@ running program's files); versions live in `~/.local/share/uapply-agent/versions
 
 Environment overrides: `UAPPLY_BACKEND_URL`, `UAPPLY_APP_URL`, `UAPPLY_RUNTIME`,
 `UAPPLY_MODEL`, `UAPPLY_TEAM_ID`, `UAPPLY_FORCE_OCR`, `UAPPLY_CHAT_SOURCE`,
-`UAPPLY_CLAUDE_BIN`, `UAPPLY_CODEX_BIN`, `ANYCHAT_BIN`; `UAPPLY_TOKEN` overrides
+`UAPPLY_CODEX_BIN`, `ANYCHAT_BIN`; `UAPPLY_TOKEN` overrides
 the stored access token and `UAPPLY_FOLDER` the client folder.
 
 ### Uninstall
 
 ```bash
-uv tool uninstall uapply-agent && claude mcp remove --scope user uapply && rm -r ~/.claude/skills/uapply
+uv tool uninstall uapply-agent && rm -r ~/.claude/skills/uapply ~/.agents/skills/uapply-*
 ```
+
+Then delete the `uapply` entry under `mcpServers` in `~/.claude.json` and the
+`[mcp_servers.uapply]` table in `~/.codex/config.toml`.
 
 ### Backend requirements
 
@@ -164,22 +164,20 @@ in server mode, and uApply's own models process the documents.
 
 | Symptom | Fix |
 |---|---|
-| `no runtime found` (`uapply-agent run`, or `task_runner=cli`) | batch mode needs the Claude Code CLI (the desktop app is not enough): install it with `curl -fsSL https://claude.ai/install.sh \| bash` / `irm https://claude.ai/install.ps1 \| iex`, sign in with `claude auth login`, then run `uapply-agent setup`. Claude Code sessions need no CLI |
-| `run_tasks` returns `mode: session` with tasks but nothing runs | the conversation must spawn the `uapply:task-runner` subagents; the agent comes with the plugin, so after `uapply-agent setup` start a **new** session (`claude agents` lists `uapply:task-runner`) |
-| `… is not compatible with the version of Windows you're running` / `does NOT start on this machine` | the installed `claude` cannot run on this Windows. Rerun the installer: it installs the native build and `setup` prefers whichever build starts. If Windows is older than 10 1809 / Server 2019, Claude Code cannot run there at all |
-| `whoami` says the Claude CLI is not signed in (cli mode only) | run `claude auth login` in a terminal (Claude subscription), then start a new session |
+| `no runtime found` (`uapply-agent run`, or a Codex session) | headless tasks need the Codex CLI: install it, sign in with `codex login`, then run `uapply-agent setup`. Claude Code sessions need no CLI |
+| `run_tasks` returns `mode: session` with tasks but nothing runs | the conversation must spawn the `uapply:task-runner` subagents; the agent comes with the plugin, so after `uapply-agent setup` start a **new** session (`/agents` lists `uapply:task-runner`) |
+| `does NOT start on this machine` | the installed `codex` cannot run here; reinstall the Codex CLI, then run `uapply-agent setup` (it prefers whichever build starts) |
 | `codex exited 1: …` in `run_tasks` failures | the text after it is Codex's own error. `Not logged in`: run `codex login`. Schema errors (`additionalProperties`, `required`) should not occur since the runner converts schemas to OpenAI's strict dialect; report them |
 | `AGENT_API_UNAVAILABLE` / `agent_api: false` | the backend in use does not serve the local-agent API; the case runs in server mode (uApply's own models process the documents) |
 | Windows: `Access is denied` starting the installer, or "running as Administrator" | run it in a normal PowerShell window, not "Run as administrator"; the installer refuses elevated windows |
-| Claude sign-in: browser did not open, or `Login failed: Request failed with status code 400` | in a normal PowerShell window run `claude auth login`, open the printed link, sign in, and paste the code back; then start a new Claude session |
 | Windows: `failed to remove directory …\uv\tools\uapply-agent` | the exe is in use or owned by an elevated install: close Claude Code / Codex sessions, delete `%APPDATA%\uv\tools\uapply-agent`, rerun the installer |
 | Claude desktop app: "I don't recognize `/uapply:run`" | you are in the **Chat** tab; switch to the **Code** tab (`</>`, needs a paid Claude plan) and open the client folder |
-| `Unknown command: /uapply:run` | run `uapply-agent setup` (writes the plugin and registers the server), then start a **new** session; `claude plugin list` should show `uapply@skills-dir` and `/mcp` the connected server |
+| `Unknown command: /uapply:run` | run `uapply-agent setup` (writes the plugin and registers the server), then start a **new** session; `/plugin` should list `uapply@skills-dir` and `/mcp` the connected server |
 | `401` from the API | `uapply-agent login` again (no refresh token yet) |
 | `chat sources` → `not_installed` / `not_logged_in` | install the AnyChat plugin and run its own login; the agent never handles that token |
 | `whoami` → `acrobat.available: false` although Acrobat is installed | Reader, or Acrobat without a Pro licence, has no automation; forms are filled on uApply instead. `uapply-agent acrobat` shows the reason |
 | headless run hits the plan's usage limit | `run_tasks` reports `plan_limited` (`uapply-agent run` exits with code 4); run again after the limit resets, e.g. `uapply-agent run --follow` |
-| `run_tasks` reports `runtime_error` (`uapply-agent run` exits with code 5) | the runtime cannot work, e.g. the Claude Code CLI is not signed in: fix the reported cause, then run again |
+| `run_tasks` reports `runtime_error` (`uapply-agent run` exits with code 5) | the runtime cannot work, e.g. the Codex CLI is not signed in (`codex login`): fix the reported cause, then run again |
 
 ## Install (dev)
 
@@ -270,7 +268,7 @@ src/uapply_agent/
   briefs.py       task preparation shared by both runners: inputs, page images, briefs, result checks
   session_runner.py  tasks as subagents of the Claude Code session: briefs per round, local finishes
   executor.py     headless runner: pull → prepare → spawn runtime → validate → submit
-  runners/        claude_code.py (supported), codex.py (experimental); all runtime flags live here
+  runners/        codex.py (experimental; Claude Code never runs headless); all runtime flags live here
   local_ops.py    page rendering, pdf text, HEIC → JPEG
   autofill.py     IMM PDF auto-fill: local Acrobat Pro or uApply's platform filler
   acrobat.py      Adobe Acrobat Pro automation (Windows) through XfaFormLib, as pdf_auto

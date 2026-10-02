@@ -30,3 +30,14 @@ def test_config_values_keep_their_types(tmp_path, monkeypatch):
     cli.main(["config", "--set", "workers=3", "chat_upload=no", "model=haiku"])
     s = Settings.load()
     assert (s.workers, s.chat_upload, s.model) == (3, False, "haiku")
+
+
+def test_retired_claude_settings_are_ignored(tmp_path, monkeypatch):
+    import json
+
+    from uapply_agent.config import Settings
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    (tmp_path / "uapply-agent").mkdir()
+    (tmp_path / "uapply-agent" / "config.json").write_text(json.dumps({"runtime": "claude-code", "claude_bin": "/c"}))
+    s = Settings.load()
+    assert s.runtime == "auto" and not hasattr(s, "claude_bin")

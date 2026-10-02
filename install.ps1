@@ -6,8 +6,6 @@
 #
 # Environment:
 #   UAPPLY_AGENT_SOURCE        install from this pip source instead of the latest commit of main
-#   UAPPLY_INSTALL_CLAUDE_CLI  also install the Claude Code CLI (for `uapply-agent run` in a
-#                              terminal; Claude Code sessions run tasks without it)
 #   UAPPLY_ALLOW_ADMIN         allow running in an elevated window (not recommended)
 $ErrorActionPreference = "Stop"
 
@@ -97,84 +95,6 @@ if ($LASTEXITCODE -ne 0) { Write-Warning "Could not add uv's tool folder to PATH
 $agentExe = Join-Path "$(uv tool dir --bin)".Trim() "uapply-agent.exe"
 if (-not (Test-Path $agentExe)) { throw "uapply-agent was not installed at $agentExe" }
 
-# Local tasks run in a headless Claude Code (or Codex) CLI process on the RCIC's plan;
-# the desktop apps do not provide one. Git for Windows is not required.
-function Install-ClaudeCli {
-  # Same source and checksum as https://claude.ai/install.ps1, but the ~250 MB binary is downloaded
-  # with resume and retries, which slow or unstable connections need.
-  [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-  $base = "https://downloads.claude.ai/claude-code-releases"
-  $platform = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "win32-arm64" } else { "win32-x64" }
-  $version = "$(Invoke-WithRetry { Invoke-RestMethod -Uri "$base/latest" } "look up the Claude Code version")".Trim()
-  if ($version -notmatch '^\d+\.\d+\.\d+') {
-    throw "downloads.claude.ai returned no version (unreachable, or Claude Code is not available in this region)"
-  }
-  $manifest = Invoke-WithRetry { Invoke-RestMethod -Uri "$base/$version/manifest.json" } "download the Claude Code manifest"
-  $entry = $manifest.platforms.$platform
-  if (-not $entry) { throw "platform $platform not in the Claude Code manifest" }
-  $dir = "$env:USERPROFILE\.claude\downloads"
-  New-Item -ItemType Directory -Force -Path $dir | Out-Null
-  $exe = "$dir\claude-$version-$platform.exe"
-  $url = "$base/$version/$platform/claude.exe"
-  $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-  $ok = $false
-  for ($i = 1; $i -le 20 -and -not $ok; $i++) {
-    if ((Test-Path $exe) -and ((Get-Item $exe).Length -ge $entry.size)) {
-      $ok = (Get-FileHash -Path $exe -Algorithm SHA256).Hash.ToLower() -eq $entry.checksum
-      if (-not $ok) { Remove-Item -Force $exe }   # complete but corrupt: start over
-      continue
-    }
-    if ($i -gt 1) { Write-Host "  download interrupted, resuming (attempt $i of 20)..."; Start-Sleep -Seconds 3 }
-    if ($curl) {
-      # A stalled link (0 B/s) aborts after 30 s so the loop resumes; no --retry: it restarts from 0.
-      & $curl.Source -fL --connect-timeout 30 --speed-limit 1024 --speed-time 30 -C - -o $exe $url
-    } else {
-      try { Start-BitsTransfer -Source $url -Destination $exe -ErrorAction Stop } catch { Write-Host "  $_" }
-    }
-  }
-  if (-not $ok -and (Test-Path $exe) -and ((Get-Item $exe).Length -ge $entry.size)) {
-    $ok = (Get-FileHash -Path $exe -Algorithm SHA256).Hash.ToLower() -eq $entry.checksum
-  }
-  if (-not $ok) { throw "could not download claude.exe $version completely (network interrupted)" }
-  & $exe install
-  $code = $LASTEXITCODE
-  Start-Sleep -Seconds 1
-  Remove-Item -Force $exe -ErrorAction SilentlyContinue
-  if ($code -ne 0) { throw "claude install exited with code $code" }
-}
-
-$claudeExe = "$env:USERPROFILE\.local\bin\claude.exe"
-function Test-Runs($cmd) {
-  # Installed is not enough: an incompatible build fails to start ("not compatible with the version of Windows").
-  if (-not $cmd) { return $false }
-  try { & $cmd --version *> $null; return ($LASTEXITCODE -eq 0) } catch { return $false }
-}
-$claudeCmd = (Get-Command claude -ErrorAction SilentlyContinue).Source
-if (-not $claudeCmd -and (Test-Path $claudeExe)) { $claudeCmd = $claudeExe }
-$codexCmd = (Get-Command codex -ErrorAction SilentlyContinue).Source
-$haveRuntime = (Test-Runs $claudeCmd) -or (Test-Runs $codexCmd)
-if ($claudeCmd -and -not (Test-Runs $claudeCmd)) {
-  Write-Warning "Claude Code at $claudeCmd is installed but does not start on this machine; installing the native build."
-}
-# Claude Code needs Windows 10 1809 (build 17763) / Windows Server 2019 or later, x64 or ARM64.
-$os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
-$build = [int]([Environment]::OSVersion.Version.Build)
-$tooOld = $build -lt 17763 -or -not [Environment]::Is64BitOperatingSystem
-$wantCli = [bool]$env:UAPPLY_INSTALL_CLAUDE_CLI
-if ($wantCli -and -not $haveRuntime -and $tooOld) {
-  Write-Warning ("This Windows ($($os.Caption), build $build) is too old for the Claude Code CLI, which needs " +
-                 "Windows 10 version 1809 / Windows Server 2019 or later (64-bit). uApply installs without it.")
-}
-if ($wantCli -and -not $haveRuntime -and -not $tooOld) {
-  Write-Host "Installing the Claude Code CLI (for uapply-agent run in a terminal)..."
-  try {
-    Install-ClaudeCli
-  } catch {
-    # Never lose the uApply install over this; setup below reports the missing CLI too.
-    Write-Warning "Claude Code CLI not installed: $_"
-    Write-Warning "Run this installer again later (it resumes the download), or install it with: irm https://claude.ai/install.ps1 | iex"
-  }
-}
 $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
 
 & $agentExe setup

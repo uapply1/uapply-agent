@@ -160,13 +160,13 @@ def test_case_status_falls_back_to_survey_documents(bound, monkeypatch):
 
 
 def test_whoami_reports_agent_api_and_runtime_paths(bound, monkeypatch):
-    monkeypatch.setattr(m, "detect_runtimes", lambda settings=None: [{"name": "claude-code", "path": "/x/claude"}])
-    monkeypatch.setattr(m, "_claude_login_state", lambda path: False)
+    monkeypatch.setattr(m, "detect_runtimes", lambda settings=None: [{"name": "codex", "path": "/x/codex"}])
     out = m.whoami()
-    assert out["agent_api"] is True and out["runtimes"] == [{"name": "claude-code", "path": "/x/claude", "logged_in": False}]
-    assert "claude auth login" in out["hint"]
+    assert out["agent_api"] is True and out["runtimes"] == [{"name": "codex", "path": "/x/codex"}]
+    assert "hint" not in out
     monkeypatch.setattr(m, "detect_runtimes", lambda settings=None: [])
-    assert "installer" in m.whoami()["hint"]
+    hint = m.whoami()["hint"]
+    assert "Codex CLI" in hint and "claude" not in hint.lower()
 
 
 def test_preview_document_renders_pdf_pages_locally(bound, tmp_path):
@@ -243,13 +243,14 @@ def test_same_name_different_size_is_uploaded(bound):
 def test_run_tasks_reports_per_document_progress(bound, monkeypatch):
     class FakeExecutor:
         def __init__(self, *a, **kw):
-            self.runner = type("R", (), {"name": "claude-code"})()
+            self.runner = type("R", (), {"name": "codex"})()
 
         def run(self, **kw):
             assert 20 <= kw["budget_s"] <= 300
             from uapply_agent.executor import RunStats
             return RunStats(accepted=2, remaining=3)
     monkeypatch.setattr(m, "Executor", FakeExecutor)
+    monkeypatch.setattr(m, "get_runner", lambda *a, **k: None)
     bound.docs = [
         {"id": "a", "file_name": "passport & sp.pdf", "status": "analyzing", "old_doc_id": None},
         {"id": "a1", "file_name": "passport & sp_p1.png", "status": "completed", "old_doc_id": "a"},
