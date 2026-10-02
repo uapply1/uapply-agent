@@ -32,6 +32,18 @@ Always:
   local-agent API: say so, tell the RCIC the case runs in server mode (uApply's
   own models process the documents), upload what is classified, and stop — do
   not call `run_tasks` or `wait_for_stage`.
+- A messy client folder (several child folders or files unrelated to the
+  request, e.g. a past application's papers): never run the case on it. Propose
+  the application type from the RCIC's request, then create a subfolder in the
+  folder root named after that type (e.g. `Visitor Record`). Take the
+  checklist from `list_document_types`, `preview_document` candidates when a
+  file's content is unclear, and copy (never move) into the subfolder only the
+  files that fit a type the application needs, plus the client's earlier IMM
+  forms as reference. Skip other people's and other applications' files
+  without asking. `set_folder` to the subfolder, then bind the case there
+  (`create_case`, or `init_case` for an existing survey) and carry on; a case
+  already bound there is reused, never duplicated. Report in one line what was
+  copied and what was left out.
 - Subfolder names are the RCIC's own grouping and only a hint. File each
   document under the type whose name and `description` fit its content; one
   folder can hold documents of several types. For an inviter's or sponsor's
@@ -121,7 +133,8 @@ Run the uApply case in this folder end to end, in one turn: ask
 with the question tool whenever you need the RCIC and keep going with the
 answer. Check `case_status`. If the folder is not bound to a case (`NO_CASE`),
 first `preview_document` the identity documents so you can propose the client
-name and application type, then ask one question: "Create a new case" (first
+name and application type (if the folder is messy, set up a subfolder for it
+first, as in the instructions), then ask one question: "Create a new case" (first
 option; description: proposed name and type, charges the account) or "Use an
 existing case" (the RCIC then pastes the survey id via the tool's free-text
 answer). For a new case, ask the create-case question from the instructions,

@@ -58,6 +58,13 @@ Abbreviated here; `SOURCE.md` has the full text.
   its own) and on `runtime_error`.
 - Never ask for, print or reason about a task's prompt or inputs.
 
+**Messy client folders**
+
+- If the folder holds several child folders or unrelated files, copy only the
+  files the application type needs into a new subfolder of the folder root
+  named after the type, `set_folder` to it and bind the case there. Files are
+  copied, never moved or deleted; unrelated files are skipped without asking.
+
 **Case creation**
 
 - `create_case` charges the RCIC's account. Propose the name and type in a
