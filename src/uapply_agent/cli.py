@@ -17,7 +17,15 @@ from .chat.base import ChatError
 from .config import Credentials, Settings
 from .context import ToolError
 from .folder import WorkingFolder
-from .integrate import PLUGIN_DIR, SetupError, install_claude_plugin, run_setup
+from .integrate import (
+    CODEX_SKILLS_DIR,
+    PLUGIN_DIR,
+    SetupError,
+    install_claude_plugin,
+    install_codex_skills,
+    next_step,
+    run_setup,
+)
 from .runners import RunnerError, detect_runtimes, get_runner
 from .updater import maybe_delegate, resolve_target, running_sha
 
@@ -66,7 +74,7 @@ def cmd_setup(args, settings):
     if sha := os.environ.get("UAPPLY_INSTALLED_SHA", "").strip():
         settings.installed_sha = sha
         settings.save()
-    run_setup(settings=settings, login=not args.no_login)
+    out = run_setup(settings=settings, login=not args.no_login)
     if Credentials.get_token():
         print("uApply login: already signed in")
     elif args.no_login:
@@ -76,8 +84,7 @@ def cmd_setup(args, settings):
             device_login(settings)
         except LoginError as e:
             print(f"login failed: {e}; run `uapply-agent login` later", file=sys.stderr)
-    print("Done. Open a client folder in the Claude desktop app's Code tab (not Chat), the `claude` CLI, "
-          "or Codex, and type /uapply:run")
+    print(f"Done. Next: {next_step(out)}")
     return ExitCode.OK
 
 
@@ -143,13 +150,18 @@ def cmd_run(args, settings):
 
 
 def _refresh_plugin() -> None:
-    """A new version may ship new /uapply:* commands: rewrite them when the plugin is installed."""
+    """A new version may ship new /uapply:* commands: rewrite them where they are installed."""
     home = Path(os.environ.get("UAPPLY_HOME") or Path.home())
     if (home / PLUGIN_DIR).exists():
         try:
             install_claude_plugin(home)
         except OSError:
             logger.warning("could not refresh the Claude Code plugin", exc_info=True)
+    if (home / CODEX_SKILLS_DIR / "uapply-run").exists():
+        try:
+            install_codex_skills(home)
+        except OSError:
+            logger.warning("could not refresh the Codex skills", exc_info=True)
 
 
 def cmd_mcp(args, settings):

@@ -20,6 +20,7 @@ class SetupError(RuntimeError):
     """Setup cannot continue; the message says what the RCIC should fix."""
 
 PLUGIN_DIR = Path(".claude") / "skills" / "uapply"   # auto-loaded by Claude Code as uapply@skills-dir
+CODEX_SKILLS_DIR = Path(".agents") / "skills"        # Codex user skills, invoked as $uapply-run
 
 
 def _find(binary: str) -> str | None:
@@ -106,6 +107,29 @@ def install_claude_plugin(home: Path) -> str:
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(content, encoding="utf-8")
     return f"commands written to {root}"
+
+
+def install_codex_skills(home: Path) -> str:
+    """Write the /uapply:* prompts as Codex skills (`$uapply-run`, ...); Codex has no slash commands for them."""
+    from . import playbook
+    root = home / CODEX_SKILLS_DIR
+    for rel, content in playbook.codex_skill_files().items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(content, encoding="utf-8")
+    return f"skills written to {root} ($uapply-run, $uapply-status, $uapply-intake-from-chat)"
+
+
+def next_step(out: dict) -> str:
+    """The closing line of setup: how to start a case in the runtimes setup actually registered."""
+    ways = []
+    if not out.get("claude", "skipped").startswith("skipped"):
+        ways.append("open the client folder in the Claude desktop app's Code tab (not Chat) or the `claude` CLI "
+                    "and type /uapply:run")
+    if not out.get("codex", "skipped").startswith("skipped"):
+        ways.append("open the client folder in Codex and type $uapply-run")
+    if not ways:
+        return "Claude Code and Codex were not found: install one, then run `uapply-agent setup`"
+    return "; or ".join(ways)
 
 
 def ensure_claude_login(claude: str, say: Callable[[str], None] = print, interactive: bool = True) -> bool | None:
@@ -202,8 +226,8 @@ def run_setup(say: Callable[[str], None] = print, home: Path | None = None, sett
                     say("  Windows reports this build is incompatible with this Windows version: Claude Code needs "
                         "a newer Windows (see the README), or use the Codex CLI instead.")
         else:
-            say("Runtimes: no `claude` or `codex` CLI found. Not needed: in Claude Code the tasks run inside your "
-                "session. Only `uapply-agent run` in a terminal needs a CLI.")
+            say("Runtimes: no `claude` or `codex` CLI found. Claude Code does not need one (tasks run inside "
+                "your session); Codex runs tasks through the `codex` CLI.")
         cli_mode = getattr(settings, "task_runner", "auto") == "cli"
         if cli_mode and (claude := out["runtimes"].get("claude")) and "claude" not in out.get("broken", {}):
             state = ensure_claude_login(claude, say, interactive=login and sys.stdin.isatty())
@@ -223,6 +247,12 @@ def run_setup(say: Callable[[str], None] = print, home: Path | None = None, sett
         say(f"Claude Code: {out['claude_plugin']}")
     out["codex"] = register_codex(exe, home)
     say(f"Codex: {out['codex']}")
+    if not out["codex"].startswith("skipped"):
+        out["codex_skills"] = install_codex_skills(home)
+        say(f"Codex: {out['codex_skills']}")
+        if settings is not None and "codex" not in out.get("runtimes", {}):
+            say("Codex: no `codex` CLI found; local tasks run through it. Install the Codex CLI, "
+                "then run `uapply-agent setup` again")
     if not out["claude"].startswith("skipped"):
         ok = verify_claude()
         out["claude_connected"] = ok

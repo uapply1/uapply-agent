@@ -62,6 +62,16 @@ the task id followed by accepted, rejected or released.
 """
 
 
+def codex_skill_files() -> dict[str, str]:
+    """The same prompts as Codex user skills, one folder per prompt (`uapply-run/SKILL.md`, ...)."""
+    out = {}
+    for name, description in PROMPTS.items():
+        skill = f"uapply-{name}"
+        out[f"{skill}/SKILL.md"] = (f"---\nname: {skill}\ndescription: {description}. Only when the user asks "
+                                    f"for ${skill}.\n---\n\n{prompt(name)}\n")
+    return out
+
+
 def plugin_files(version: str) -> dict[str, str]:
     """A Claude Code plugin generated from the playbook: the `/uapply:<prompt>` commands and the
     `uapply:task-runner` subagent that runs tasks inside the RCIC's own session."""

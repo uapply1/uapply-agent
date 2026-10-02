@@ -24,8 +24,10 @@ login and plan that session already has: there is no second Claude sign-in and
 no separate CLI to install. The Claude Code CLI is only needed for
 `uapply-agent run` in a terminal (batch mode); set `UAPPLY_INSTALL_CLAUDE_CLI=1`
 when running the installer to install it, and sign it in with
-`claude auth login`. Codex users need nothing extra: the Codex app and CLI
-share one login.
+`claude auth login`. Codex users need the `codex` CLI (setup also finds the one bundled with
+the Codex desktop app); the app and CLI share one login. Setup writes the
+commands as Codex skills in `~/.agents/skills`: type `$uapply-run`,
+`$uapply-status` or `$uapply-intake-from-chat`.
 
 macOS / Linux (Terminal):
 
@@ -51,12 +53,12 @@ the terminal) or Codex and type `/uapply:run`. The installer prints what it did,
 
 ```
 uapply-agent: /Users/anna/.local/bin/uapply-agent
-Runtimes: no `claude` or `codex` CLI found. Not needed: in Claude Code the tasks run inside your session. Only `uapply-agent run` in a terminal needs a CLI.
+Runtimes: no `claude` or `codex` CLI found. Claude Code does not need one (tasks run inside your session); Codex runs tasks through the `codex` CLI.
 Claude Code: registered via `claude mcp add` (user scope)
 Claude Code: commands written to /Users/anna/.claude/skills/uapply
 Codex: skipped: Codex not found (no `codex` command, no ~/.codex)
 Logged in; token stored in keyring
-Done. Open a client folder in the Claude desktop app's Code tab (not Chat), the `claude` CLI, or Codex, and type /uapply:run
+Done. Next: open the client folder in the Claude desktop app's Code tab (not Chat) or the `claude` CLI and type /uapply:run
 ```
 
 The agent updates itself at each start (see Updates); re-running the installer also upgrades. `uapply-agent setup` alone re-registers
@@ -93,7 +95,7 @@ The commands need the `uapply` MCP server connected in the session (the
 tools they call come from it), and both the server and the plugin load at
 session start, so open a new session after installing. Without the plugin,
 Claude Code lists the server's prompts as `/uapply:run (MCP)` (also reachable
-as `/mcp__uapply__run`); Codex shows them in its prompt picker.
+as `/mcp__uapply__run`); Codex uses the `$uapply-*` skills setup writes.
 
 ### Updates
 
@@ -219,7 +221,8 @@ Exit codes:
 | 130 | interrupted (Ctrl+C) |
 
 Interactive, from Claude Code or Codex: `cd` into the client folder, start the
-runtime, and use `/uapply:run`, `/uapply:status` or `/uapply:intake-from-chat`.
+runtime, and use `/uapply:run`, `/uapply:status` or `/uapply:intake-from-chat`
+(in Codex: `$uapply-run`, `$uapply-status`, `$uapply-intake-from-chat`).
 The MCP server exposes 24 tools, among them `case_status`, `scan_folder`,
 `sync_documents`, `start_processing`, `run_tasks`, `wait_for_stage`,
 `confirm_documents`, `autofill_forms`, `final_report`, `chat_fetch` and

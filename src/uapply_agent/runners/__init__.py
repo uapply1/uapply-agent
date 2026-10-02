@@ -22,8 +22,27 @@ def known_locations(binary: str) -> list[Path]:
     cands = [home / ".local" / "bin" / f"{binary}{e}" for e in exts]
     if binary == "claude":
         cands.append(home / ".claude" / "local" / "claude")
+    if binary == "codex":
+        cands += _codex_locations(home)
     if _WIN and os.environ.get("APPDATA"):
         cands.append(Path(os.environ["APPDATA"]) / "npm" / f"{binary}.cmd")
+    return cands
+
+
+def _codex_locations(home: Path) -> list[Path]:
+    """The standalone installer's bin dir and the CLI bundled in the Codex desktop app."""
+    if sys.platform == "darwin":
+        return [Path("/Applications/Codex.app/Contents/Resources/codex"),
+                home / "Applications" / "Codex.app" / "Contents" / "Resources" / "codex"]
+    if not _WIN:
+        return []
+    local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+    cands = [local / "Programs" / "OpenAI" / "Codex" / "bin" / "codex.exe"]
+    try:  # Store app; listing WindowsApps is often denied, which just finds nothing
+        apps = Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "WindowsApps"
+        cands += sorted(apps.glob("OpenAI.Codex_*/app/resources/codex.exe"), reverse=True)
+    except OSError:
+        pass
     return cands
 
 

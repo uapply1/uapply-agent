@@ -1,4 +1,6 @@
 
+from pathlib import Path
+
 from uapply_agent import integrate as it
 
 
@@ -169,3 +171,24 @@ def test_claude_login_gets_its_own_console_on_windows(tmp_path, monkeypatch):
     monkeypatch.setattr(it.subprocess, "run", lambda cmd, **kw: calls.append((cmd, kw)))
     assert it.ensure_claude_login("C:/claude.exe", say=lambda _: None) is True
     assert calls[0][0][1:] == ["auth", "login"] and calls[0][1]["creationflags"] == 0x10
+
+
+def test_codex_skills_generated_from_playbook(tmp_path):
+    it.install_codex_skills(tmp_path)
+    skill = (tmp_path / ".agents" / "skills" / "uapply-run" / "SKILL.md").read_text()
+    assert skill.startswith("---\nname: uapply-run\ndescription: ")
+    assert (tmp_path / ".agents" / "skills" / "uapply-status" / "SKILL.md").exists()
+
+
+def test_next_step_names_only_registered_runtimes():
+    codex_only = it.next_step({"claude": "skipped: Claude Code not found", "codex": "written to x"})
+    assert "$uapply-run" in codex_only and "Claude" not in codex_only
+    both = it.next_step({"claude": "written to y", "codex": "written to x"})
+    assert "/uapply:run" in both and "$uapply-run" in both
+    assert "not found" in it.next_step({"claude": "skipped", "codex": "skipped"})
+
+
+def test_codex_app_bundle_is_a_known_location(monkeypatch, tmp_path):
+    from uapply_agent import runners
+    monkeypatch.setattr(runners.sys, "platform", "darwin")
+    assert Path("/Applications/Codex.app/Contents/Resources/codex") in runners._codex_locations(tmp_path)
