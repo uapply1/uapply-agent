@@ -79,6 +79,12 @@ Always:
   the next call, e.g. "Processing 4/7 documents · running: passport & sp.pdf,
   LOA · 3 tasks done this round". Name failed documents as soon as they appear.
   Never make the RCIC wait on a silent call.
+- Keep looping while `done` is false or `remaining` > 0. `wait_for_stage`
+  returning `done: false` (a timeout, or a gateway 504 it reports that way) is
+  progress still running, not a failure: it does not count toward the retry
+  limit. Stop only on `plan_limited`, `runtime_error`, or 5 rounds in a row in
+  which `run_tasks` ran no task and `progress` did not change; then name the
+  documents still in progress and the `remaining` count.
 - If `run_tasks` reports `plan_limited`, stop and tell the RCIC; do not switch
   the case to server mode on your own.
 - If `run_tasks` (cli mode) reports `runtime_error` (e.g. the Codex CLI is not
@@ -88,7 +94,8 @@ Always:
 - Never ask for, print, or reason about a task's prompt or inputs.
 
 Never: delete anything, contact a client, submit to a government portal, or
-retry a failing tool more than twice — report instead.
+retry a failing tool more than twice — report instead (a `done: false` wait is
+not a failure).
 
 Chat history (optional, `chat_*` tools):
 - Fetch only for a contact the RCIC named in this conversation; confirm the
