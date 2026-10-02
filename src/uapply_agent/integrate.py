@@ -160,7 +160,9 @@ _SECTION = re.compile(r"^\[mcp_servers\.uapply\][ \t]*\n(?:(?!\[)[^\n]*\n?)*", r
 
 def write_codex_toml(exe: str, path: Path) -> None:
     text = path.read_text(encoding="utf-8") if path.exists() else ""
-    block = f'[mcp_servers.{SERVER}]\ncommand = {json.dumps(exe)}\nargs = ["mcp"]\n'
+    # Codex treats unannotated MCP tools as needing approval, and with approval policy "never" it refuses them.
+    block = (f'[mcp_servers.{SERVER}]\ncommand = {json.dumps(exe)}\nargs = ["mcp"]\n'
+             'default_tools_approval_mode = "approve"\n')
     if m := _SECTION.search(text):
         rest = text[m.end():]
         text = text[:m.start()] + block + ("\n" + rest if rest else "")
@@ -173,11 +175,7 @@ def write_codex_toml(exe: str, path: Path) -> None:
 def register_codex(exe: str, home: Path, which: Callable[[str], str | None] = _find) -> str:
     codex = which("codex")
     cfg = home / ".codex" / "config.toml"
-    if codex:
-        _run([codex, "mcp", "remove", SERVER])
-        r = _run([codex, "mcp", "add", SERVER, "--", exe, "mcp"])
-        if r.returncode == 0:
-            return "registered via `codex mcp add`"
+    # Written directly, not via `codex mcp add`: that cannot set the tools' approval mode.
     if codex or cfg.parent.exists():
         write_codex_toml(exe, cfg)
         return f"written to {cfg}"

@@ -78,8 +78,9 @@ PyPI name once published, or a local checkout).
 2. `uapply-agent setup`: registers the MCP server **by absolute path** with
    `claude mcp add --scope user uapply -- ~/.local/bin/uapply-agent mcp`
    (or writes `~/.claude.json` when only the desktop app is installed) and
-   `codex mcp add uapply -- … mcp` (or `[mcp_servers.uapply]` in
-   `~/.codex/config.toml`). The absolute path matters: GUI apps start with a
+   `[mcp_servers.uapply]` in `~/.codex/config.toml` (with
+   `default_tools_approval_mode = "approve"`, or Codex refuses the tools under
+   approval policy "never"). The absolute path matters: GUI apps start with a
    minimal `PATH`. It then checks `claude mcp list` reports the server
    connected, and writes a small Claude Code plugin to
    `~/.claude/skills/uapply/` (generated from the same playbook prompts) so

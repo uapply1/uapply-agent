@@ -43,6 +43,7 @@ def test_codex_toml_appended_and_replaced(tmp_path):
     import tomllib
     parsed = tomllib.loads(text)
     assert parsed["mcp_servers"]["uapply"]["args"] == ["mcp"] and parsed["mcp_servers"]["other"]["command"] == "y"
+    assert parsed["mcp_servers"]["uapply"]["default_tools_approval_mode"] == "approve"
     assert "mcp" not in parsed          # no stray `["mcp"]` line left behind (it parses as a table)
 
 
@@ -53,7 +54,8 @@ def test_codex_toml_rewrite_is_idempotent_between_tables(tmp_path):
     for _ in range(3):
         it.write_codex_toml("/new/uapply-agent", cfg)
     parsed = tomllib.loads(cfg.read_text())
-    assert parsed["mcp_servers"]["uapply"] == {"command": "/new/uapply-agent", "args": ["mcp"]}
+    assert parsed["mcp_servers"]["uapply"] == {"command": "/new/uapply-agent", "args": ["mcp"],
+                                                "default_tools_approval_mode": "approve"}
     assert parsed["profiles"]["fast"]["model"] == "mini" and set(parsed) == {"mcp_servers", "profiles"}
 
 
