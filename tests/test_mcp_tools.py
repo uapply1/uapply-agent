@@ -169,6 +169,16 @@ def test_whoami_reports_agent_api_and_runtime_paths(bound, monkeypatch):
     assert "Codex CLI" in hint and "claude" not in hint.lower()
 
 
+def test_whoami_reports_a_rejected_token_as_logged_out(bound, monkeypatch):
+    from uapply_agent.api import ApiError
+
+    def rejected():
+        raise ApiError(401, {"detail": "bad token"})
+    monkeypatch.setattr(m.ctx.api, "agent_api_available", rejected)
+    out = m.whoami()
+    assert out["logged_in"] is False and out["agent_api"] is None and "uapply-agent login" in out["hint"]
+
+
 def test_preview_document_renders_pdf_pages_locally(bound, tmp_path):
     import pymupdf
     root = m.ctx.folder.root

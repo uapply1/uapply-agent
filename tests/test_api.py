@@ -77,6 +77,41 @@ def test_concurrent_401s_refresh_the_token_once(monkeypatch):
     assert posts == ["r1"] and api.token == "new"
 
 
+def test_a_401_picks_up_a_login_made_after_the_client_started(monkeypatch):
+    from uapply_agent import api as api_mod
+    monkeypatch.setattr(api_mod.httpx, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no Auth0 call")))
+
+    def handler(req):
+        ok = req.headers["authorization"] == "Bearer fresh"
+        return httpx.Response(200 if ok else 401, json={}, headers={"content-type": "application/json"})
+    api = client(handler)
+    api_mod.Credentials.set_token("fresh")
+    assert api.survey("s-1") == {} and api.token == "fresh"
+
+
+def test_a_rejected_token_is_not_taken_for_an_agent_api():
+    def handler(req):
+        return httpx.Response(401, json={"detail": "bad token"}, headers={"content-type": "application/json"})
+    api = client(handler)
+    try:
+        api.agent_api_available()
+        assert False, "expected ApiError"
+    except ApiError as e:
+        assert e.status == 401
+    assert api._agent_api is None
+
+
+def test_package_download_retries_a_401_with_the_new_login(tmp_path):
+    from uapply_agent.config import Credentials
+
+    def handler(req):
+        ok = req.headers["authorization"] == "Bearer fresh"
+        return httpx.Response(200 if ok else 401, content=b"zip")
+    api = client(handler)
+    Credentials.set_token("fresh")
+    assert api.download_submit_package("s-1", tmp_path / "p.zip").read_bytes() == b"zip"
+
+
 def test_interrupted_download_leaves_no_file(tmp_path, monkeypatch):
     from uapply_agent import api as api_mod
 

@@ -69,6 +69,8 @@ def device_login(settings: Settings, say: Callable[[str], None] = print, timeout
             if t.status_code == 200:
                 where = Credentials.set_token(body["access_token"], body.get("refresh_token"))
                 say(f"Logged in; token stored in {where}")
+                if not body.get("refresh_token"):
+                    say("Auth0 granted no refresh token: log in again when this token expires.")
                 return body["access_token"]
             err = body.get("error")
             if err == "slow_down":

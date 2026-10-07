@@ -60,6 +60,9 @@ class UApplyApi:
 
     @property
     def logged_in(self) -> bool:
+        if not self.token and (stored := Credentials.get_token()):   # logged in after this client started
+            self.token = stored
+            self._client.headers.update(self._headers())
         return bool(self.token)
 
     def _refresh_token(self, rejected: str | None) -> bool:
@@ -68,6 +71,11 @@ class UApplyApi:
         with self._refresh_lock:
             if self.token and self.token != rejected:
                 return True                     # another thread already refreshed
+            stored = Credentials.get_token()
+            if stored and stored != rejected:   # `uapply-agent login` ran since this client started
+                self.token = stored
+                self._client.headers.update(self._headers())
+                return True
             s = self.settings
             refresh = Credentials.get_refresh_token()
             if not (refresh and s.auth0_domain and s.auth0_client_id):
@@ -127,6 +135,8 @@ class UApplyApi:
                 self._req("GET", f"{AGENT_PREFIX}tasks/stats/")
                 self._agent_api = True
             except ApiError as e:
+                if e.status in (401, 403):
+                    raise
                 self._agent_api = e.status != 404
         return self._agent_api
 
@@ -251,8 +261,9 @@ class UApplyApi:
         tmp = dest.with_name(dest.name + ".part")
         path = f"/api/survey/surveys/{survey_id}/download_zip_submit_files/"
         for attempt in range(2):
+            sent_token = self.token
             with self._client.stream("POST", path, json={}, timeout=httpx.Timeout(60, read=900)) as r:
-                if r.status_code == 401 and attempt == 0 and self._refresh_token():
+                if r.status_code == 401 and attempt == 0 and self._refresh_token(sent_token):
                     continue
                 if r.status_code >= 400:
                     r.read()

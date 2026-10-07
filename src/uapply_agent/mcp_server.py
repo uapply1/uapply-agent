@@ -33,6 +33,8 @@ from .session_runner import RUNTIME as SESSION_RUNTIME
 from .session_runner import SessionRunner
 
 logger = logging.getLogger(__name__)
+LOGIN_HINT = ("log in with `uapply-agent login`; the running server picks the new login up on its next call, "
+              "no restart needed")
 
 MAX_PREVIEW_PAGES = 3
 TIME_BOX_S = (20, 300)          # bounds for run_tasks / autofill_forms budgets
@@ -66,7 +68,7 @@ def tool(requires: Literal["case", "agent_api"] | None = None):
             except ToolError as e:
                 return e.as_result()
             except ApiError as e:
-                hint = e.hint or ("log in with `uapply-agent login`" if e.status == 401 else "")
+                hint = e.hint or (LOGIN_HINT if e.status == 401 else "")
                 return ToolError(f"HTTP_{e.status}", str(e), hint).as_result()
             except ChatError as e:
                 return ToolError(e.code.upper(), str(e), e.hint).as_result()
@@ -106,9 +108,20 @@ def whoami(mcp_ctx: Context | None = None) -> dict:
     api = ctx.api
     mode = _mode(mcp_ctx)
     runtimes = detect_runtimes(ctx.settings)
-    out = ok(backend=ctx.settings.backend_url, logged_in=api.logged_in,
-             agent_api=api.agent_api_available() if api.logged_in else None, task_runner=mode, runtimes=runtimes,
+    logged_in, agent_api = api.logged_in, None
+    if logged_in:
+        try:
+            agent_api = api.agent_api_available()
+        except ApiError as e:
+            if e.status != 401:
+                raise
+            logged_in = False             # a token the backend rejects is no login
+    out = ok(backend=ctx.settings.backend_url, logged_in=logged_in,
+             agent_api=agent_api, task_runner=mode, runtimes=runtimes,
              acrobat=detect_acrobat(probe=False), folder=str(ctx.folder.root), case=ctx.folder.case or None)
+    if not logged_in:
+        out["hint"] = LOGIN_HINT
+        return out
     if mode == "session":
         return out                       # tasks run in this session; a CLI is not needed
     if runtimes and all(r.get("error") for r in runtimes):
