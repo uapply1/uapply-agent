@@ -1,6 +1,9 @@
 """IMM PDF auto-fill: replaying recorded ops in Acrobat, and the local / platform orchestration."""
+import json
 import sys
 from pathlib import Path
+
+import pytest
 
 from uapply_agent import acrobat
 from uapply_agent.autofill import AutoFiller
@@ -11,29 +14,30 @@ class Field:
         self.formattedValue = ""
         self.events, self.items, self.selected = [], list(items), None
 
-    def execEvent(self, e):
-        self.events.append(e)
-
-    def getDisplayItem(self, i):
-        return self.items[i - 1] if 1 <= i <= len(self.items) else ""
-
-    def setItemState(self, i, state):
-        self.selected = i
-
 
 class Form:
-    """XfaFormLib's calls: ResolveNode on xfa.form, then InvokeMember with explicit BindingFlags."""
+    """Applies a batch as acrobat.BATCH_JS does inside Acrobat; records each batch (one JS call)."""
     def __init__(self, fields):
-        self.fields, self.calls = fields, []
+        self.fields, self.batches = fields, []
 
-    def resolve(self, node):
-        return self.fields.get(node)
-
-    def invoke(self, obj, member, args, flags):
-        self.calls.append((member, flags))
-        if flags == acrobat.SET_PROPERTY:
-            return setattr(obj, member, *args)
-        return getattr(obj, member)(*args)
+    def run(self, ops, read=None):
+        self.batches.append(([o["op"] for o in ops], read))
+        errors = []
+        for o in ops:
+            f = self.fields.get(o["node"])
+            if f is None:
+                errors.append(f"{o['node']}: not found in the form")
+            elif o["op"] == "set":
+                f.formattedValue = o["value"]
+                if o.get("event"):
+                    f.events.append(o["event"])
+            elif o["op"] == "event":
+                f.events.append(o["event"])
+            elif o["op"] == "select":
+                f.selected = o["index"]
+                f.events.append("exit")
+        field = self.fields.get(read) if read is not None else None
+        return (list(field.items) if field is not None else None), errors
 
 
 def test_choice_matching_follows_pdf_auto_mappers():
@@ -45,19 +49,72 @@ def test_choice_matching_follows_pdf_auto_mappers():
     assert acrobat.choice_matches("Canada’s", "canada's", None)               # quotes normalised
 
 
-def test_apply_op_sets_values_events_and_choices():
+def test_replay_sets_values_events_and_choices():
     name, dob, sex = Field(), Field(), Field(items=["F Female", "M Male", "U Unknown"])
     form = Form({"n": name, "d": dob, "s": sex})
-    assert acrobat.apply_op(form, {"op": "set", "node": "n", "value": "LI", "event": None}) is None
-    assert acrobat.apply_op(form, {"op": "set", "node": "d", "value": 2007, "event": "change"}) is None
-    assert acrobat.apply_op(form, {"op": "choice", "node": "s", "value": "Male",
-                                   "mapper": {"compare": "equals", "mapping": {"M Male": "Male"}}}) is None
+    errors = acrobat.replay(form, [
+        {"op": "set", "node": "n", "value": "LI", "event": None},
+        {"op": "set", "node": "d", "value": 2007, "event": "change"},
+        {"op": "choice", "node": "s", "value": "Male", "mapper": {"compare": "equals", "mapping": {"M Male": "Male"}}},
+        {"op": "set", "node": "missing", "value": "x"},
+        {"op": "choice", "node": "s", "value": "Other", "mapper": {"compare": "equals"}},
+        {"op": "choice", "node": "gone", "value": "x"},
+    ])
     assert (name.formattedValue, dob.formattedValue, dob.events) == ("LI", "2007", ["change"])
     assert sex.selected == 2 and sex.events == ["exit"]                       # 1-based, as XfaHelper
-    assert form.calls[:3] == [("formattedValue", acrobat.SET_PROPERTY), ("formattedValue", acrobat.SET_PROPERTY),
-                              ("execEvent", acrobat.INVOKE_METHOD)]
-    assert "no option" in acrobat.apply_op(form, {"op": "choice", "node": "s", "value": "Other", "mapper": {"compare": "equals"}})
-    assert "not found" in acrobat.apply_op(form, {"op": "set", "node": "missing", "value": "x"})
+    # in the order Acrobat ran them: the batch with "missing" runs before the second choice is matched
+    assert errors == ["missing: not found in the form", "s: no option matches 'Other'", "gone: not found in the form"]
+
+
+def test_replay_batches_writes_and_reads_each_choice_after_earlier_writes():
+    form = Form({"a": Field(), "b": Field(), "country": Field(items=["Canada"]), "c": Field()})
+    acrobat.replay(form, [{"op": "set", "node": "a", "value": "1"}, {"op": "event", "node": "b", "event": "click"},
+                          {"op": "choice", "node": "country", "value": "Canada"}, {"op": "set", "node": "c", "value": "2"}])
+    # one JS call per choice (after the writes before it) plus one for the rest
+    assert form.batches == [(["set", "event"], "country"), (["select", "set"], None)]
+
+
+def test_acrobat_path_matches_javascript_this_path():
+    assert acrobat._acrobat_path(Path(r"C:\Users\rcic\case\IMM5257_blank.pdf")) == "/C/Users/rcic/case/IMM5257_blank.pdf"
+    assert acrobat._acrobat_path(r"\\server\share\f.pdf") == "/server/share/f.pdf"
+
+
+class FakeJs:
+    """AFormAut Fields: answers each ExecuteThisJavascript call with the next reply."""
+    def __init__(self, *replies):
+        self.replies, self.scripts = list(replies), []
+
+    def ExecuteThisJavascript(self, script):
+        self.scripts.append(script)
+        return json.dumps(self.replies.pop(0))
+
+
+class FakeAv:
+    fronted = 0
+
+    def BringToFront(self):
+        self.fronted += 1
+
+
+def open_form(*replies):
+    form = acrobat.AcrobatForm(Path(r"C:\case\IMM5257_blank.pdf"))
+    form.av, form.js = FakeAv(), FakeJs(*replies)
+    return form
+
+
+def test_batches_only_run_in_the_form_being_filled(monkeypatch):
+    monkeypatch.setattr(acrobat.time, "sleep", lambda s: None)
+    form = open_form({"wrong_doc": "/C/rcic/other.pdf"}, {"items": ["A"], "errors": []})
+    assert form.run([{"op": "set", "node": "n", "value": "x"}], read="s") == (["A"], [])
+    assert form.av.fronted == 1                                               # our form brought back first
+    assert '"/C/case/IMM5257_blank.pdf"' in form.js.scripts[0]
+
+
+def test_never_writes_while_another_document_stays_active(monkeypatch):
+    monkeypatch.setattr(acrobat.time, "sleep", lambda s: None)
+    form = open_form(*[{"wrong_doc": "/C/rcic/other.pdf"}] * acrobat.AcrobatForm.FOCUS_RETRIES)
+    with pytest.raises(acrobat.AcrobatError, match="no other document is changed"):
+        form.run([{"op": "set", "node": "n", "value": "x"}])
 
 
 class FakeDoc(Form):

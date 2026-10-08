@@ -78,8 +78,7 @@ uapply-agent/
     ├── runners/             # headless runtime driver: codex.py (Claude Code never runs headless)
     ├── local_ops.py         # page rendering, PDF text layer, HEIC to JPEG (no model)
     ├── autofill.py          # IMM PDF auto-fill: local Acrobat Pro, or uApply's platform filler
-    ├── acrobat.py           # Adobe Acrobat Pro automation on Windows (XfaFormLib, as pdf_auto)
-    ├── xfaform.py           # registers the shipped bin/XfaFormLib.dll (no regasm, no admin)
+    ├── acrobat.py           # Adobe Acrobat Pro automation on Windows (JavaScript batches, as pdf_auto)
     ├── report.py            # end-of-run report and final package download
     ├── api.py               # typed client for the uApply backend
     ├── auth.py              # Auth0 device login, or a pasted token
