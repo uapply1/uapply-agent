@@ -373,3 +373,30 @@ def test_wait_for_stage_treats_a_gateway_timeout_as_not_done(bound, monkeypatch)
     monkeypatch.setattr(m, "_with_progress", lambda out: out)
     out = m.wait_for_stage("processing")
     assert out["ok"] and out["done"] is False and out["documents"] == {"analyzing": 9}
+
+
+def test_wait_for_stage_sends_the_orchestrator_to_run_tasks_when_tasks_are_queued(bound, monkeypatch):
+    m.init_case("s-1")
+    monkeypatch.setattr(bound, "agent_wait", lambda sid, stage, t: {"done": False, "stage": stage, "tasks_queued": 3,
+                                                                    "documents_waiting_on_agent": ["d1"]}, raising=False)
+    monkeypatch.setattr(m, "_with_progress", lambda out: out)
+    out = m.wait_for_stage("processing")
+    assert out["tasks_queued"] == 3 and out["next"].startswith("call run_tasks now")
+
+
+def test_wait_for_stage_reads_queued_tasks_from_an_older_backend(bound, monkeypatch):
+    m.init_case("s-1")
+    monkeypatch.setattr(bound, "agent_wait", lambda sid, stage, t: {"done": False, "stage": stage,
+                                                                    "agent_tasks": {"queued": 2, "leased": 0}},
+                        raising=False)
+    monkeypatch.setattr(m, "_with_progress", lambda out: out)
+    assert m.wait_for_stage("processing")["tasks_queued"] == 2
+
+
+def test_wait_for_stage_done_has_no_next(bound, monkeypatch):
+    m.init_case("s-1")
+    monkeypatch.setattr(bound, "agent_wait", lambda sid, stage, t: {"done": True, "stage": stage, "tasks_queued": 0,
+                                                                    "documents_waiting_on_agent": []}, raising=False)
+    monkeypatch.setattr(m, "_with_progress", lambda out: out)
+    out = m.wait_for_stage("processing")
+    assert out["done"] and out["tasks_queued"] == 0 and "next" not in out

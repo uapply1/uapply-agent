@@ -357,7 +357,8 @@ def release_task(task_id: str, reason: str) -> dict:
 @tool(requires="agent_api")
 def wait_for_stage(stage: Literal["processing", "analysis", "filling"] = "processing", timeout_s: int = 25) -> dict:
     """Long-poll (at most 60 s) until a stage is done for the case — processing, analysis or filling
-    (the platform auto-fill) — and return the status either way."""
+    (the platform auto-fill) — and return the status either way. Returns early with `tasks_queued` > 0
+    when uApply is waiting on this machine: call `run_tasks` next."""
     timeout = max(1, min(int(timeout_s), LONG_POLL_MAX_S))
     try:
         res = ctx.api.agent_wait(ctx.survey_id, stage, timeout)
@@ -366,7 +367,15 @@ def wait_for_stage(stage: Literal["processing", "analysis", "filling"] = "proces
             raise
         # A proxy in front of uApply cut the long poll short: not done yet, same as a timeout.
         res = {**ctx.api.agent_status(ctx.survey_id), "done": False, "stage": stage}
-    return _with_progress(ok(**res))
+    out = ok(**res)
+    # Older backends do not send tasks_queued; their status still carries the counts.
+    queued = int(res.get("tasks_queued") or (res.get("agent_tasks") or {}).get("queued") or 0)
+    out["tasks_queued"] = queued
+    if queued:
+        out["next"] = f"call run_tasks now: {queued} task(s) are queued and uApply is waiting on this machine"
+    elif not res.get("done") and res.get("documents_waiting_on_agent"):
+        out["next"] = "documents are still waiting on this machine: call run_tasks, then wait again"
+    return _with_progress(out)
 
 
 @tool(requires="agent_api")

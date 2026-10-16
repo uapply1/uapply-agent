@@ -46,7 +46,7 @@ server mode and refuses `run_tasks` (`AGENT_API_UNAVAILABLE`).
 | Endpoint | Body / params | Used by |
 |---|---|---|
 | `GET  /api/ai-parse/agent/surveys/{id}/status/` | | `case_status`, `confirm_documents`, `autofill_forms`, `uapply-agent status` |
-| `GET  /api/ai-parse/agent/surveys/{id}/wait/` | `stage` (`processing` \| `analysis` \| `filling`), `timeout` (≤ 60 s) | `wait_for_stage`, `uapply-agent run --follow` |
+| `GET  /api/ai-parse/agent/surveys/{id}/wait/` | `stage` (`processing` \| `analysis` \| `filling`), `timeout` (≤ 60 s); returns early with `tasks_queued` > 0 when agent tasks are queued | `wait_for_stage`, `uapply-agent run --follow` |
 | `POST /api/ai-parse/agent/surveys/{id}/llm_mode/` | `{llm_mode}` | `init_case`, `create_case`, `set_llm_mode` |
 | `POST /api/ai-parse/agent/tasks/pull/` | `{survey_ids, n, session_id, runtime, kinds?}` | executor; returns `{tasks: [...]}` and leases them |
 | `POST /api/ai-parse/agent/tasks/{id}/result/` | `{result, model, runtime, usage, session_id}` | executor; the server validates the result and, when the last task of a batch is accepted, resumes the pipeline |
