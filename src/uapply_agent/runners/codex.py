@@ -112,7 +112,7 @@ def _object_shape(schema) -> tuple[dict, set]:
 class CodexRunner(Runner):
     name = "codex"
     binary = "codex"
-    pages_per_call = 10
+    pages_per_call = 5     # dense scans: 10 pages ran past 300 s in one exec call
 
     def run(self, *, system_prompt, user_prompt, schema, images, cwd, timeout_s=300, text_files=()) -> RunResult:
         prompt = f"## Instructions\n{system_prompt}\n\n## Task\n{user_prompt}\n\nAnswer with JSON only."

@@ -38,7 +38,7 @@ class FakeApi:
         self.submitted.append({"task_id": task_id, "result": result, "model": model, "runtime": runtime})
         return self.verdict
 
-    def release_task(self, task_id, reason):
+    def release_task(self, task_id, reason, count_attempt=True):
         self.released.append((task_id, reason))
 
     def task_stats(self, survey_id):

@@ -48,7 +48,7 @@ class Settings:
     auto_update: bool = True       # at `mcp` / `run` start, switch to the newest build of main
     codex_bin: str = ""            # absolute path recorded by `setup`; GUI apps run with a minimal PATH
     workers: int = 2
-    task_timeout_s: int = 300      # one headless model call; OCR chunks get more per page
+    task_timeout_s: int = 300      # one headless model call; OCR chunks get this plus a per-page budget
     force_ocr: bool = False        # ignore PDF text layers and always OCR with the model
     team_id: str = ""              # team to create cases in (business accounts)
     chat_source: str = "anychat"   # anychat | none

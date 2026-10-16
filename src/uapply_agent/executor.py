@@ -16,13 +16,15 @@ from .briefs import FINAL_TASK_STATUSES, schema_check
 from .constants import IMAGE_EXTENSIONS
 from .folder import WorkingFolder
 from .local_ops import pdf_page_count, render_pdf_pages
-from .runners import PlanLimited, Runner, RunnerError, RuntimeUnavailable
+from .runners import PlanLimited, Runner, RunnerError, RunnerTimeout, RuntimeUnavailable
 
 logger = logging.getLogger(__name__)
 
 PROMPT_INLINE_MAX = 6000   # characters; longer prompts are passed as files
 ATTEMPTS_PER_TASK = 2      # model answers per task and run, the second with the rejection as feedback
-OCR_SECONDS_PER_PAGE = 30  # extra time budget per page for chunked OCR calls
+OCR_SECONDS_PER_PAGE = 30  # added to the task timeout per page of a chunked OCR call
+OCR_PROGRESS_FILE = "ocr_pages.json"  # pages read so far: a re-pulled task resumes from here
+LEASE_S = 3600             # long scans take several OCR calls; the lease must outlast them
 MAX_WORKERS = 4
 
 
@@ -65,6 +67,15 @@ def _merge_usage(total: dict, part: dict) -> dict:
     return total
 
 
+def _load_ocr_progress(path: Path, n: int) -> dict:
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        pages = [{"n": int(p["n"]), "text": str(p.get("text", ""))} for p in rows]
+    except (OSError, ValueError, TypeError, KeyError):
+        return {}
+    return {p["n"]: p for p in pages if 1 <= p["n"] <= n}
+
+
 class Executor:
     def __init__(self, api: UApplyApi, folder: WorkingFolder, runner: Runner, *, force_ocr: bool = False,
                  timeout_s: int = 300, session_id: str | None = None):
@@ -105,7 +116,7 @@ class Executor:
         user_prompt = briefs.user_prompt_with_inputs(task)
         system_prompt, user_prompt, text_files = self._prompt_files(task, cwd, payload.get("system_prompt", ""),
                                                                     user_prompt)
-        note = ""
+        note, submitted = "", False
         for _ in range(ATTEMPTS_PER_TASK):
             rr = self.runner.run(system_prompt=system_prompt, user_prompt=user_prompt + note, schema=schema,
                                  images=images, cwd=cwd, text_files=text_files, timeout_s=self.timeout_s)
@@ -115,10 +126,13 @@ class Executor:
                 note = f"\n\nYour previous answer was invalid ({local_err}). Return JSON matching the schema exactly."
                 continue
             outcome = self._submit(task, rr.output, rr.model, rr.usage, stats)
+            submitted = True
             if outcome.done:
                 return
             note = outcome.retry_note
-        self.api.release_task(task["id"], "executor: could not produce a valid result in this run")
+        # The server already counted each rejected submission as an attempt.
+        self.api.release_task(task["id"], "executor: could not produce a valid result in this run",
+                              count_attempt=not submitted)
         stats.bump("released")
 
     # ---- extract_content: OCR the whole document once ----
@@ -151,47 +165,67 @@ class Executor:
 
         if not pages:
             raise RunnerError("extract_content: the runtime returned no pages")
-        if not self._submit(task, {"pages": pages}, model, usage, stats).done:
-            self.api.release_task(task["id"], "executor: OCR result rejected")
+        outcome = self._submit(task, {"pages": pages}, model, usage, stats)
+        (cwd / OCR_PROGRESS_FILE).unlink(missing_ok=True)   # a rejected result is re-read next time
+        if not outcome.done:
+            self.api.release_task(task["id"], "executor: OCR result rejected", count_attempt=False)
             stats.bump("released")
 
     def _ocr_pdf(self, src: Path, payload: dict, schema: dict, cwd: Path, stats: RunStats):
         """Chunk a scanned PDF by the runtime's page budget; one headless call per chunk."""
         n = pdf_page_count(src)
         per = max(1, self.runner.pages_per_call)
-        pages, usage, model = [], {}, ""
-        for first in range(1, n + 1, per):
-            last = min(first + per - 1, n)
-            got, u, m = self._ocr_range(src, payload, schema, cwd, stats, first, last)
-            pages.extend(got)
+        progress = cwd / OCR_PROGRESS_FILE
+        seen = _load_ocr_progress(progress, n)
+        if seen:
+            logger.info("%s: resuming OCR with %d of %d pages already read", src.name, len(seen), n)
+        usage, model = {}, ""
+
+        def keep(first, last, got, u, m):
+            nonlocal usage, model
+            for p in got:
+                if first <= p["n"] <= last:
+                    seen.setdefault(p["n"], p)
             usage = _merge_usage(usage, u)
             model = m or model
-        seen = {}
-        for p in pages:
-            if 1 <= p["n"] <= n:
-                seen.setdefault(p["n"], p)
+            progress.write_text(json.dumps(list(seen.values()), ensure_ascii=False), encoding="utf-8")
+
+        for first in range(1, n + 1, per):
+            last = min(first + per - 1, n)
+            if all(k in seen for k in range(first, last + 1)):
+                continue
+            self._ocr_chunk(src, payload, schema, cwd, stats, first, last, keep)
         missing = [k for k in range(1, n + 1) if k not in seen]
         if missing:
             # One retry, page by page, for whatever the chunked pass skipped.
             logger.warning("OCR missed pages %s; retrying them individually", missing[:10])
             for k in missing:
-                got, u, m = self._ocr_range(src, payload, schema, cwd, stats, k, k)
-                usage = _merge_usage(usage, u)
-                model = m or model
-                for p in got:
-                    if p["n"] == k:
-                        seen[k] = p
+                keep(k, k, *self._ocr_range(src, payload, schema, cwd, stats, k, k))
         still = [k for k in range(1, n + 1) if k not in seen]
         if still:
             raise RunnerError(f"OCR could not read pages {still[:10]} of {src.name}")
-        return [seen[k] for k in sorted(seen)], usage, model
+        return [seen[k] for k in sorted(seen)], usage, model or self.runner.name
+
+    def _ocr_chunk(self, src, payload, schema, cwd, stats, first, last, keep):
+        """OCR pages first..last into `keep`; a timeout is retried once, as two halves."""
+        try:
+            keep(first, last, *self._ocr_range(src, payload, schema, cwd, stats, first, last))
+            return
+        except RunnerTimeout as e:
+            logger.warning("OCR of %s pages %d-%d: %s; retrying in halves", src.name, first, last, e)
+        mid = (first + last) // 2
+        for a, b in ([(first, mid), (mid + 1, last)] if last > first else [(first, last)]):
+            keep(a, b, *self._ocr_range(src, payload, schema, cwd, stats, a, b))
+
+    def _ocr_budget(self, pages: int) -> int:
+        return self.timeout_s + OCR_SECONDS_PER_PAGE * pages
 
     def _ocr_range(self, src, payload, schema, cwd, stats, first, last):
         # Rendered here with PyMuPDF: Claude's Read needs poppler for a page range, which Windows lacks.
         images = render_pdf_pages(src, cwd, first, last)
         prompt = (f"{payload['user_prompt']}\n\nThe images are pages {first} to {last} of the document, in order. "
                   f"Return exactly {last - first + 1} entries, numbered n={first} to n={last}.")
-        timeout = max(self.timeout_s, OCR_SECONDS_PER_PAGE * (last - first + 1))
+        timeout = self._ocr_budget(last - first + 1)
         rr = self.runner.run(system_prompt=payload["system_prompt"], user_prompt=prompt, schema=schema,
                              images=images, cwd=cwd, timeout_s=timeout)
         stats.bump("model_calls")
@@ -229,12 +263,12 @@ class Executor:
                 self._run_generic(task, stats)
         except PlanLimited as e:
             stats.plan_limited = True
-            self._release_quietly(task, f"plan limit: {e}")
+            self._release_quietly(task, f"plan limit: {e}", count_attempt=False)
             stats.bump("released")
             raise
         except RuntimeUnavailable as e:
             stats.runtime_error = str(e)
-            self._release_quietly(task, f"runtime unavailable: {e}")
+            self._release_quietly(task, f"runtime unavailable: {e}", count_attempt=False)
             stats.bump("released")
             raise
         except (RunnerError, ApiError, OSError, ValueError) as e:
@@ -249,9 +283,9 @@ class Executor:
         stats.note_failure({"task_id": task["id"], "kind": task["kind"], "reason": reason[:300]})
         self._release_quietly(task, reason)
 
-    def _release_quietly(self, task: dict, reason: str) -> None:
+    def _release_quietly(self, task: dict, reason: str, count_attempt: bool = True) -> None:
         try:
-            self.api.release_task(task["id"], reason)
+            self.api.release_task(task["id"], reason, count_attempt=count_attempt)
         except ApiError as e:   # the lease expires on its own; the server re-queues the task
             logger.warning("releasing task %s failed: %s", task["id"], e)
 
@@ -274,7 +308,8 @@ class Executor:
             if deadline and time.monotonic() >= deadline:
                 break
             n = batch if max_tasks is None else min(batch, max_tasks - done)
-            tasks = self.api.pull_tasks(survey_ids, n, self.session_id, self.runner.name, kinds=kinds)
+            tasks = self.api.pull_tasks(survey_ids, n, self.session_id, self.runner.name, kinds=kinds,
+                                        lease_s=LEASE_S)
             if not tasks:
                 break
             try:

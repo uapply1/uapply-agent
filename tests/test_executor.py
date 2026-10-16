@@ -20,10 +20,10 @@ class FakeApi:
     def __init__(self, tasks, verdicts=None):
         self.queue = list(tasks)
         self.verdicts = verdicts or {}
-        self.submitted, self.released = [], []
+        self.submitted, self.released, self.uncounted = [], [], []
         self.downloads = 0
 
-    def pull_tasks(self, survey_ids, n, session_id, runtime, kinds=None):
+    def pull_tasks(self, survey_ids, n, session_id, runtime, kinds=None, lease_s=None):
         out, self.queue = self.queue[:n], self.queue[n:]
         return out
 
@@ -42,8 +42,10 @@ class FakeApi:
             return verdict(result)
         return verdict or {"accepted": True, "task_status": "accepted"}
 
-    def release_task(self, task_id, reason):
+    def release_task(self, task_id, reason, count_attempt=True):
         self.released.append((task_id, reason))
+        if not count_attempt:
+            self.uncounted.append(task_id)
         return {}
 
     def task_stats(self, survey_id):
@@ -98,7 +100,7 @@ def test_server_rejection_feeds_back_then_releases(folder):
     stats = Executor(api, folder, runner=runner).run()
     assert stats.accepted == 0 and stats.rejected == 2 and stats.released == 1
     assert "TYPE_NOT_ALLOWED" in runner.calls[1]["user_prompt"]
-    assert api.released[0][0] == "t1"
+    assert api.released[0][0] == "t1" and api.uncounted == ["t1"]   # the rejections were the attempts
 
 
 def test_plan_limit_releases_and_stops(folder):
@@ -107,6 +109,7 @@ def test_plan_limit_releases_and_stops(folder):
     stats = Executor(api, folder, runner=runner).run(workers=1)
     assert stats.plan_limited and stats.released == 1
     assert api.released[0][0] == "t1" and "plan limit" in api.released[0][1]
+    assert api.uncounted == ["t1"]   # not the task's fault: no attempt spent
     assert len(runner.calls) == 1  # t2 never attempted
 
 

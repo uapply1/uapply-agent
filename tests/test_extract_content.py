@@ -1,8 +1,9 @@
 """extract_content: text-layer PDFs never reach the model; scans are chunked per runtime."""
+import re
 from pathlib import Path
 
 from uapply_agent.executor import Executor
-from uapply_agent.runners.base import Runner, RunResult
+from uapply_agent.runners.base import Runner, RunnerTimeout, RunResult
 
 SCHEMA = {"type": "object", "properties": {"pages": {"type": "array"}}, "required": ["pages"]}
 
@@ -31,7 +32,7 @@ class FakeApi:
     def __init__(self, src: Path, tasks):
         self.src, self.queue, self.submitted, self.released = src, list(tasks), [], []
 
-    def pull_tasks(self, survey_ids, n, session_id, runtime, kinds=None):
+    def pull_tasks(self, survey_ids, n, session_id, runtime, kinds=None, lease_s=None):
         out, self.queue = self.queue[:n], self.queue[n:]
         return out
 
@@ -46,7 +47,7 @@ class FakeApi:
         self.submitted.append({"result": result, "model": model, "runtime": runtime, "usage": usage})
         return {"accepted": True, "task_status": "accepted"}
 
-    def release_task(self, task_id, reason):
+    def release_task(self, task_id, reason, count_attempt=True):
         self.released.append(reason)
 
     def task_stats(self, survey_id):
@@ -183,3 +184,72 @@ def test_extracted_text_drops_characters_the_backend_cannot_store():
     from uapply_agent.local_ops import clean_extracted_text
     assert clean_extracted_text("Offer\x00 letter\x07\n\tok \ud83d") == "Offer letter\n\tok "
 
+
+
+def test_ocr_chunk_budget_grows_past_the_task_timeout(folder, tmp_path):
+    from uapply_agent.runners.codex import CodexRunner
+    ex = Executor(FakeApi(tmp_path / "x.pdf", []), folder, runner=CodexRunner(), timeout_s=300)
+    assert ex._ocr_budget(10) > 300 and ex._ocr_budget(CodexRunner.pages_per_call) > 300
+    assert ex._ocr_budget(1) > 300
+
+
+class TimeoutRunner(ChunkRunner):
+    """Times out on the chunks listed in `slow` ("first-last"), records each call's budget."""
+
+    def __init__(self, pages_per_call, slow=()):
+        super().__init__(pages_per_call)
+        self.slow, self.budgets = set(slow), []
+
+    def run(self, *, system_prompt, user_prompt, schema, images, cwd, timeout_s=300):
+        self.budgets.append(timeout_s)
+        first, last = re.search(r"pages (\d+) to (\d+)", user_prompt).groups()
+        if f"{first}-{last}" in self.slow:
+            self.calls.append({"prompt": user_prompt, "images": images})
+            raise RunnerTimeout(f"codex.EXE timed out after {timeout_s}s")
+        return super().run(system_prompt=system_prompt, user_prompt=user_prompt, schema=schema,
+                           images=images, cwd=cwd)
+
+
+def test_timed_out_chunk_is_retried_in_halves(folder, tmp_path):
+    src = make_pdf(tmp_path / "scan.pdf", pages=12, text=False)
+    api = FakeApi(src, [task()])
+    runner = TimeoutRunner(pages_per_call=10, slow={"1-10"})
+    stats = Executor(api, folder, runner=runner, timeout_s=300).run()
+    assert stats.accepted == 1 and api.released == []
+    prompts = [c["prompt"] for c in runner.calls]
+    for prompt, want in zip(prompts, ["pages 1 to 10", "pages 1 to 5", "pages 6 to 10", "pages 11 to 12"], strict=True):
+        assert want in prompt
+    assert runner.budgets[0] > 300                     # a full 10-page chunk gets more than the task timeout
+    assert [p["n"] for p in api.submitted[0]["result"]["pages"]] == list(range(1, 13))
+
+
+def test_second_timeout_releases_but_keeps_pages_for_the_next_pull(folder, tmp_path):
+    src = make_pdf(tmp_path / "scan.pdf", pages=6, text=False)
+    api = FakeApi(src, [task()])
+    runner = TimeoutRunner(pages_per_call=2, slow={"5-6", "5-5"})
+    stats = Executor(api, folder, runner=runner).run()
+    assert stats.failed == 1 and "timed out" in api.released[0]
+    assert len(runner.calls) == 4                      # 1-2, 3-4, 5-6, then 5-5 timed out: no third try
+
+    api.queue = [task()]                               # the backend re-queues it; the next run resumes
+    runner2 = ChunkRunner(pages_per_call=2)
+    stats = Executor(api, folder, runner=runner2).run()
+    assert stats.accepted == 1
+    assert len(runner2.calls) == 1 and "pages 5 to 6" in runner2.calls[0]["prompt"]
+    assert [p["n"] for p in api.submitted[0]["result"]["pages"]] == [1, 2, 3, 4, 5, 6]
+    assert not (folder.cache / "t-ocr" / "ocr_pages.json").exists()
+
+
+def test_single_page_timeout_is_retried_once(folder, tmp_path):
+    src = make_pdf(tmp_path / "scan.pdf", pages=1, text=False)
+
+    class OnceSlow(ChunkRunner):
+        def run(self, **kw):
+            if not self.calls:
+                self.calls.append(kw)
+                raise RunnerTimeout("codex.EXE timed out after 330s")
+            return super().run(**kw)
+
+    api = FakeApi(src, [task()])
+    stats = Executor(api, folder, runner=OnceSlow(pages_per_call=5)).run()
+    assert stats.accepted == 1 and api.released == []

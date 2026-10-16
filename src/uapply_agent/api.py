@@ -309,8 +309,10 @@ class UApplyApi:
                          json={"result": result, "model": model or "", "runtime": runtime,
                                "usage": usage or {}, "session_id": session_id})
 
-    def release_task(self, task_id: str, reason: str) -> dict:
-        return self._req("POST", f"{AGENT_PREFIX}tasks/{task_id}/release/", json={"reason": reason[:500]})
+    def release_task(self, task_id: str, reason: str, count_attempt: bool = True) -> dict:
+        """`count_attempt=False` for releases that are not the task's fault (plan limit, runtime down)."""
+        return self._req("POST", f"{AGENT_PREFIX}tasks/{task_id}/release/",
+                         json={"reason": reason[:500], "count_attempt": count_attempt})
 
     def task_stats(self, survey_id: str) -> dict:
         return self._req("GET", f"{AGENT_PREFIX}tasks/stats/", params={"survey": survey_id})["stats"]

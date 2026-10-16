@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .base import PlanLimited, Runner, RunnerError, RunResult, RuntimeUnavailable
+from .base import PlanLimited, Runner, RunnerError, RunnerTimeout, RunResult, RuntimeUnavailable
 from .codex import CodexRunner
 
 # Headless runtimes only. Claude Code never runs headless: its sessions run tasks as subagents.
@@ -126,5 +126,5 @@ def get_runner(name: str = "auto", model: str = "", settings=None) -> Runner:
     return runner
 
 
-__all__ = ["RUNNERS", "PlanLimited", "RunResult", "Runner", "RunnerError", "RuntimeUnavailable",
+__all__ = ["RUNNERS", "PlanLimited", "RunResult", "Runner", "RunnerError", "RunnerTimeout", "RuntimeUnavailable",
            "configured_paths", "detect_runtimes", "get_runner", "known_locations", "resolve_binary", "runtime_error"]

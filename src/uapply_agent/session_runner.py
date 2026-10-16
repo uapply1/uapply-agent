@@ -70,7 +70,7 @@ class SessionRunner:
                     rnd.submitted += 1
                 else:
                     rnd.failed.append({"task_id": task["id"], "reason": verdict.feedback})
-                    self._release(task["id"], "text-layer result rejected")
+                    self._release(task["id"], "text-layer result rejected", count_attempt=False)
                 return None
             images = briefs.images_for_ocr(src, cwd)
             note = OCR_PAGE_NOTE
@@ -82,8 +82,8 @@ class SessionRunner:
         return {"task_id": task["id"], "kind": task["kind"], "document": briefs._document_name(task),
                 "brief": str(brief), "pages": len(images)}
 
-    def _release(self, task_id: str, reason: str) -> None:
+    def _release(self, task_id: str, reason: str, count_attempt: bool = True) -> None:
         try:
-            self.api.release_task(task_id, reason)
+            self.api.release_task(task_id, reason, count_attempt=count_attempt)
         except ApiError as e:   # the lease expires on its own; the server re-queues the task
             logger.warning("releasing task %s failed: %s", task_id, e)

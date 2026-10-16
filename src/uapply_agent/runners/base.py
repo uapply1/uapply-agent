@@ -19,6 +19,10 @@ class PlanLimited(RunnerError):
     """The subscription's usage window is exhausted; stop pulling work."""
 
 
+class RunnerTimeout(RunnerError):
+    """The CLI call ran past its time budget."""
+
+
 class RuntimeUnavailable(RunnerError):
     """The runtime cannot work at all (e.g. not signed in): stop the run instead of failing every task."""
 
@@ -94,7 +98,7 @@ class Runner:
         except FileNotFoundError as e:
             raise RunnerError(f"{cmd[0]} not found: {e}") from e
         except subprocess.TimeoutExpired as e:
-            raise RunnerError(f"{Path(cmd[0]).name} timed out after {timeout_s}s") from e
+            raise RunnerTimeout(f"{Path(cmd[0]).name} timed out after {timeout_s}s") from e
 
     @staticmethod
     def _raise_if_limited(text: str) -> None:
