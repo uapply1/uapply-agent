@@ -64,7 +64,7 @@ not a model that fabricates the phrase.
 
 | Control | Where |
 |---|---|
-| Task results validated against the pipeline's own Pydantic model (or, for `llm_call` tasks, the required fields of the output schema); rejected results are retried, at most 3 attempts | backend `validation.py` |
+| Task results validated against the pipeline's own Pydantic model (or, for `llm_call` tasks, the required fields of the output schema, plus the step's own `validator` such as the analysis normalisation); rejected results are retried, at most 3 attempts | backend `validation.py` |
 | Classification outputs restricted to the allowed values in the task | backend |
 | OCR results must cover every page of the document | backend |
 | Evidence quotes checked verbatim against the text the server holds, for tasks that require evidence | backend |
@@ -121,8 +121,9 @@ instructions and confirm all fields".
 
 - Task `max_attempts` is 3, and agent task batches expire after 7 days; both
   end as clear failures on the document or analysis job, not silent hangs.
-- A model call of a local case that no agent picks up fails after 10 minutes
-  (D14); re-running `/uapply:run` carries on from the current state.
+- Nothing on uApply waits for the agent: an idle local case pauses until the
+  next pull (D17), and re-running `/uapply:run` carries on from the current
+  state.
 - `run_tasks` and `autofill_forms` are time-boxed (20-300 s per call) so each
   MCP call returns within the runtime's tool-call timeout.
 - The playbook forbids retrying a failing tool more than twice.

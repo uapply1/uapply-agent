@@ -9,8 +9,10 @@ headless CLI (D16). Other clients use `task_runner` (`auto` | `session` |
 ## Preparation, shared by both runners
 
 For every pulled `AgentTask` the server downloads the input documents into
-`.uapply/cache/<task id>/`, extracts PDF text layers with pdfplumber (such a
-document is submitted at once, no model), renders the pages a model has to look
+`.uapply/cache/<task id>/`, reads PDF text layers (pdfplumber), Word (.docx,
+python-docx) and Excel (.xlsx, openpyxl) without a model (such a document is
+submitted at once, with the reader as the model and runtime `local`; .doc and
+.xls are not read locally), renders the pages a model has to look
 at (the first three for classification, all of them for OCR), and writes long
 text inputs to files. A result is checked against the task's `output_schema`
 locally before it goes to uApply, and uApply's rejection comes back as feedback
@@ -143,8 +145,9 @@ Many of these are vision calls on page images, which are the most expensive
 kind. Levers, in order of impact:
 
 1. **Skip the model where text exists.** Text-layer PDFs (most bank
-   statements, letters, transcripts) go through pdfplumber locally — no model
-   call. This alone can halve the count.
+   statements, letters, transcripts) go through pdfplumber locally, Word and
+   Excel files through python-docx and openpyxl — no model call. This alone
+   can halve the count.
 2. **Batch pages.** One `extract_content` task covers the whole document;
    the executor sends several page images per model call.
 3. **Server mode per case.** A case that the plan cannot carry can run in

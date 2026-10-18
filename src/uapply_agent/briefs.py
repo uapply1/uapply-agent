@@ -14,7 +14,7 @@ from pathlib import Path
 from .api import UApplyApi
 from .constants import IMAGE_EXTENSIONS
 from .folder import WorkingFolder
-from .local_ops import pdf_page_count, pdf_pages_text, render_pdf_pages, to_image_for_model
+from .local_ops import docx_text, pdf_page_count, pdf_pages_text, render_pdf_pages, to_image_for_model, xlsx_text
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,10 @@ def images_for_classification(files: list[Path], cwd: Path) -> list[Path]:
     return out
 
 
+# Files read locally without a model, and the reader reported as the "model".
+LOCAL_READERS = {".docx": ("python-docx", docx_text), ".xlsx": ("openpyxl", xlsx_text)}
+
+
 def text_layer_pages(src: Path, force_ocr: bool = False) -> list[dict] | None:
     """The pages of a PDF with a usable text layer (no model needed), else None."""
     if src.suffix.lower() != ".pdf":
@@ -84,6 +88,17 @@ def text_layer_pages(src: Path, force_ocr: bool = False) -> list[dict] | None:
     if pages is None:
         return None
     return [{"n": i, "text": t} for i, t in enumerate(pages, start=1)]
+
+
+def local_pages(src: Path, force_ocr: bool = False) -> tuple[list[dict], str] | None:
+    """(pages, reader) when the document's text can be read without a model: a PDF text layer,
+    Word or Excel. None for scans and images."""
+    ext = src.suffix.lower()
+    if ext in LOCAL_READERS:
+        reader, read = LOCAL_READERS[ext]
+        return [{"n": 1, "text": read(src)}], reader
+    pages = text_layer_pages(src, force_ocr)
+    return (pages, "pdfplumber") if pages is not None else None
 
 
 def images_for_ocr(src: Path, cwd: Path) -> list[Path]:

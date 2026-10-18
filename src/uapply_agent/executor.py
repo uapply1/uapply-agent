@@ -144,11 +144,12 @@ class Executor:
         src = briefs.download_inputs(self.api, self.folder, task)[0]
         ext = src.suffix.lower()
 
-        pages = briefs.text_layer_pages(src, self.force_ocr)
-        if pages is not None:
-            logger.info("task %s: %d pages from the text layer, no model call", task["id"], len(pages))
+        local = briefs.local_pages(src, self.force_ocr)
+        if local is not None:
+            pages, reader = local
+            logger.info("task %s: %d pages read by %s, no model call", task["id"], len(pages), reader)
             stats.bump("text_layer_docs")
-            self._submit(task, {"pages": pages}, "pdfplumber", {}, stats, runtime="local")
+            self._submit(task, {"pages": pages}, reader, {}, stats, runtime="local")
             return
         if ext == ".pdf":
             pages, usage, model = self._ocr_pdf(src, payload, schema, cwd, stats)

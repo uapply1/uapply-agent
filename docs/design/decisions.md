@@ -53,6 +53,10 @@ the server-mode path is behaviour-identical after the refactor so it can land
 first. Cost: it is a real refactor of every LLM-calling step, sized in
 [delivery-plan.md](delivery-plan.md).
 
+**Status.** Superseded by D17: the prepare/continue split became resumable
+pipeline steps, local cases no longer resume through Celery tasks, and the
+rejected "agent calls next step" alternative is revisited there.
+
 ## D3. Coarse MCP tools over a stdio server, one package for both runtimes
 
 **Decision.** `uapply-agent mcp` (stdio) exposes coarse tools (24 today, see
@@ -151,9 +155,9 @@ stay on the server's provider even for `llm_mode=local_agent` cases.
 keep web-search-assisted steps working, and roll local mode out one kind at a
 time (classification first, see [delivery-plan.md](delivery-plan.md)).
 
-**Status.** `AGENT_LOCAL_TASK_KINDS` still selects the prepare/continue kinds
-(`extract_content`, `classify_document`). Every other model call of a local
-case is intercepted by D14, so no kind stays on the server provider.
+**Status.** Not implemented. `AGENT_LOCAL_TASK_KINDS` is gone (D17): every
+model call of a local case runs on the agent, so no kind stays on the server
+provider. A case whose prompts must stay on uApply runs in server mode.
 
 ## D10. Consent travels through the browser, never through the model
 
@@ -286,6 +290,11 @@ call nobody picks up fails after 10 min (`AGENT_IDLE_TIMEOUT_S`). Dashboard
 saves on a local case need an active agent (409 `AGENT_REQUIRED` otherwise).
 The backend needs the `agent_queue` worker for local cases to progress.
 
+**Status.** Superseded by D17 for the mechanism: the blocking proxy, the
+`agent_queue` worker and 409 `AGENT_REQUIRED` are gone. The goal (no
+server-side AI for the work the agent runs) stands; dashboard actions on a
+local case now run on the server.
+
 ## D15. In Claude Code, tasks run as subagents of the RCIC's own session
 
 **Decision.** When the MCP client is Claude Code (`task_runner` `auto` →
@@ -326,6 +335,54 @@ optional CLI of D15.
 **Why.** The CLI needed a second Claude sign-in and a ~250 MB download, and
 RCICs were asked to install it although their Claude Code session already runs
 the tasks.
+
+## D17. Agent-driven resumable steps; no agent_queue
+
+**Decision.** Every model-calling stage of document processing and analysis is
+a resumable pipeline step (`ai_parse/service/pipeline/`): `requests(state)`
+builds the model requests, `apply(state, answers)` consumes the answers and
+names the next steps. Server mode answers the requests in-process inside the
+existing Celery tasks (`InlineExecutor`). For a local-agent case a step with
+requests is stored as an `AgentTaskBatch` and stops (`AgentExecutor`); when the
+agent's submit settles the batch, the agent API applies it in that same request
+and starts the next steps. Each `pull` first reclaims dead leases, expires
+batches past their TTL and applies settled batches nobody applied. See
+[local-llm-task-queue.md](../architecture/local-llm-task-queue.md).
+Supersedes D14's blocking proxy and `agent_queue` worker, and D2's Celery
+continuations for local cases.
+
+**What went.** The `llm_proxy` (calls polling for the agent's answer, the agent
+context, `web_context` and 409 `AGENT_REQUIRED`, the idle and call timeouts),
+the `agent_queue` worker with `UAPPLY_SERVER_LLM=off`, the continuation Celery
+tasks and the `expire_agent_tasks` beat task, and `AGENT_LOCAL_TASK_KINDS`.
+Local cases use no Celery at all.
+
+**Why.** The proxy kept a thread per waiting call on a dedicated worker for as
+long as the RCIC took to answer, needed a second worker type in every
+deployment, and failed calls after 10 idle minutes, so a closed laptop or a
+plan limit turned into failed documents. Steps hold nothing while waiting,
+survive deploys as rows, and let a case resume whenever the agent comes back.
+One step definition serves both modes, so the server path cannot drift from
+the local one.
+
+**Revisits D2.** D2 rejected "the agent calls the next step" because it moves
+orchestration onto an untrusted client. Here it does not: the server still
+decides every step from its own stored state and routing, builds every prompt,
+and validates every answer before a step sees it (schema, allowed values, page
+coverage, and a step's own check such as the analysis normalisation). The
+agent's requests only *trigger* the server's next move; the agent cannot pick
+a step, skip one or change its inputs.
+
+**Fail closed.** While a local step runs (`local_mode.local_step()`, a
+contextvar), the provider clients' public methods and LlamaParse raise
+`ServerLLMDisabled`. Dashboard actions on a local case run on the server as for
+any case (`RunOrigin.SERVER`), and Celery tasks always run with that origin.
+
+**Consequences.** A case only moves while its agent pulls and submits; nothing
+fails for being idle except a batch older than `AGENT_BATCH_TTL_DAYS` (7).
+Local analysis starts every section at once, except those reading another
+section's values, instead of the runner's tiers. Generic calls keep the kind
+`llm_call`, so the agent needed no change for them.
 
 ## Open questions
 

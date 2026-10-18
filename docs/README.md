@@ -31,7 +31,7 @@ planned; documents that describe them say so.
 
 | Document | Contents |
 |---|---|
-| [architecture/local-llm-task-queue.md](architecture/local-llm-task-queue.md) | The core mechanism: prepare/continue stages on Celery, `AgentTask` queue, API-driven continuation, result validation |
+| [architecture/local-llm-task-queue.md](architecture/local-llm-task-queue.md) | The core mechanism: resumable pipeline steps, `AgentTask` queue, steps applied when the agent submits (no Celery for local cases), result validation |
 | [architecture/case-workflow.md](architecture/case-workflow.md) | End-to-end stages (intake, upload, processing, analysis, finishing) with the points where the RCIC is asked |
 | [architecture/working-folder.md](architecture/working-folder.md) | Layout of the client folder, `.uapply/` manifest and case state, idempotent sync |
 | [architecture/chat-sources.md](architecture/chat-sources.md) | Optional WeChat intake through the AnyChat CLI: fetch, local intake hints, agent_survey upload, create_case |

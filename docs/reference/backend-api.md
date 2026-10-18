@@ -38,18 +38,18 @@ server mode and refuses `run_tasks` (`AGENT_API_UNAVAILABLE`).
 
 | Endpoint | Used by |
 |---|---|
-| `POST /api/ai-parse/surveys/{id}/start_document_processing/` | `start_processing`, one call per document (`document_id`) |
-| `POST /api/ai-parse/surveys/{id}/start_analysis/` | `start_analysis` |
+| `POST /api/ai-parse/surveys/{id}/start_document_processing/` | `start_processing`, one call per document (`document_id`); for an agent case the document's first step runs in this request and queues its tasks |
+| `POST /api/ai-parse/surveys/{id}/start_analysis/` | `start_analysis`; for an agent case every section's first tasks are queued in this request |
 
 ## Local-agent API
 
 | Endpoint | Body / params | Used by |
 |---|---|---|
-| `GET  /api/ai-parse/agent/surveys/{id}/status/` | | `case_status`, `confirm_documents`, `autofill_forms`, `uapply-agent status` |
-| `GET  /api/ai-parse/agent/surveys/{id}/wait/` | `stage` (`processing` \| `analysis` \| `filling`), `timeout` (≤ 60 s); returns early with `tasks_queued` > 0 when agent tasks are queued | `wait_for_stage`, `uapply-agent run --follow` |
+| `GET  /api/ai-parse/agent/surveys/{id}/status/` | | `case_status`, `confirm_documents`, `autofill_forms`, `uapply-agent status`; document counts, `documents_waiting_on_agent`, `agent_tasks`, `failures`, `stages` (`processing`: `running` \| `done`; `analysis`: `idle` \| `running` \| `done` \| `failed` \| `stopped`) |
+| `GET  /api/ai-parse/agent/surveys/{id}/wait/` | `stage` (`processing` \| `analysis` \| `filling`), `timeout` (≤ 60 s); long-polls until the stage is done, but returns at once with `tasks_queued` > 0 and `next: run_tasks` while tasks are queued, since the case moves only when the agent answers them | `wait_for_stage`, `uapply-agent run --follow` |
 | `POST /api/ai-parse/agent/surveys/{id}/llm_mode/` | `{llm_mode}` | `init_case`, `create_case`, `set_llm_mode` |
-| `POST /api/ai-parse/agent/tasks/pull/` | `{survey_ids, n, session_id, runtime, kinds?}` | executor; returns `{tasks: [...]}` and leases them |
-| `POST /api/ai-parse/agent/tasks/{id}/result/` | `{result, model, runtime, usage, session_id}` | executor; the server validates the result and, when the last task of a batch is accepted, resumes the pipeline |
+| `POST /api/ai-parse/agent/tasks/pull/` | `{survey_ids, n, session_id, runtime, kinds?}` | executor; first reclaims dead leases, expires old batches and applies settled ones nobody applied, then returns `{tasks: [...]}` and leases them |
+| `POST /api/ai-parse/agent/tasks/{id}/result/` | `{result, model, runtime, usage, session_id}` | executor; the server validates the result and, when it settles the last task of a batch, applies the step in this request and queues the next step's tasks |
 | `POST /api/ai-parse/agent/tasks/{id}/release/` | `{reason}` | executor; puts a task back (e.g. plan limit) |
 | `GET  /api/ai-parse/agent/tasks/stats/` | `survey` | `task_stats`, the local-agent API probe |
 | `POST /api/ai-parse/agent/surveys/{id}/autofill/claim/` | | `autofill_forms` (local mode): forms to fill with their templates and recorded field operations |

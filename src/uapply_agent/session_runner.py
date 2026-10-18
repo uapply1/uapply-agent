@@ -61,10 +61,11 @@ class SessionRunner:
         files = briefs.download_inputs(self.api, self.folder, task)
         if task["kind"] == "extract_content":
             src = files[0]
-            pages = briefs.text_layer_pages(src, self.force_ocr)
-            if pages is not None:
-                logger.info("task %s: %d pages from the text layer, no model call", task["id"], len(pages))
-                verdict = briefs.submit(self.api, task["id"], task["kind"], {"pages": pages}, "pdfplumber", "local",
+            local = briefs.local_pages(src, self.force_ocr)
+            if local is not None:
+                pages, reader = local
+                logger.info("task %s: %d pages read by %s, no model call", task["id"], len(pages), reader)
+                verdict = briefs.submit(self.api, task["id"], task["kind"], {"pages": pages}, reader, "local",
                                         {}, self.session_id)
                 if verdict.accepted:
                     rnd.submitted += 1

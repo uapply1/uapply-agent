@@ -80,10 +80,11 @@ Always:
   links to the Submit step and to start the online portal (the portal starts
   from the dashboard, one click).
 - For processing (and analysis), loop: `run_tasks` → `wait_for_stage("processing")`
-  (or `"analysis"`) until `done` is true and `remaining` is 0. uApply waits on
-  this machine for every model call, so whenever `wait_for_stage` returns
-  `tasks_queued` > 0 (or a `next` saying so), call `run_tasks` at once; never
-  call `wait_for_stage` twice in a row while tasks are queued.
+  (or `"analysis"`) until `done` is true and `remaining` is 0. Nothing runs on
+  uApply between this machine's answers: each answer it accepts queues the case's
+  next tasks at once. So whenever `wait_for_stage` returns `tasks_queued` > 0 (or
+  a `next` saying so), call `run_tasks` at once; never call `wait_for_stage`
+  twice in a row while tasks are queued.
   With `mode: session`, when `run_tasks` returns `tasks`, spawn one subagent per
   task in a single message: `Agent(subagent_type="uapply:task-runner",
   prompt="Task brief: <brief>")`, all of them at once. Wait until every one has
@@ -99,10 +100,8 @@ Always:
   progress still running, not a failure: it does not count toward the retry
   limit. Stop only on `plan_limited`, `runtime_error`, or 5 rounds in a row in
   which `run_tasks` ran no task and `progress` did not change; then name the
-  documents still in progress and the `remaining` count. While
-  `documents_waiting_on_agent` is not empty or tasks are queued, uApply cannot
-  finish without this machine: do not end the run, and count such rounds
-  toward that limit only after 20 minutes without any change in `progress`.
+  documents still in progress and the `remaining` count. While tasks are
+  queued, uApply cannot finish without this machine: do not end the run.
 - If `run_tasks` reports `plan_limited`, stop and tell the RCIC; do not switch
   the case to server mode on your own.
 - If `run_tasks` (cli mode) reports `runtime_error` (e.g. the Codex CLI is not

@@ -253,3 +253,52 @@ def test_single_page_timeout_is_retried_once(folder, tmp_path):
     api = FakeApi(src, [task()])
     stats = Executor(api, folder, runner=OnceSlow(pages_per_call=5)).run()
     assert stats.accepted == 1 and api.released == []
+
+
+def make_docx(path: Path) -> Path:
+    import docx
+    d = docx.Document()
+    d.add_paragraph('Employment Certificate')
+    table = d.add_table(rows=2, cols=2)
+    table.cell(0, 0).text, table.cell(0, 1).text = 'Name', 'Position'
+    table.cell(1, 0).text, table.cell(1, 1).text = 'ZHOU Yongmei', 'Manager | HR'
+    d.save(path)
+    return path
+
+
+def make_xlsx(path: Path) -> Path:
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Family'
+    ws.append(['Name', 'Relationship'])
+    ws.append(['Zhang Wei', 'Principal'])
+    ws.append([None, None])
+    wb.create_sheet('Empty')
+    wb.save(path)
+    return path
+
+
+def test_word_and_excel_are_read_without_a_model(folder, tmp_path):
+    for src, reader, expected in (
+            (make_docx(tmp_path / "cert.docx"), "python-docx",
+             "Employment Certificate\n\n| Name | Position |\n| --- | --- |\n| ZHOU Yongmei | Manager \\| HR |"),
+            (make_xlsx(tmp_path / "family.xlsx"), "openpyxl",
+             "# 表格: Family\n\n| Name | Relationship |\n| --- | --- |\n| Zhang Wei | Principal |\n\n"
+             "# 表格: Empty\n\n*(Empty sheet)*")):
+        api = FakeApi(src, [task(src.name)])
+        runner = ChunkRunner(pages_per_call=20)
+        stats = Executor(api, folder, runner=runner).run()
+        assert stats.accepted == 1 and runner.calls == []
+        sub = api.submitted[0]
+        assert (sub["model"], sub["runtime"]) == (reader, "local")
+        assert sub["result"] == {"pages": [{"n": 1, "text": expected}]}
+
+
+def test_session_runner_reads_word_without_a_subagent(folder, tmp_path):
+    from uapply_agent.session_runner import SessionRunner
+    src = make_docx(tmp_path / "cert.docx")
+    api = FakeApi(src, [task("cert.docx")])
+    rnd = SessionRunner(api, folder).prepare_round(4)
+    assert rnd.tasks == [] and rnd.submitted == 1
+    assert api.submitted[0]["model"] == "python-docx"

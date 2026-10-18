@@ -57,7 +57,7 @@ RCIC machine                                               uApply cloud
 │   └─ uapply-agent  (stdio MCP server + CLI) │            │ Survey · Document · SurveyValue  │
 │        ├─ folder scan / hash / manifest     │── HTTPS ──▶│ PromptTemplate · section routing │
 │        ├─ local ops: render pages, text     │            │ AgentTask queue                  │
-│        ├─ executor: pull → run → submit     │◀───────────│ prepare/continue + llm_call      │
+│        ├─ executor: pull → run → submit     │◀───────────│ resumable steps → agent tasks    │
 │        ├─ auto-fill via Acrobat Pro (Win)   │            │ validation · archives · auto-fill│
 │        └─ device-code auth (keychain)       │            └──────────────────────────────────┘
 │                                             │
@@ -72,7 +72,7 @@ Three parts:
 
 | Part | Where | Responsibility |
 |---|---|---|
-| **Backend** | uApply backend | Local-mode cases emit `AgentTask`s (prepare/continue stages for OCR and classification, intercepted `llm_call`s for everything else, D14); task pull/submit endpoints; result validation; status, long-poll, auto-fill and report endpoints for the agent. Review-queue, resolve and approval endpoints with actor + audit, and an auto-fill preflight, are planned. See [local-llm-task-queue.md](architecture/local-llm-task-queue.md). |
+| **Backend** | uApply backend | Local-mode cases run the pipeline as resumable steps that park their model calls as `AgentTask`s and resume when the agent submits (D17); task pull/submit endpoints; result validation; status, long-poll, auto-fill and report endpoints for the agent. Review-queue, resolve and approval endpoints with actor + audit, and an auto-fill preflight, are planned. See [local-llm-task-queue.md](architecture/local-llm-task-queue.md). |
 | **`uapply-agent`** | Python package, RCIC machine | CLI + stdio MCP server. Owns the working folder, does the non-LLM local work, and is the **task executor**: it pulls tasks and runs each in a fresh headless Claude Code / Codex process. Exposes coarse orchestration tools to the chat model. See [mcp-tools.md](reference/mcp-tools.md). |
 | **Playbook** | ships with the package (`src/uapply_agent/SOURCE.md`) | The operator instructions: when to call which tool, where the gates are, how to reason about conflicts. Delivered as MCP prompts and server instructions, so it works in Claude Code, Claude Desktop and Codex from one source. See [playbook.md](reference/playbook.md). |
 
@@ -113,8 +113,9 @@ starts the work.
   reads the whole PDF once, and a PDF with a text layer needs no model at all (D12).
 - **Who picks document types.** In platform mode the RCIC files each upload into a folder. In agent
   mode the chat model looks at the pages and picks the type, asking only when unsure.
-- **Availability.** Platform mode works any time, including dashboard edits. Agent mode progresses
-  only while the agent runs, and dashboard field fixes on an agent case need an active agent.
+- **Availability.** Platform mode works any time. Agent mode progresses only while the agent runs;
+  what the RCIC does on the dashboard for an agent case (field fixes, re-processing) runs on uApply's
+  own models.
 
 ## How a case flows
 
@@ -139,11 +140,10 @@ Detailed stage contracts: [case-workflow.md](architecture/case-workflow.md).
 
 ## Key properties
 
-- **Waiting on the agent never blocks other customers.** OCR and classification
-  hand their tasks to the agent and exit, and the API resumes the pipeline when
-  the answers arrive. Every other model call of an agent case waits on the
-  dedicated `agent_queue` thread-pool worker (D14), never on a slot other
-  customers' documents need. A call nobody picks up fails after 10 minutes;
+- **Waiting on the agent holds nothing on the server.** A pipeline step that
+  needs a model stores its tasks and stops; when the agent submits the last
+  answer, the API applies it and starts the next step in the same request
+  (D17). No worker or thread waits, an idle case simply pauses, and
   re-running `/uapply:run` carries on from the current state.
 - **Re-runs are safe.** Re-running `/uapply:run` on the same folder uploads
   nothing twice, re-creates nothing, and carries on from the server's current

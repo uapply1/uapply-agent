@@ -86,17 +86,21 @@ there is no separate confirmation.
    runs each task in a fresh headless runtime (see
    [runtime-modes.md](runtime-modes.md)):
    - `extract_content`: page-marked text for the whole document. PDFs with a
-     text layer skip the model (pdfplumber); scans are read by the runtime.
+     text layer, Word (.docx) and Excel (.xlsx) files skip the model
+     (pdfplumber, python-docx, openpyxl); scans and images are read by the
+     runtime.
    - `classify_document`: the pipeline's passport / visa / permit sub-type
      classification.
-   - `llm_call`: every other model call of the pipeline (sections, Financial
-     Proof, DOCX/XLSX transcription), intercepted on the server (D14).
+   - `llm_call`: the section filters, one per section (and per applicant for
+     a multi-applicant Excel / Word file or Agent Survey).
 3. Failed documents are named as soon as they appear. `plan_limited` or
    `runtime_error` stops the run with the reason.
 
-**Backend**: `POST /api/ai-parse/surveys/{id}/start_document_processing/`,
-`GET /api/ai-parse/agent/surveys/{id}/wait/?stage=processing`, task pull /
-result / release.
+**Backend**: `POST /api/ai-parse/surveys/{id}/start_document_processing/`
+runs each document's first step in that request; every accepted answer that
+completes a step's batch applies it and queues the next step's tasks (D17).
+No Celery task runs for agent cases. `GET /api/ai-parse/agent/surveys/{id}/wait/?stage=processing`,
+task pull / result / release.
 
 ---
 
@@ -106,11 +110,14 @@ result / release.
 
 1. `start_analysis()` once every document is processed
    (`PROCESSING_NOT_DONE` otherwise).
-2. Loop `run_tasks()` → `wait_for_stage("analysis")` until done.
+2. Loop `run_tasks()` → `wait_for_stage("analysis")` until done. Each
+   section is one `llm_call` (the analysis), then extract and translate
+   `llm_call`s per chunk of values.
 
-**Backend**: `POST /api/ai-parse/surveys/{id}/start_analysis/`; writes
-`SurveyValue`s with status `CONFIRMED | DOUBTFUL | CONFLICT | MISSING`, as for
-a dashboard case.
+**Backend**: `POST /api/ai-parse/surveys/{id}/start_analysis/` starts every
+section at once (sections that read another section's values wait for it);
+writes `SurveyValue`s with status `CONFIRMED | DOUBTFUL | CONFLICT | MISSING`,
+as for a dashboard case, and finishes the job when the last section settles.
 
 ---
 

@@ -23,6 +23,8 @@ dependencies = [
     "pydantic>=2",
     "pymupdf>=1.24",
     "pdfplumber>=0.11",
+    "python-docx>=1.1",     # Word files are read locally, without a model
+    "openpyxl>=3.1",        # so are Excel files
     "pillow-heif>=0.16",
     "keyring>=25",
     "pywin32>=306; sys_platform == 'win32'",   # Acrobat Pro auto-fill (IAC COM)

@@ -1,93 +1,179 @@
 # Local-LLM Task Queue
 
 The core mechanism that makes "local tokens" work without forking the pipeline.
-The backend keeps orchestrating; every LLM call becomes a task that the agent on
-the RCIC's machine executes with the model inside Claude Code / Codex.
+The backend keeps orchestrating; every model call of a `local_agent` case
+becomes a task that the agent on the RCIC's machine executes with the model
+inside Claude Code / Codex (D17).
 
-The backend runs background work on **Celery** (`ai_parse/tasks.py`,
-`document_queue` and `analysis_queue`, Redis broker). Celery has no way to
-park a running task for hours without holding a worker, so the design below
-never waits inside a worker: a stage task *creates* agent tasks and exits, and
-the API *resumes* the pipeline when the agent's answers arrive.
+Server-mode cases run on **Celery** (`ai_parse/tasks.py`, `document_queue` and
+`analysis_queue`, Redis broker). Local-agent cases use no Celery at all, and no
+server thread ever waits on the agent: the pipeline is a chain of resumable
+steps; a step that needs a model stores its requests as agent tasks and stops,
+and the agent API applies the answers when the agent submits them.
 
-## Every model call of a local case (D14)
+## Resumable steps, shared by both modes
 
-The prepare/continue stages below still carry OCR (`extract_content`) and the passport sub-type
-classifier (`classify_document`). Everything else — section extraction, Financial Proof, DOCX/XLSX,
-analysis, reformat/translate, drafts, dashboard saves — is covered by the client interception in
-`ai_parse/agent/llm_proxy.py`: task kind `llm_call`, payload
-`{system_prompt, user_prompt, output_mode: text|json, output_schema, inputs: [{blob, url, mime}],
-text_files: [{file_name, text}]}`; text answers are `{"text": "..."}`. The agent executor puts
-prompts longer than 6 KB and HTML inputs into files the model reads (Windows command-line limit).
-Jobs run on the `agent_queue` worker (threads, server AI off); the flow is upload → the agent's
-`start_processing` → `run_tasks` loop → `start_analysis` → `run_tasks` loop.
-
-## Where LLM calls happen today
-
-All providers implement one interface in `ai_parse/integrations/llm/`
-(`base_llm.py`, `gemini_llm.py`, `openai_llm.py`), used through `LLMService`:
-
-| Method | Used for |
-|---|---|
-| `aask_to_text(system_prompt, user_prompt, images?, model?)` | OCR (Gemini vision on page images), free-text steps |
-| `aask_to_json(system_prompt, user_prompt, response_format: BaseModel, images?, model?)` | classification, section extraction, analysis, extract-step, conflict reasoning |
-| `aask_reasoning(...)`, `asearch_web_*` | a few analysis steps; web search is out of scope for local mode |
-
-Every call is logged to `LLMTokenLog`. The pipeline (`DocumentProcessor`,
-analysis orchestrators, `confirmation_orchestrator`) does not know which
-provider it is talking to.
-
-Important for the design: LLM calls are **not** one-per-Celery-task. Single
-functions chain several calls — e.g. `analysis_survey_sync.py` runs
-extract → retry → translate in sequence, and section splitting `gather`s N
-calls in one step — with parsing and `SectionMemo` writes right after the
-call in the same function.
-
-## The change: prepare / continue stages
-
-Every pipeline step that calls the LLM is split into two plain functions:
+The pipeline (`ai_parse/service/pipeline/`) is a set of named steps. A step
+has two halves, neither of which calls a model:
 
 ```
-prepare(ctx) -> list[LLMRequest]           # no LLM, builds prompts/inputs/schemas
-continue_(ctx, results: list[LLMResult])   # no LLM, parses, writes memos, dispatches next step
+requests(state) -> list[LLMRequestSpec]     # prompts, inputs, output schema / text mode
+apply(state, answers) -> list[(step, state)] # parse, write memos / values, name the next steps
 ```
 
-and run through one helper:
+`state` is JSON (a local case stores it with the batch). Two executors run
+the same steps:
+
+- **`InlineExecutor`, server mode.** Inside the existing Celery tasks:
+  `process_document_task` runs `doc.extract` → … → `doc.finalize` for one
+  document; in `process_analysis_task`, `AnalysisRunner` still runs sections
+  in tiers on threads and `SectionAnalyzer.analyze` runs one section's
+  analysis steps. Each request is answered in-process (`server_fn`: Gemini,
+  then OpenAI, with the usual concurrency and timeouts) and the next step
+  starts at once.
+- **`AgentExecutor`, local-agent cases.** A step with requests becomes one
+  `AgentTaskBatch` (`continuation` = step name, `continuation_kwargs` = step
+  state) with one `AgentTask` per request (`seq` = its position), and the
+  chain stops there. A step without requests (e.g. an XFA form read on the
+  server) applies immediately and the chain carries on.
 
 ```python
-# sketch; the backend implements it in ai_parse/agent/stage.py (hand_off_to_agent)
-def run_llm_stage(stage: str, ctx, prepare, continue_):
-    requests = prepare(ctx)
-    if ctx.survey.llm_mode == "server":
-        results = run_inline(requests)          # Gemini/OpenAI, exactly as today
-        return continue_(ctx, results)          # same Celery task, no behaviour change
-    batch = AgentTaskBatch.objects.create(
-        survey=ctx.survey, document=ctx.document, stage=stage,
-        continuation=f"{continue_.__module__}.{continue_.__name__}",
-        continuation_kwargs=ctx.to_kwargs(), total=len(requests))
-    AgentTask.objects.bulk_create(AgentTask.from_request(batch, r) for r in requests)
-    mark_waiting_on_agent(ctx)                  # see "Status while waiting"
-    return None                                 # Celery task ends here; worker slot freed
+# sketch of AgentExecutor (ai_parse/service/pipeline/executor.py)
+def advance(pending):
+    with local_step():                       # provider guard, see "Fail closed"
+        while pending:
+            name, state = pending.pop(0)
+            step = get_step(name)
+            if not step.is_live(state):      # document / job stopped or settled
+                continue
+            specs = step.requests(state)
+            if specs:
+                park(step, state, specs)     # AgentTaskBatch + AgentTasks; stop this branch
+            else:
+                pending += step.apply(state, [])
 ```
 
-- In **server mode** the helper calls the provider inline and continues in the
-  same task — identical to today's behaviour, so the refactor is safe to land
-  before any agent exists.
-- In **local mode** the Celery task ends after creating the batch. Nothing is
-  held.
-- Chained calls (`extract → translate`) become two stages, each with its own
-  batch and continuation. Fan-out calls (`gather` over 12 sections) become one
-  batch of 12 tasks with one continuation.
-- A per-**kind** override (`AGENT_LOCAL_TASK_KINDS`) lets some stages keep
-  running on the server provider for `local_agent` cases (e.g. analysis
-  prompts you consider IP, or web-search steps).
+Chained calls (extract → translate) are two rounds of a step; fan-out (one
+call per section) is one batch with N tasks. Generic model calls all use the
+kind `llm_call`; only OCR (`extract_content`) and the passport sub-type
+classifier (`classify_document`) have kinds of their own. See
+[agent-task-schema.md](../reference/agent-task-schema.md).
 
-This is a real refactor of every LLM-calling step, not a provider swap.
-[delivery-plan.md](../design/delivery-plan.md) sizes it per stage; the
-classification stage goes first because it is a single call with a single
-continuation.
+## The steps
 
-### Inputs: never ship the file, ship a reference
+**Documents** (`ai_parse/service/documents/steps.py`):
+
+| Step | Requests (local) | Applies |
+|---|---|---|
+| `doc.extract` | one `extract_content` for a PDF, image, Word or Excel file; none for an XFA form (read on the server) | the `RawMemo` (and page memos for a split PDF), then routes |
+| routing | — | multi-page merge, archive group, multi-applicant Excel/Word, Agent Survey (every section, serially), composite types classified first, else the plain section filter |
+| `doc.classify` | one `classify_document` | the sub-types pick the sections; none → kept as a supporting document |
+| `doc.filter_sections` | one `llm_call` per section, purpose `section_filter`, text mode | `SectionMemo`s; failed sections stored with defaults |
+| `doc.multi_applicant` | one `llm_call` per applicant × section, purpose `applicant_section`, text mode | per-applicant `SectionMemo`s; nothing found falls back to the plain filter |
+| `doc.finalize` | — | the document's final status, its job and (local) page documents |
+
+A single-applicant Word or Excel file is extracted once (the agent's text is
+the `RawMemo`), and a multi-applicant Word file reads that `RawMemo` too.
+
+**Analysis** (`ai_parse/service/analysis/steps.py`), per section:
+
+| Step | Requests | Applies |
+|---|---|---|
+| `analysis.section` | one `llm_call`, purpose `analyze_section`, JSON (`AnalysisResult` schema); its `validator` runs `SectionAnalyzer.check_agent_result`, so an answer that does not survive the pipeline's normalisation is rejected and asked again | `AnalysisMemo`; `AnalysisResultStore.prepare` plans the value chunks (`AnalysisSurveyValueSync.plan_simple` / `plan_complex`) |
+| `analysis.reformat` | per chunk: extract, then translate (`reformat_extract`, `reformat_translate`; JSON schema from the `PromptTemplate`) | after the last chunk, `write_simple` / `write_complex` write the `SurveyValue`s |
+
+For a local case `LocalAnalysis` replaces the runner's tiers: it starts every
+section at once, except those that read another section's values
+(`personal_timeline` and `address_history` wait for
+`personal_basic_information`), and when the last section settles it finishes
+the job like the runner does (manual-value overlay, job and survey status,
+`AllSectionsFailedError`, post-analysis steps).
+
+## Request → batch → apply on submit
+
+```
+agent (RCIC machine)                API request (Django)
+────────────────────                ─────────────────────────────────────────────
+start_processing ─────────────────▶ start_document_processing
+                                      └─ on commit: doc.extract → batch A (1 task)
+pull ◀───────────────────────────── advance(); lease task A1
+submit A1 ────────────────────────▶ validate → accepted → batch A completed
+                                      └─ on commit: apply_batch(A)
+                                           ├─ doc.extract.apply → RawMemo, routing
+                                           └─ doc.filter_sections → batch B (12 tasks)
+pull ◀───────────────────────────── lease B1…B12
+submit B1…B12 ────────────────────▶ … last one settles B → apply → doc.finalize
+```
+
+- **Start.** `start_document_processing` from the agent runs the first step
+  of each document in that request (`LocalDocumentRun`, after commit);
+  `start_analysis` runs `LocalAnalysis.start`. Nothing is queued on Celery.
+- **Submit.** `POST /agent/tasks/{id}/result/` validates the result (below)
+  and records it under a row lock on the batch. When every task of the batch
+  is accepted or failed, the batch becomes `completed` or `failed` and,
+  once the transaction commits, `AgentExecutor.apply_batch` runs in the same
+  request.
+- **Apply once.** `apply_batch` claims the batch (`applied_at`, under
+  `select_for_update`), passes the answers to the step in `seq` order (a
+  failed task becomes an answer with its error), records `apply_done_at` /
+  `apply_error`, purges `llm_call` payloads and results, and advances the
+  steps that follow, which park their own batches. A repeated submit returns
+  the stored verdict and applies nothing.
+- **Stopped work.** `is_live` drops the answers when the document or analysis
+  job was stopped or settled meanwhile. `stop_document_processing` and
+  `stop_analysis` (and switching the case to server mode) cancel open tasks
+  and batches; cancelled batches are never applied.
+- **Errors.** A step that raises settles what it was working on: the document
+  ends `FAILED` (or `STOPPED` when cancelled), the analysis section `failed`
+  (`no_data`, with defaults written, when it has no memos).
+
+Properties this buys:
+
+- **No worker or thread waits.** Plan limit hit, laptop closed, RCIC on
+  holiday: the batch sits in the DB and nothing on the server is held.
+- **Durable pause.** Progress is rows, not in-memory state; a deploy loses
+  nothing.
+- **No background infrastructure.** No `agent_queue` worker, no beat task, no
+  continuation Celery tasks. Everything happens in agent API requests.
+
+## Advance on every pull
+
+Each `pull` (and each `wait` round) first runs `AgentTaskService.advance` for
+the case and its dependants, doing what a periodic sweep would:
+
+- leased tasks whose lease ran out go back to `queued`;
+- open batches older than `AGENT_BATCH_TTL_DAYS` (default 7) expire, their
+  open tasks with them;
+- settled batches that no request applied (the applying request died after the
+  answer was committed, or a claim older than 10 minutes never finished) are
+  applied now. An expired batch is applied with every open task as a failed
+  answer, so the step settles with that reason instead of hanging.
+
+So a case only moves while its agent talks to uApply, and whatever was left
+half-done is picked up by the next pull.
+
+### Status while waiting
+
+While a document waits, its `DocumentProcessingJob.metadata` carries
+`waiting_on_agent` and `agent_batch_id`; `doc.finalize` (or a failure) clears
+it. The agent status lists `documents_waiting_on_agent`, task counts and
+`stages` (`processing`, `analysis`). The dashboard's 30-minute stale check
+spares documents with an open batch (their own or their parent PDF's).
+
+## Fail closed
+
+While a local step runs (`local_mode.local_step()`, a contextvar carried into
+thread pools and the shared async runner), the public model methods of
+`GeminiClient` / `OpenAIClient` (`agent_routable`) and LlamaParse raise
+`ServerLLMDisabled`. A step only builds requests, so a provider call there is
+a bug, and it fails instead of spending uApply's keys.
+
+Where a local case's work runs is decided per action (`RunOrigin`): requests
+from uapply-agent run on the agent; dashboard actions on a local case
+(processing, analysis, AI Check saves, the shorten button) run on the server
+as for any case, and every Celery task runs with origin `SERVER`.
+
+## Inputs: never ship the file, ship a reference
 
 The agent already has the files — they came from the folder it uploaded. The
 task carries `{"local_path": "passport.pdf", "sha256": "…", "pages": [1,2]}`.
@@ -95,93 +181,32 @@ The agent verifies the hash before use; if the file is gone (RCIC moved it),
 the agent downloads it from S3 via the existing `documents/{id}/download/`.
 
 Status: the executor currently downloads every input document from uApply
-(presigned URL from `documents/{id}/download/`, or the URL an `llm_call` input
-carries) into `.uapply/cache/<task id>/`, rather than reusing the local
-copy.
+(presigned URL from `documents/{id}/download/`) into
+`.uapply/cache/<task id>/`, rather than reusing the local copy. `llm_call`
+tasks carry their text in the payload (`user_prompt`, `text_files`).
 
-Server-side page rendering / pdfplumber / docx text are **moved to the agent**
-(`local_ops/`) in local mode. They need no model, and rendering on the server
-just to ship PNGs back down is wasteful. In server mode nothing changes.
-
-## Resuming: the API dispatches the continuation
-
-```
-Celery document_queue                          API (Django)                       RCIC machine
-──────────────────────                         ────────────                       ────────────
-process_document(doc)
-  ├─ run_llm_stage("extract_content")
-  │     └─ AgentTaskBatch(A) + 3 tasks ──────▶ (rows in DB)          ◀── pull ─── executor
-  └─ returns                                                          ── result ──▶ executor
-                                               POST tasks/1/result ✓
-                                               POST tasks/2/result ✓
-                                               POST tasks/3/result ✓  (last)
-                                                 └─ batch.accepted == total
-                                                    → continue_extract_content.delay(batch_id)
-continue_extract_content(batch)
-  ├─ writes RawMemo
-  └─ run_llm_stage("classify_document")
-        └─ AgentTaskBatch(B) + 1 task …
-```
-
-`POST /agent/tasks/{id}/result/` validates the result (below), then inside one
-transaction does `select_for_update()` on the batch, increments `accepted`, and
-if `accepted == total` dispatches the continuation Celery task **once**. A
-second submission for an already-accepted task returns the stored verdict and
-does not re-dispatch (idempotent).
-
-Two obligations on every `continue_` task:
-
-- **Idempotent.** The beat task may re-dispatch a continuation that the
-  original dispatch also delivered (Celery at-least-once, or a
-  `completed_pending_dispatch` retry). `continue_` must upsert `SectionMemo`
-  / `SurveyValue` rows keyed by (document, section) / (survey, field, row)
-  and check `batch.status` before doing work.
-- **Same job bookkeeping as today.** `DocumentProcessor` currently checks the
-  Redis cancel flag and updates `DocumentProcessingJob.progress` between
-  stages inside one task. After the split each `continue_` does the same at
-  its start, so cancellation and progress reporting behave identically in
-  both modes.
-
-Properties this buys:
-
-- **No worker is held while waiting.** Plan limit hit, laptop closed, RCIC on
-  holiday — the batch just sits in the DB. Worker capacity is untouched.
-- **Durable pause.** Progress is rows, not in-memory state. A worker restart
-  or deploy loses nothing.
-- **No polling.** The continuation is event-driven from the API.
-- **Expiry is explicit.** A Celery beat task (`expire_agent_tasks`, every 15
-  min) returns expired leases to `queued` and fails batches older than
-  `AGENT_BATCH_TTL` (default 7 days), dispatching the continuation with
-  `failed=True` so the document / analysis job ends in `FAILED` with a clear
-  reason.
-- **Cancellation** reuses the existing Redis cancel flag: `stop_document_processing`
-  / `stop_analysis` also mark open tasks and batches `cancelled`; the executor's
-  next pull no longer sees them.
-
-### Status while waiting
-
-The backend's status check auto-fails any document `STARTED` for 30 minutes
-and any analysis job untouched for 30 minutes. In local mode a document
-legitimately waits hours. `mark_waiting_on_agent` sets
-`DocumentProcessingJob.progress["waiting_on_agent"] = true` (and the analogue
-on `AnalysisJob`); the stale sweep skips jobs with that flag and an open
-batch, and the dashboard shows "waiting on RCIC's agent" with the last agent
-heartbeat instead of a spinner.
+Work that needs no model runs on the agent (`local_ops.py`): page rendering,
+PDF text layers (pdfplumber), Word (python-docx) and Excel (openpyxl, one
+`# 表格: <name>` markdown table per sheet). In server mode nothing changes.
 
 ## The `AgentTask` model
 
 ```
-ai_parse.models.AgentTaskBatch
+ai_parse.models.AgentTaskBatch           one parked step
   id, survey, document?, analysis_job?, stage
-  continuation         dotted path of the continue_ Celery task
-  continuation_kwargs  JSON
+  continuation         step name (e.g. doc.filter_sections)
+  continuation_kwargs  step state (JSON)
   total, accepted, failed  ints
   status               open | completed | failed | cancelled | expired
-  created_at, completed_at
+  applied_at           a request claimed the answers
+  apply_done_at        the step finished applying them
+  apply_error          what the step raised, if anything
+  error, created_at, completed_at
 
 ai_parse.models.AgentTask
   id                  UUID
   batch               FK AgentTaskBatch
+  seq                 position of the request in its step
   kind                CharField  (see reference/agent-task-schema.md)
   status              queued | leased | submitted | accepted | rejected | failed | expired | cancelled
   payload             JSON       prompts, schema, input refs, flags
@@ -194,71 +219,75 @@ ai_parse.models.AgentTask
 ```
 
 Prompt text in `payload` is resolved from `PromptTemplate` at creation time
-(same cache and invalidation rules as server mode).
+(same cache and invalidation rules as server mode). `llm_call` payloads and
+results are reduced to `{output_mode, purpose, purged}` once their batch is
+applied.
 
 ### Lease semantics
 
-- `POST /agent/tasks/pull` returns up to `n` `queued` tasks for the given
-  survey(s), sets `leased` with a lease of `ttl` seconds (default 15 min).
+- `POST /agent/tasks/pull` returns up to `n` `queued` tasks of open batches for
+  the given survey(s) and their dependants, sets `leased` with a lease of
+  `AGENT_TASK_LEASE_SECONDS` (default 15 min).
 - Submitting after lease expiry still succeeds if nobody else has since
   accepted the task; the server validates regardless of who submits.
 - `POST /agent/tasks/{id}/release` puts a task back when the agent decides not
-  to do it (e.g. plan limit reached).
+  to do it (e.g. plan limit reached). A counted release spends an attempt, so a
+  task that always fails on the agent fails after 3.
 
 ## Validation on submit
 
 The server never trusts the agent's answer blindly. On `POST .../result`:
 
-1. **Schema.** Result must validate against `payload.output_schema` (the same
-   Pydantic model the pipeline would have parsed a Gemini response into). On
-   failure → `rejected` with the validation error; task returns to `queued`
-   with `attempts+1`; after `max_attempts` (3) → `failed`, which counts toward
-   the batch's `failed` and ends the batch with `failed=True`.
-2. **Evidence.** For kinds with `evidence_required`, every quoted span must
-   appear verbatim in the document text the server holds (`RawMemo`).
-   Unverifiable quotes are dropped, exactly as
-   `financial_proof.agents.extraction_agent` does today; a fact with no
-   surviving evidence is downgraded to `DOUBTFUL`. Caveat: for the
-   `extract_content` kind the agent *produces* `RawMemo`, so there is no
-   ground truth — text-layer PDFs bypass the model (pdfplumber, deterministic),
-   and scanned pages get a per-page character-count sanity threshold plus an
-   optional server-side spot-check of one sampled page.
-3. **Consistency.** For classification, the type must be one of the allowed
-   `DocumentType`s for the survey's application type.
-4. **Provenance.** Result is stamped with `actor=agent`, the agent session id,
-   the runtime (`claude-code` / `codex`), and the model name the agent
-   reports. An `LLMTokenLog` row is still written (provider `local_agent`,
-   token counts as reported by the runtime, or null) so the existing
-   monitoring keeps working.
+1. **Schema.** Kinds with a Pydantic model are parsed with the very model the
+   pipeline uses; `llm_call` results must carry the schema's required fields
+   (`text` as a string in text mode). On failure → `rejected` with the error;
+   the task returns to `queued` with `attempts+1`; after `max_attempts` (3) →
+   `failed`, which counts toward the batch's `failed`.
+2. **Step check.** A payload `validator` (an import path) runs the step's own
+   check: for `analyze_section`, the JSON must survive the analysis
+   normalisation, so a malformed answer is re-asked rather than lost.
+3. **Consistency.** Classification values must be in `allowed_values`; OCR must
+   cover every page the server knows (`page_count`).
+4. **Evidence.** For tasks with `evidence_required`, at least one quoted span
+   must appear verbatim in the text the task was given. For `extract_content`
+   the agent *produces* the `RawMemo`, so there is no ground truth: text-layer
+   PDFs, Word and Excel bypass the model (deterministic readers), and scans
+   rely on the page-coverage check.
+5. **Provenance.** An `LLMTokenLog` row is written per accepted task
+   (`local_agent:<runtime>:<model>`, token counts as reported, the session id)
+   so the existing monitoring keeps working.
 
-Accepted results are then fed to the continuation — `SectionMemo` writes,
-`SurveyValue` extraction, conflict detection, formulas — which is the same
+Accepted results are then applied by the step — `RawMemo` / `SectionMemo`
+writes, `AnalysisMemo`, `SurveyValue` extraction, conflict detection — the same
 code the server-mode path runs inline.
 
 ## Ordering and parallelism
 
 Batches are created as the pipeline reaches them, so dependencies are
-implicit: classification tasks appear only after the content-extraction batch
-has completed. Within a batch tasks are independent and can be leased in
-parallel by multiple agent workers — see [runtime-modes.md](runtime-modes.md).
+implicit: section filters appear only after the extraction batch has been
+applied. Within a batch tasks are independent and can be leased in parallel by
+multiple agent workers — see [runtime-modes.md](runtime-modes.md). Documents
+advance independently; analysis sections run in parallel except the dependent
+ones above.
 
 ## Failure handling
 
 | Situation | Behaviour |
 |---|---|
-| Agent submits invalid JSON 3× | task `failed` → batch `failed` → continuation runs with `failed=True` → document `failed`, reason visible in dashboard and in `case_status` |
-| Agent offline for 7 days | beat task expires the batch; same as above; `start_document_processing` again re-creates it |
-| RCIC switches case back to `llm_mode=server` | open batches `cancelled`; the stage task is re-dispatched and now runs inline on the server provider |
-| Agent reports plan-limit | agent releases leases; nothing changes server-side; `case_status` shows "waiting on local agent" |
+| Agent submits an invalid result 3× | task `failed` → batch `failed` → the step applies it as an error: a failed extraction or classification fails the document, a failed section filter is stored with defaults and noted on the job, a failed analysis call fails the section; reasons visible in the dashboard and in `case_status` |
+| Agent offline for 7 days | the next pull expires the batch and applies it as failed; same as above; `start_processing` again re-creates it |
+| Request dies after the last answer is committed | the batch is settled but not applied; the next pull or wait applies it |
+| Process dies while applying | the claim (`applied_at`) goes stale after 10 minutes and the next pull applies it again |
+| Step raises while applying | `apply_error` recorded; the document or section is settled as failed |
+| RCIC switches case back to `llm_mode=server` | open tasks and batches `cancelled`; processing or analysis started again runs on the server provider |
+| Agent reports plan-limit | agent releases leases; nothing changes server-side; the case resumes on the next `run_tasks` |
 | File missing locally and S3 download fails | agent releases task with reason; surfaced to RCIC |
-| Two agents submit the same task | first accepted result wins; second gets the stored verdict; continuation dispatched once (row lock) |
-| API dispatches continuation but Celery is down | Celery `apply_async` failure is caught; batch stays `completed_pending_dispatch`; beat task re-dispatches |
+| Two agents submit the same task | first accepted result wins; second gets the stored verdict; the batch is applied once (row lock + claim) |
 
 ## What does *not* change
 
 - Prompts, section routing (`DocumentTypeSection`), `SurveyValue` semantics,
   conflict detection, formulas, auto-fill data generation, the dashboard.
-- Server mode: `llm_mode=server` is the default; after the prepare/continue
-  refactor it runs the same calls in the same Celery task as today.
-- Celery itself: two queues and a Redis broker, plus the `agent_queue` worker
-  for local cases (D14) and one beat task (`expire_agent_tasks`).
+- Server mode: `llm_mode=server` is the default and runs the same steps in the
+  same Celery tasks, answered by Gemini / OpenAI.
+- Celery itself: two queues and a Redis broker, for server-mode work only.

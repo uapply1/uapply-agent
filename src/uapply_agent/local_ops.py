@@ -96,3 +96,59 @@ def to_image_for_model(path: Path, cache: Path) -> Path:
     if ext in HEIC_EXTENSIONS:
         return heic_to_jpeg(path, cache)
     return path
+
+
+def docx_text(path: Path) -> str:
+    """A Word file's paragraphs and tables (tables as markdown), in document order, like uApply's
+    own python-docx reader."""
+    import docx
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    document = docx.Document(str(path))
+    parts = []
+    for child in document.element.body.iterchildren():
+        if child.tag.endswith('}p'):
+            text = Paragraph(child, document).text.strip()
+            if text:
+                parts.append(text)
+        elif child.tag.endswith('}tbl'):
+            rows = [[c.text.strip().replace('\n', '<br>').replace('|', '\\|') for c in row.cells]
+                    for row in Table(child, document).rows]
+            if rows:
+                width = max(len(r) for r in rows)
+                rows = [r + [''] * (width - len(r)) for r in rows]
+                lines = ['| ' + ' | '.join(r) + ' |' for r in rows]
+                lines.insert(1, '|' + ' --- |' * width)
+                parts.append('\n'.join(lines))
+    return '\n\n'.join(parts)
+
+
+def xlsx_text(path: Path) -> str:
+    """Every sheet as '# 表格: <name>' plus a markdown table, the shape uApply reads Excel in."""
+    import warnings
+
+    import openpyxl
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+        workbook = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+    try:
+        sheets = []
+        for name in workbook.sheetnames:
+            rows = [[cell if cell is not None else "" for cell in row]
+                    for row in workbook[name].iter_rows(values_only=True)]
+            rows = [r for r in rows if any(str(v).strip() for v in r)]
+            if not rows or not rows[0]:
+                table = "*(Empty sheet)*"
+            else:
+                headers = [str(c) for c in rows[0]]
+                lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
+                for r in rows[1:]:
+                    padded = (list(r) + [""] * len(headers))[:len(headers)]
+                    lines.append("| " + " | ".join(str(c) for c in padded) + " |")
+                table = "\n".join(lines)
+            sheets.append(f"# 表格: {name}\n\n{table}")
+        return "\n\n".join(sheets)
+    finally:
+        workbook.close()

@@ -55,7 +55,7 @@ Abbreviated here; `SOURCE.md` has the full text.
 - Loop `run_tasks` / `wait_for_stage` for processing and analysis, with one
   progress line after every call; name failed documents as they appear. Go
   straight back to `run_tasks` whenever `wait_for_stage` reports
-  `tasks_queued` > 0, and never end the run while documents wait on the agent.
+  `tasks_queued` > 0, and never end the run while tasks are queued.
 - Stop and report on `plan_limited` (never switch the case to server mode on
   its own) and on `runtime_error`.
 - Never ask for, print or reason about a task's prompt or inputs.
