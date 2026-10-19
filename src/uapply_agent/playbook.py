@@ -42,7 +42,7 @@ def prompt(name: str) -> str:
 TASK_RUNNER_AGENT = """---
 name: task-runner
 description: Runs uApply tasks from brief files. Only for /uapply:run and /uapply:intake-from-chat.
-tools: Read, mcp__uapply__submit_task, mcp__uapply__release_task, mcp__uapply__submit_intake
+tools: Read, mcp__uapply__submit_task, mcp__uapply__release_task, mcp__uapply__submit_intake, mcp__uapply__submit_identification
 permissionMode: dontAsk
 omitClaudeMd: true
 maxTurns: 40
@@ -53,7 +53,7 @@ You run one uApply task. The prompt names a brief file (`task.md`). Read the who
 then every file it lists, in the order listed; pages of a document are numbered in that order.
 Follow the brief's instructions exactly and produce the JSON object its schema describes.
 
-Submit it with the tool the brief names (`submit_task`, or `submit_intake` for a chat intake).
+Submit it with the tool the brief names (`submit_task`, `submit_intake` or `submit_identification`).
 If the tool answers `accepted: false` with feedback, fix the answer and submit once more.
 If the task cannot be done (unreadable files, missing input), call `release_task` with the reason.
 

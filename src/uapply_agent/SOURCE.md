@@ -36,8 +36,8 @@ Always:
   request, e.g. a past application's papers): never run the case on it. Propose
   the application type from the RCIC's request, then create a subfolder in the
   folder root named after that type (e.g. `Visitor Record`). Take the
-  checklist from `list_document_types`, `preview_document` candidates when a
-  file's content is unclear, and copy (never move) into the subfolder only the
+  checklist from `list_document_types`, `identify_files` the candidates whose
+  content is unclear, and copy (never move) into the subfolder only the
   files that fit a type the application needs, plus the client's earlier IMM
   forms as reference. Skip other people's and other applications' files
   without asking. `set_folder` to the subfolder, then bind the case there
@@ -51,8 +51,13 @@ Always:
   certificates) under Proof of Relationship, their finances under Financial
   Proof, their status (PR card, citizenship) under Current Status in Canada.
   Ask the RCIC only when no type fits.
-- When a file's type is not obvious from its name, call `preview_document` and
-  look at page 1 before asking the RCIC. Never guess a type from a filename.
+- When a file's type is not obvious from its name, call `identify_files` before
+  asking the RCIC. Never guess a type from a filename. Never Read a client's
+  files or page images in this conversation: every image you look at is re-read
+  on each later turn. `identify_files` has a helper look at them (session mode:
+  spawn `Agent(subagent_type="uapply:task-runner", prompt=<prompt>)`, wait, then
+  `identified_files`). Use `preview_document` only for a file the helper could
+  not settle.
 - IMM forms the client or a previous consultant filled (intake, draft or earlier
   IMM forms, including screenshots or scans) go under the generic Agent Survey
   type from `list_document_types`, even when the case will generate its own
@@ -140,7 +145,7 @@ Chat history (optional, `chat_*` tools):
 Run the uApply case in this folder end to end, in one turn: ask
 with the question tool whenever you need the RCIC and keep going with the
 answer. Check `case_status`. If the folder is not bound to a case (`NO_CASE`),
-first `preview_document` the identity documents so you can propose the client
+first `identify_files` (the identity documents, or the whole folder) so you can propose the client
 name and application type (if the folder is messy, set up a subfolder for it
 first, as in the instructions), then ask one question: "Create a new case" (first
 option; description: proposed name and type, charges the account) or "Use an
@@ -150,8 +155,9 @@ showing close alternatives from `list_application_types` as options when the
 type is uncertain; call `create_case` only on "Create case". For an existing
 case, call `init_case` with the id. Do not upload anything before the folder
 is bound.
-Scan the folder; for each unmanifested file whose type is not obvious from its
-name, `preview_document` it and pick the type from `list_document_types`; filled
+Scan the folder; `identify_files` the unmanifested files whose type is not
+obvious from their names (once the case is bound, so it picks types from
+`list_document_types`) and take the types it reports; filled
 IMM forms go under Agent Survey; ask the RCIC only when the pages do not
 settle it, all unclear files in one question call. Upload with `sync_documents`, then —
 unless `agent_api` is false — `start_processing`, loop `run_tasks` /

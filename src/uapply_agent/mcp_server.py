@@ -209,9 +209,10 @@ def _page_range(pages: str, total: int) -> tuple[int, int]:
 
 @tool()
 def preview_document(path: str, pages: str = "1") -> dict:
-    """Look at a folder file before classifying it: renders PDF pages (e.g. "1", "1-3", at most 3) to PNG
-    under .uapply/cache/preview/ and returns the image paths to Read. Images are returned as they are
-    (HEIC converted). Nothing leaves the machine."""
+    """Only when `identify_files` cannot settle a file: page images Read here stay in this conversation
+    and are re-read on every later turn. Renders PDF pages (e.g. "1", "1-3", at most 3) to PNG under
+    .uapply/cache/preview/ and returns the image paths to Read. Images are returned as they are (HEIC
+    converted). Nothing leaves the machine."""
     local = ctx.folder.resolve(path)
     if not local.is_file():
         raise ToolError("NO_FILE", f"{path} is not a file in the working folder")
@@ -227,6 +228,65 @@ def preview_document(path: str, pages: str = "1") -> dict:
     if suffix in PREVIEWABLE_IMAGES:
         return ok(kind="image", images=[str(local)])
     raise ToolError("UNSUPPORTED", f"cannot preview {suffix or 'this'} files")
+
+
+@tool()
+def identify_files(paths: list[str] | None = None, mcp_ctx: Context | None = None) -> dict:
+    """Identify folder files without looking at them here: a helper reads the first pages and answers
+    with a document type (when a case is bound), the holder and key facts per file, plus the
+    applicant's identity. Default: every file not uploaded yet (at most 20 per call). In session mode
+    the result carries `prompt`: spawn `Agent(subagent_type="uapply:task-runner", prompt=<prompt>)`,
+    wait for it, then call `identified_files`. In cli mode `identified` is filled here."""
+    from . import identify
+    if paths is None:
+        paths = [f.path for f in ctx.folder.scan(include_manifested=False)]
+    if not paths:
+        raise ToolError("NO_FILES", "no files to identify: every file in the folder is uploaded")
+    types = uploads.document_types(ctx.api, ctx.folder.survey_id) if ctx.folder.survey_id else []
+    prep = identify.prepare(ctx.folder, paths, types)
+    if not prep["files"]:
+        return ok(files=0, skipped=prep["skipped"])
+    identify.save_state(ctx.folder, prep["files"], types)
+    task = prep["task"]
+    if _mode(mcp_ctx) == "session":
+        brief = briefs.write_brief(ctx.folder, task, prep["images"], prep["text_files"], submit_lines=[
+            "Call the `submit_identification` tool with your JSON object as `result`.",
+            "If it answers `accepted: false` with `feedback`, fix the answer and submit once more.",
+            "Do not write files. Your final message is one line: identify and accepted or rejected.",
+        ])
+        return ok(files=len(prep["files"]), skipped=prep["skipped"], prompt=f"Task brief: {brief}")
+    s = ctx.settings
+    rr = get_runner(s.runtime, s.model, s).run(
+        system_prompt=task["payload"]["system_prompt"], user_prompt=task["payload"]["user_prompt"],
+        schema=identify.SCHEMA, images=prep["images"], text_files=prep["text_files"],
+        cwd=ctx.folder.cache / identify.TASK_ID, timeout_s=s.task_timeout_s)
+    if err := identify.check(rr.output, prep["files"], types):
+        raise ToolError("IDENTIFY_FAILED", f"the runtime's answer is unusable: {err}")
+    identify.save(ctx.folder, rr.output)
+    return ok(files=len(prep["files"]), skipped=prep["skipped"], identified=rr.output)
+
+
+@tool()
+def submit_identification(result: dict) -> dict:
+    """For the task-runner subagent: store the identification of the folder's files."""
+    from . import identify
+    st = identify.state(ctx.folder)
+    if not st:
+        raise ToolError("NO_IDENTIFY_TASK", "identify_files has not prepared a brief in this folder")
+    if err := identify.check(result, st["files"], st["document_types"]):
+        return ok(accepted=False, feedback=f"the result is unusable ({err}); fix it and submit once more")
+    identify.save(ctx.folder, result)
+    return ok(accepted=True)
+
+
+@tool()
+def identified_files() -> dict:
+    """The identification the helper submitted (after `identify_files` in session mode)."""
+    from . import identify
+    result = identify.load(ctx.folder)
+    if result is None:
+        raise ToolError("NOT_IDENTIFIED", "no identification yet", "spawn the task-runner with the prompt from identify_files first")
+    return ok(identified=result)
 
 
 @tool(requires="case")
