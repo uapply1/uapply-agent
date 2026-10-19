@@ -121,7 +121,8 @@ def get_runner(name: str = "auto", model: str = "", settings=None) -> Runner:
     if not match:
         raise RunnerError(f"{name}: `{RUNNERS[name].binary}` not found; run `uapply-agent setup` from a terminal "
                           "where it works, or set claude_bin / codex_bin in the config")
-    runner = RUNNERS[name](model=model)
+    runner = RUNNERS[name](model=model, light_model=getattr(settings, "codex_light_model", ""),
+                           light_effort=getattr(settings, "codex_light_effort", ""))
     runner.binary = match["path"]
     return runner
 

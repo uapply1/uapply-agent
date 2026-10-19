@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import re
 import subprocess
@@ -77,8 +78,20 @@ class Runner:
     binary = ""
     pages_per_call = 20    # how many pages one headless call may look at
 
-    def __init__(self, model: str = ""):
+    def __init__(self, model: str = "", light_model: str = "", light_effort: str = ""):
         self.model = model
+        self.light_model, self.light_effort = light_model, light_effort
+        self.effort = ""
+
+    def for_tier(self, tier: str) -> Runner:
+        """This runner, or a copy on the smaller model and effort for a light task (tiers.py)."""
+        from ..tiers import LIGHT
+        if tier != LIGHT or not (self.light_model or self.light_effort):
+            return self
+        light = copy.copy(self)
+        light.model = self.light_model or self.model
+        light.effort = self.light_effort
+        return light
 
     def run(self, *, system_prompt: str, user_prompt: str, schema: dict,
             images: list[Path], cwd: Path, timeout_s: int = 300,

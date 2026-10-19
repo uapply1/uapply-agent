@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import briefs
+from . import briefs, tiers
 from .api import ApiError, UApplyApi
 from .briefs import FINAL_TASK_STATUSES, schema_check
 from .constants import IMAGE_EXTENSIONS
@@ -117,9 +117,10 @@ class Executor:
         system_prompt, user_prompt, text_files = self._prompt_files(task, cwd, payload.get("system_prompt", ""),
                                                                     user_prompt)
         note, submitted = "", False
+        runner = self.runner.for_tier(tiers.tier(task))
         for _ in range(ATTEMPTS_PER_TASK):
-            rr = self.runner.run(system_prompt=system_prompt, user_prompt=user_prompt + note, schema=schema,
-                                 images=images, cwd=cwd, text_files=text_files, timeout_s=self.timeout_s)
+            rr = runner.run(system_prompt=system_prompt, user_prompt=user_prompt + note, schema=schema,
+                            images=images, cwd=cwd, text_files=text_files, timeout_s=self.timeout_s)
             stats.bump("model_calls")
             local_err = schema_check(schema, rr.output)
             if local_err:

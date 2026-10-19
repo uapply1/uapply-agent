@@ -125,6 +125,9 @@ running program's files); versions live in `~/.local/share/uapply-agent/versions
 | `auth0_domain` / `auth0_client_id` / `auth0_audience` | production tenant | change only together with `backend_url` |
 | `runtime` | `auto` | headless runtime for `uapply-agent run` and Codex sessions: `codex` (Claude Code never runs headless) |
 | `model` | runtime default | model passed to the headless runtime |
+| `light_model` | `haiku` | Claude subagent model for reformat/translate tasks; empty = the session's model |
+| `codex_light_model` | `model` | Codex model for reformat/translate tasks |
+| `codex_light_effort` | `low` | Codex reasoning effort for reformat/translate tasks; empty = runtime default |
 | `codex_bin` | recorded by `setup` | absolute path of the Codex CLI |
 | `workers` | `2` | parallel headless processes (at most 4) |
 | `task_timeout_s` | `300` | time limit for one headless model call |

@@ -164,3 +164,26 @@ def test_codex_without_strict_schema_and_error_from_stdout(monkeypatch, tmp_path
     with pytest.raises(RunnerError, match="Invalid schema"):
         CodexRunner().run(system_prompt="S", user_prompt="U", schema={"type": "object"}, images=[], cwd=tmp_path)
     assert "--output-schema" not in seen["cmd"]
+
+
+def test_codex_light_tier_uses_the_light_model_and_effort(monkeypatch, tmp_path):
+    from uapply_agent.runners.codex import CodexRunner
+    seen = []
+
+    def fake_exec(self, cmd, cwd, timeout_s, stdin=None):
+        seen.append(cmd)
+        out = Path(cmd[cmd.index("--output-last-message") + 1])
+        out.write_text('{"a": 1}', encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(CodexRunner, "_exec", fake_exec)
+    runner = CodexRunner(model="gpt-big", light_model="gpt-small", light_effort="low")
+    kw = dict(system_prompt="s", user_prompt="u", schema={}, images=[], cwd=tmp_path)
+    assert runner.for_tier("standard") is runner
+    rr = runner.for_tier("light").run(**kw)
+    runner.run(**kw)
+    light, standard = seen
+    assert light[light.index("--model") + 1] == "gpt-small" and "model_reasoning_effort=low" in light
+    assert rr.model == "gpt-small"
+    assert standard[standard.index("--model") + 1] == "gpt-big" and "model_reasoning_effort=low" not in standard
+    assert CodexRunner(model="m").for_tier("light").model == "m"      # no light settings: unchanged

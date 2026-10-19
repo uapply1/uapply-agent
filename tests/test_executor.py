@@ -63,7 +63,7 @@ class FakeRunner(Runner):
 
     def run(self, *, system_prompt, user_prompt, schema, images, cwd, timeout_s=300, text_files=()):
         self.calls.append({"system_prompt": system_prompt, "user_prompt": user_prompt, "images": images, "cwd": cwd,
-                           "text_files": list(text_files)})
+                           "text_files": list(text_files), "model": self.model})
         out = self.outputs.pop(0)
         if isinstance(out, Exception):
             raise out
@@ -206,3 +206,13 @@ def test_unexpected_error_fails_the_task_but_not_the_run(folder):
     stats = Executor(api, folder, runner=runner).run(workers=1)
     assert stats.failed == 1 and stats.accepted == 1
     assert api.released[0][0] == "t1" and "KeyError" in api.released[0][1]
+
+
+def test_light_tasks_run_on_the_light_model(folder):
+    light = {**task("t1", inputs=[]), "kind": "llm_call"}
+    light["payload"] = {**light["payload"], "purpose": "reformat_translate"}
+    api = FakeApi([light, task("t2")])
+    runner = FakeRunner([{"file_types": []}, {"file_types": ["Visa"]}])
+    runner.model, runner.light_model = "big", "small"
+    Executor(api, folder, runner=runner).run(workers=1)
+    assert [c["model"] for c in runner.calls] == ["small", "big"]

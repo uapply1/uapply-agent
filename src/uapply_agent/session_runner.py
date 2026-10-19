@@ -3,7 +3,8 @@
 The server never spawns a model process here. One round: pull tasks, finish locally what needs no
 model (PDF text layers), write a brief per remaining task, and hand the briefs back to the
 conversation, which spawns one `uapply:task-runner` subagent per brief. The subagent reads the
-brief and calls `submit_task`; the RCIC's session login and plan cover every model call.
+brief and calls `submit_task`; the RCIC's session login and plan cover every model call. A light
+task's brief names a smaller `model` for the subagent (tiers.py).
 """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 
-from . import briefs
+from . import briefs, tiers
 from .api import ApiError, UApplyApi
 from .folder import WorkingFolder
 
@@ -36,8 +37,8 @@ class Round:
 
 
 class SessionRunner:
-    def __init__(self, api: UApplyApi, folder: WorkingFolder, force_ocr: bool = False):
-        self.api, self.folder, self.force_ocr = api, folder, force_ocr
+    def __init__(self, api: UApplyApi, folder: WorkingFolder, force_ocr: bool = False, light_model: str = ""):
+        self.api, self.folder, self.force_ocr, self.light_model = api, folder, force_ocr, light_model
         self.session_id = f"session-{uuid.uuid4().hex[:8]}"
 
     def prepare_round(self, n: int, kinds: list[str] | None = None) -> Round:
@@ -80,8 +81,11 @@ class SessionRunner:
             note = ""
         text_files = briefs.write_text_files(task, cwd)
         brief = briefs.write_brief(self.folder, task, images, text_files, extra_instruction=note)
-        return {"task_id": task["id"], "kind": task["kind"], "document": briefs._document_name(task),
-                "brief": str(brief), "pages": len(images)}
+        out = {"task_id": task["id"], "kind": task["kind"], "document": briefs._document_name(task),
+               "brief": str(brief), "pages": len(images)}
+        if self.light_model and tiers.tier(task) == tiers.LIGHT:
+            out["model"] = self.light_model
+        return out
 
     def _release(self, task_id: str, reason: str, count_attempt: bool = True) -> None:
         try:

@@ -24,7 +24,7 @@ def config_dir() -> Path:
 
 ENV_OVERRIDES = {
     "backend_url": "UAPPLY_BACKEND_URL", "app_url": "UAPPLY_APP_URL", "runtime": "UAPPLY_RUNTIME",
-    "model": "UAPPLY_MODEL", "team_id": "UAPPLY_TEAM_ID", "chat_source": "UAPPLY_CHAT_SOURCE",
+    "model": "UAPPLY_MODEL", "light_model": "UAPPLY_LIGHT_MODEL", "team_id": "UAPPLY_TEAM_ID", "chat_source": "UAPPLY_CHAT_SOURCE",
     "anychat_bin": "ANYCHAT_BIN", "codex_bin": "UAPPLY_CODEX_BIN",
     "force_ocr": "UAPPLY_FORCE_OCR", "task_runner": "UAPPLY_TASK_RUNNER",
 }
@@ -44,6 +44,9 @@ class Settings:
     task_runner: str = "auto"      # auto | session | cli: where model tasks run (docs/architecture/runtime-modes.md)
     runtime: str = "auto"          # auto | codex (headless CLI for `run` and task_runner=cli)
     model: str = ""                # runtime default when empty
+    light_model: str = "haiku"     # Claude subagent model for light tasks (tiers.py); "" = the session's model
+    codex_light_model: str = ""    # Codex model for light tasks; "" = `model`
+    codex_light_effort: str = "low"  # Codex reasoning effort for light tasks; "" = the runtime's default
     installed_sha: str = ""        # commit the installer put in ~/.local/bin (versions/<sha>/ carry their own)
     auto_update: bool = True       # at `mcp` / `run` start, switch to the newest build of main
     codex_bin: str = ""            # absolute path recorded by `setup`; GUI apps run with a minimal PATH

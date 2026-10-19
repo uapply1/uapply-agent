@@ -312,13 +312,14 @@ def final_report(download: bool = True) -> dict:
 def run_tasks(max_tasks: int | None = None, workers: int = 2, kinds: list[str] | None = None,
               budget_s: int = 90, mcp_ctx: Context | None = None) -> dict:
     """Run the case's queued model tasks. `mode: "session"` (Claude Code): the result lists task briefs;
-    spawn one `uapply:task-runner` subagent per brief (prompt: "Task brief: <path>"), all at once, wait
-    for them, then call again — tasks that need no model are finished here. `mode: "cli"`: tasks ran
+    spawn one `uapply:task-runner` subagent per brief (prompt: "Task brief: <path>", and the brief's
+    `model` as the Agent `model` when it has one), all at once, wait for them, then call again — tasks that need no model are finished here. `mode: "cli"`: tasks ran
     in headless runtime processes for up to `budget_s` seconds. Either way: counts, `remaining` and
     per-document `progress`; call again while `remaining` > 0, one progress line to the RCIC between calls."""
     s = ctx.settings
     if _mode(mcp_ctx) == "session":
-        rnd = SessionRunner(ctx.api, ctx.folder, force_ocr=s.force_ocr).prepare_round(workers or s.workers, kinds)
+        rnd = SessionRunner(ctx.api, ctx.folder, force_ocr=s.force_ocr,
+                            light_model=s.light_model).prepare_round(workers or s.workers, kinds)
         out = ok(**rnd.as_dict(), remaining=_remaining())
         return _with_progress(out)
     ex = Executor(ctx.api, ctx.folder, runner=get_runner(s.runtime, s.model, s), force_ocr=s.force_ocr,

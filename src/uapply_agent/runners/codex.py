@@ -132,6 +132,8 @@ class CodexRunner(Runner):
                 cmd += ["--image", str(img)]
             if self.model:
                 cmd += ["--model", self.model]
+            if self.effort:
+                cmd += ["-c", f"model_reasoning_effort={self.effort}"]
             # Prompt on stdin: argv is capped at ~32 KB on Windows and transcripts are longer.
             cmd.append("-")
             proc = self._exec(cmd, cwd, timeout_s, stdin=prompt)

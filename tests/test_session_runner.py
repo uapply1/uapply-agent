@@ -196,3 +196,15 @@ def test_intake_brief_and_hints_round_trip(use_server, case_folder, tmp_path):
     hints = m.intake_hints(str(md))["intake"]
     assert hints["applicant"]["family_name"] == "张" and hints["application"]["suggested_application_type_id"] is None
     assert m.intake_hints(str(tmp_path / "other.md"))["error"]["code"] == "NO_HINTS"
+
+
+def test_light_tasks_name_a_smaller_model_for_the_subagent(case_folder, tmp_path):
+    src = tmp_path / "page.jpg"
+    src.write_bytes(b"\xff\xd8 fake")
+    api = FakeApi(src, [task("t1", kind="llm_call", inputs=[], purpose="reformat_translate"),
+                        task("t2", kind="llm_call", inputs=[], purpose="analyze_section"),
+                        task("t3")])
+    rnd = SessionRunner(api, case_folder, light_model="haiku").prepare_round(3)
+    assert {t["task_id"]: t.get("model") for t in rnd.tasks} == {"t1": "haiku", "t2": None, "t3": None}
+    api = FakeApi(src, [task("t4", kind="llm_call", inputs=[], purpose="reformat_extract")])
+    assert "model" not in SessionRunner(api, case_folder, light_model="").prepare_round(1).tasks[0]
