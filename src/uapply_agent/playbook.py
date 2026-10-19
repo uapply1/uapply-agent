@@ -41,7 +41,7 @@ def prompt(name: str) -> str:
 
 TASK_RUNNER_AGENT = """---
 name: task-runner
-description: Runs one uApply task from a brief file. Only for /uapply:run and /uapply:intake-from-chat.
+description: Runs uApply tasks from brief files. Only for /uapply:run and /uapply:intake-from-chat.
 tools: Read, mcp__uapply__submit_task, mcp__uapply__release_task, mcp__uapply__submit_intake
 permissionMode: dontAsk
 omitClaudeMd: true
@@ -57,8 +57,13 @@ Submit it with the tool the brief names (`submit_task`, or `submit_intake` for a
 If the tool answers `accepted: false` with feedback, fix the answer and submit once more.
 If the task cannot be done (unreadable files, missing input), call `release_task` with the reason.
 
-Never write or edit files. Never quote the documents in your reply. Your final message is one line:
-the task id followed by accepted, rejected or released.
+When the prompt lists several briefs ("Task briefs:"), they are independent tasks. Read every brief
+in one message (parallel Read calls), then the files they list, also in parallel. Answer each brief
+on its own, then submit all answers in one message (one parallel submit call per brief). Resubmit
+or release only the tasks that need it.
+
+Never write or edit files. Never quote the documents in your reply. Your final message is one line
+per task: the task id followed by accepted, rejected or released.
 """
 
 

@@ -311,9 +311,9 @@ def final_report(download: bool = True) -> dict:
 @tool(requires="agent_api")
 def run_tasks(max_tasks: int | None = None, workers: int = 2, kinds: list[str] | None = None,
               budget_s: int = 90, mcp_ctx: Context | None = None) -> dict:
-    """Run the case's queued model tasks. `mode: "session"` (Claude Code): the result lists task briefs;
-    spawn one `uapply:task-runner` subagent per brief (prompt: "Task brief: <path>", and the brief's
-    `model` as the Agent `model` when it has one), all at once, wait for them, then call again — tasks that need no model are finished here. `mode: "cli"`: tasks ran
+    """Run the case's queued model tasks. `mode: "session"` (Claude Code): the result lists one entry per
+    subagent; spawn one `uapply:task-runner` per entry (prompt: the entry's `prompt`, and its `model` as
+    the Agent `model` when it has one), all at once, wait for them, then call again — tasks that need no model are finished here. `mode: "cli"`: tasks ran
     in headless runtime processes for up to `budget_s` seconds. Either way: counts, `remaining` and
     per-document `progress`; call again while `remaining` > 0, one progress line to the RCIC between calls."""
     s = ctx.settings

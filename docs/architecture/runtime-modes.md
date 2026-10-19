@@ -23,7 +23,7 @@ for one more attempt.
 ```
 run_tasks()  → briefs                       the conversation then, in one message:
   └─ for each pulled task:                    Agent(subagent_type="uapply:task-runner",
-       prepare (above); write task.md:              prompt="Task brief: <path>")   × N
+       prepare (above); write task.md:              prompt=<entry.prompt>)   × entries
        instructions, task, schema, files,   each subagent (fresh context, Read +
        how to submit                        submit_task/release_task only):
                                               reads the brief and its files,
@@ -32,6 +32,11 @@ run_tasks()  → briefs                       the conversation then, in one mess
 
 - The `uapply:task-runner` agent ships with the plugin `setup` writes; it has
   no `model` of its own, so it runs on the session's model, login and plan.
+- Light tasks (reformat and translate, `tiers.py`) of a round share one
+  subagent, up to 8 briefs it reads and submits in parallel, on `light_model`
+  (default `haiku`) passed as the Agent's `model`. OCR, classification, section
+  and analysis tasks get one subagent each. Codex runs every task headless,
+  one call each.
 - One Claude sign-in: the desktop app and the CLI do not share logins, and
   Claude Code has no MCP sampling, so this is the only way a task can run on
   the session's credentials.

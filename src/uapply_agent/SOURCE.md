@@ -86,9 +86,9 @@ Always:
   a `next` saying so), call `run_tasks` at once; never call `wait_for_stage`
   twice in a row while tasks are queued.
   With `mode: session`, when `run_tasks` returns `tasks`, spawn one subagent per
-  task in a single message: `Agent(subagent_type="uapply:task-runner",
-  prompt="Task brief: <brief>")`, all of them at once; when a task has a
-  `model`, pass it as the Agent's `model` (a smaller model for light tasks). Wait until every one has
+  entry in a single message: `Agent(subagent_type="uapply:task-runner",
+  prompt=<entry.prompt>)`, all of them at once; when an entry has a `model`,
+  pass it as the Agent's `model`. One entry can carry several light tasks. Wait until every one has
   reported, then call `run_tasks` again. Each subagent runs on this session's
   login; you never read a brief or a document yourself. With `mode: cli`,
   `run_tasks` returns within about 90 s having run the tasks itself.

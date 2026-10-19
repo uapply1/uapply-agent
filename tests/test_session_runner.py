@@ -198,13 +198,45 @@ def test_intake_brief_and_hints_round_trip(use_server, case_folder, tmp_path):
     assert m.intake_hints(str(tmp_path / "other.md"))["error"]["code"] == "NO_HINTS"
 
 
-def test_light_tasks_name_a_smaller_model_for_the_subagent(case_folder, tmp_path):
+def light(tid, purpose="reformat_translate"):
+    return task(tid, kind="llm_call", inputs=[], purpose=purpose)
+
+
+def test_a_lone_light_task_is_an_ordinary_entry_on_the_light_model(case_folder, tmp_path):
     src = tmp_path / "page.jpg"
     src.write_bytes(b"\xff\xd8 fake")
-    api = FakeApi(src, [task("t1", kind="llm_call", inputs=[], purpose="reformat_translate"),
-                        task("t2", kind="llm_call", inputs=[], purpose="analyze_section"),
-                        task("t3")])
+    api = FakeApi(src, [light("t1"), task("t2", kind="llm_call", inputs=[], purpose="analyze_section"), task("t3")])
     rnd = SessionRunner(api, case_folder, light_model="haiku").prepare_round(3)
     assert {t["task_id"]: t.get("model") for t in rnd.tasks} == {"t1": "haiku", "t2": None, "t3": None}
-    api = FakeApi(src, [task("t4", kind="llm_call", inputs=[], purpose="reformat_extract")])
+    assert all(t["prompt"] == f"Task brief: {t['brief']}" for t in rnd.tasks)
+    api = FakeApi(src, [light("t4", "reformat_extract")])
     assert "model" not in SessionRunner(api, case_folder, light_model="").prepare_round(1).tasks[0]
+
+
+def test_light_tasks_of_a_round_share_one_subagent(case_folder, tmp_path):
+    src = tmp_path / "page.jpg"
+    src.write_bytes(b"\xff\xd8 fake")
+    tasks = [light("l1"), task("c1"), light("l2", "reformat_extract"), light("l3"),
+             task("a1", kind="llm_call", inputs=[], purpose="analyze_section")]
+    rnd = SessionRunner(FakeApi(src, tasks), case_folder, light_model="haiku").prepare_round(8)
+    assert [t.get("task_id") for t in rnd.tasks] == ["c1", "a1", None]
+    group = rnd.tasks[-1]
+    assert group["task_ids"] == ["l1", "l2", "l3"] and group["model"] == "haiku"
+    assert group["prompt"].splitlines() == ["Task briefs:", *(f"- {b}" for b in group["briefs"])]
+    assert all(Path(b).exists() for b in group["briefs"])
+
+
+def test_light_groups_are_split_at_light_per_agent(case_folder, tmp_path, monkeypatch):
+    import uapply_agent.session_runner as sr
+    monkeypatch.setattr(sr, "LIGHT_PER_AGENT", 3)
+    src = tmp_path / "page.jpg"
+    src.write_bytes(b"\xff\xd8 fake")
+    rnd = SessionRunner(FakeApi(src, [light(f"l{i}") for i in range(7)]), case_folder).prepare_round(7)
+    assert [len(t.get("task_ids", [t.get("task_id")])) for t in rnd.tasks] == [3, 3, 1]
+    assert "model" not in rnd.tasks[0]
+
+
+def test_task_runner_handles_several_briefs_in_parallel():
+    agent = playbook.plugin_files("1.0.0")["agents/task-runner.md"]
+    assert "Task briefs:" in agent and "parallel" in agent and "one line\nper task" in agent
+    assert "<entry.prompt>" in playbook.instructions()
