@@ -243,12 +243,15 @@ class Executor:
     def _submit(self, task: dict, output: dict, model: str, usage: dict, stats: RunStats,
                 runtime: str | None = None) -> SubmitOutcome:
         out = self.api.submit_result(task["id"], output, model, runtime or self.runner.name, usage, self.session_id)
+        purpose = task["payload"].get("purpose", "")
         if out.get("accepted"):
             stats.bump("accepted")
-            logger.info("task %s (%s) accepted: %s", task["id"], task["kind"], json.dumps(output)[:120])
+            logger.info("task %s (%s %s) accepted, by %s", task["id"], task["kind"], purpose, model)
             return SubmitOutcome(done=True)
         rej = out.get("rejection") or {}
         stats.bump("rejected")
+        logger.warning("task %s (%s %s) rejected (%s): %s %s", task["id"], task["kind"], purpose,
+                       out.get("task_status"), rej.get("code"), rej.get("message"))
         if out.get("task_status") in FINAL_TASK_STATUSES:
             stats.note_failure({"task_id": task["id"], "kind": task["kind"],
                                 "reason": rej.get("message", out.get("task_status"))})
@@ -264,11 +267,13 @@ class Executor:
             else:
                 self._run_generic(task, stats)
         except PlanLimited as e:
+            logger.warning("task %s: %s plan limit: %s", task["id"], self.runner.name, e)
             stats.plan_limited = True
             self._release_quietly(task, f"plan limit: {e}", count_attempt=False)
             stats.bump("released")
             raise
         except RuntimeUnavailable as e:
+            logger.error("task %s: runtime %s unavailable: %s", task["id"], self.runner.name, e)
             stats.runtime_error = str(e)
             self._release_quietly(task, f"runtime unavailable: {e}", count_attempt=False)
             stats.bump("released")
@@ -280,7 +285,8 @@ class Executor:
             self._fail(task, stats, f"{type(e).__name__}: {e}")
 
     def _fail(self, task: dict, stats: RunStats, reason: str) -> None:
-        logger.error("task %s failed: %s", task["id"], reason)
+        logger.error("task %s (%s %s) failed on %s: %s", task["id"], task["kind"],
+                     task["payload"].get("purpose", ""), self.runner.name, reason)
         stats.bump("failed")
         stats.note_failure({"task_id": task["id"], "kind": task["kind"], "reason": reason[:300]})
         self._release_quietly(task, reason)

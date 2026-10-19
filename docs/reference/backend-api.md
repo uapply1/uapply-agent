@@ -52,6 +52,7 @@ server mode and refuses `run_tasks` (`AGENT_API_UNAVAILABLE`).
 | `POST /api/ai-parse/agent/tasks/{id}/result/` | `{result, model, runtime, usage, session_id}` | executor; the server validates the result and, when it settles the last task of a batch, applies the step in this request and queues the next step's tasks |
 | `POST /api/ai-parse/agent/tasks/{id}/release/` | `{reason}` | executor; puts a task back (e.g. plan limit) |
 | `GET  /api/ai-parse/agent/tasks/stats/` | `survey` | `task_stats`, the local-agent API probe |
+| `POST /api/ai-parse/agent/diagnostics/` | multipart `file` (zip, ≤ 20 MB), `survey_id?` (must be the RCIC's), `note`, `agent_version` | `send_logs`, `uapply-agent logs --send`; stores the bundle for uApply's team (Django admin) and returns `{id}` |
 | `POST /api/ai-parse/agent/surveys/{id}/autofill/claim/` | | `autofill_forms` (local mode): forms to fill with their templates and recorded field operations |
 | `POST /api/ai-parse/agent/surveys/{id}/autofill/{imm_pdf_id}/result/` | multipart: filled PDF or `error`, `success_rate`, `errors`, `survey_values_updated_at` | `autofill_forms` (local mode), per form |
 | `POST /api/ai-parse/agent/surveys/{id}/autofill/finish/` | | `autofill_forms` (local mode); may ask for a refill when values changed during the fill |

@@ -104,6 +104,7 @@ class UApplyApi:
                 if method == "GET" and attempt + 1 < TRANSIENT_ATTEMPTS:
                     time.sleep(TRANSIENT_BACKOFF_S * (attempt + 1))
                     continue
+                logger.warning("%s %s failed: %s: %s", method, path, type(e).__name__, e)
                 raise ApiError(0, f"{type(e).__name__}: {e}",
                                "check the network connection to the uApply backend") from e
             # A read that hits a passing server error (deploy, restart) is tried again before it fails a task.
@@ -123,6 +124,11 @@ class UApplyApi:
             if r.status_code == 404 and path.startswith(AGENT_PREFIX) and not isinstance(body, dict):
                 self._agent_api = False
                 body, hint = {"message": "this backend has no local-agent API"}, NO_AGENT_API_HINT
+            if isinstance(body, dict):
+                logger.warning("%s %s answered HTTP %s: %s %s", method, path, r.status_code,
+                               body.get("code", ""), body.get("message") or body.get("detail") or "")
+            else:
+                logger.warning("%s %s answered HTTP %s", method, path, r.status_code)
             raise ApiError(r.status_code, body, hint)
         if r.headers.get("content-type", "").startswith("application/json"):
             return r.json()
@@ -251,6 +257,14 @@ class UApplyApi:
             return self._req("POST", path, data=data, timeout=120)
         with open(pdf, "rb") as f:
             return self._req("POST", path, data=data, files={"file": (pdf.name, f, "application/pdf")}, timeout=300)
+
+    def send_diagnostics(self, bundle: bytes, survey_id: str | None = None, note: str = "") -> dict:
+        """Upload a log bundle (diagnostics.build_bundle) for uApply's team."""
+        data = {"note": note[:2000], "agent_version": __version__}
+        if survey_id:
+            data["survey_id"] = survey_id
+        files = {"file": ("uapply-agent-logs.zip", bundle, "application/zip")}
+        return self._req("POST", f"{AGENT_PREFIX}diagnostics/", data=data, files=files, timeout=120)
 
     def report(self, survey_id: str) -> dict:
         return self._req("GET", f"{AGENT_PREFIX}surveys/{survey_id}/report/", timeout=180)

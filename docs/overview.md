@@ -152,6 +152,13 @@ Detailed stage contracts: [case-workflow.md](architecture/case-workflow.md).
   evidence checks run server-side; the case-creation confirmation and the
   folder boundary are enforced by the MCP server, regardless of which coding
   agent is driving. See [guardrails.md](design/guardrails.md).
+- **Failures can be diagnosed.** The agent writes its own log files
+  (`~/.config/uapply-agent/logs`, one per process, 14 days): tool calls and
+  their outcome, API errors, task outcomes and tracebacks. Tokens and presigned
+  URLs are masked and prompts, answers and document text are never logged.
+  After a failure Claude asks the RCIC whether to send them; `send_logs` (or
+  `uapply-agent logs --send`) uploads a zip with the logs, versions and the
+  case's status, which the team opens in Django admin by case.
 - **Tool results are small.** Evidence snippets and summaries, not raw OCR
   dumps; long jobs are long-polled server-side so the agent's context isn't
   spent on polling.

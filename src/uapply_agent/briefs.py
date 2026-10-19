@@ -140,9 +140,11 @@ def submit(api: UApplyApi, task_id: str, kind: str, result: dict, model: str, ru
     """Send a result to uApply and read its verdict."""
     out = api.submit_result(task_id, result, model, runtime, usage or {}, session_id)
     if out.get("accepted"):
-        logger.info("task %s (%s) accepted: %s", task_id, kind, json.dumps(result)[:120])
+        logger.info("task %s (%s) accepted, by %s/%s", task_id, kind, runtime, model)
         return Submission(accepted=True, final=True, task_status="accepted")
     status = out.get("task_status", "")
+    rej = out.get("rejection") or {}
+    logger.warning("task %s (%s) rejected (%s): %s %s", task_id, kind, status, rej.get("code"), rej.get("message"))
     if status in FINAL_TASK_STATUSES:
         return Submission(accepted=False, final=True, task_status=status,
                           feedback=(out.get("rejection") or {}).get("message", status))

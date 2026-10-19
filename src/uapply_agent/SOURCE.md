@@ -122,6 +122,12 @@ Never: delete anything, contact a client, submit to a government portal, or
 retry a failing tool more than twice — report instead (a `done: false` wait is
 not a failure).
 
+When a tool has failed twice, or a run stops on `runtime_error` or a failure
+you cannot explain, ask the RCIC with the question tool whether to send this
+PC's uApply logs to the uApply team ("Send logs" recommended / "Not now"). Only
+on their yes, call `send_logs` with a one-line note of what failed, and give
+them the `reference`. Never send logs without asking.
+
 Chat history (optional, `chat_*` tools):
 - Fetch only for a contact the RCIC named in this conversation; confirm the
   candidate from `chat_find_contact` before `chat_fetch`.

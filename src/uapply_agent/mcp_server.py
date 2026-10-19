@@ -10,12 +10,13 @@ import functools
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Literal
 
 from mcp.server.mcpserver import Context, MCPServer
 
-from . import briefs, cases, playbook, uploads
+from . import __version__, briefs, cases, diagnostics, playbook, uploads
 from .acrobat import detect as detect_acrobat
 from .api import NO_AGENT_API_HINT, ApiError
 from .autofill import AutoFiller
@@ -28,6 +29,7 @@ from .context import ServerContext, ToolError, ok, runner_mode
 from .executor import Executor
 from .folder import WorkingFolder
 from .local_ops import heic_to_jpeg, pdf_page_count, render_pdf_page
+from .logs import set_case, setup_logging
 from .runners import RunnerError, detect_runtimes, get_runner
 from .session_runner import RUNTIME as SESSION_RUNTIME
 from .session_runner import SessionRunner
@@ -58,25 +60,39 @@ def _require(requires: str | None) -> None:
 
 def tool(requires: Literal["case", "agent_api"] | None = None):
     """Register an MCP tool. `requires`: "case" = the folder must be bound; "agent_api" = also the
-    backend must serve the local-agent API. Exceptions become error results, never stack traces."""
+    backend must serve the local-agent API. Exceptions become error results, never stack traces;
+    each call and its outcome go to the log file (argument names only, never values)."""
     def decorate(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
+            started = time.monotonic()
+            set_case(ctx.folder.survey_id)
             try:
                 _require(requires)
-                return fn(*args, **kwargs)
+                result = fn(*args, **kwargs)
             except ToolError as e:
-                return e.as_result()
+                result = e.as_result()
             except ApiError as e:
                 hint = e.hint or (LOGIN_HINT if e.status == 401 else "")
-                return ToolError(f"HTTP_{e.status}", str(e), hint).as_result()
+                result = ToolError(f"HTTP_{e.status}", str(e), hint).as_result()
             except ChatError as e:
-                return ToolError(e.code.upper(), str(e), e.hint).as_result()
+                result = ToolError(e.code.upper(), str(e), e.hint).as_result()
             except Exception as e:  # keep the conversation informative
                 logger.exception("tool %s failed", fn.__name__)
-                return ToolError(type(e).__name__.upper(), str(e)[:300]).as_result()
+                result = ToolError(type(e).__name__.upper(), str(e)[:300]).as_result()
+            _log_call(fn.__name__, kwargs, result, time.monotonic() - started)
+            return result
         return server.tool()(wrapper)
     return decorate
+
+
+def _log_call(name: str, kwargs: dict, result, seconds: float) -> None:
+    keys = ",".join(sorted(k for k in kwargs if k != "mcp_ctx")) or "-"
+    if isinstance(result, dict) and result.get("ok") is False:
+        err = result.get("error") or {}
+        logger.warning("tool %s(%s) failed in %.1fs: %s %s", name, keys, seconds, err.get("code"), err.get("message"))
+    else:
+        logger.info("tool %s(%s) ok in %.1fs", name, keys, seconds)
 
 
 def _client_name(mcp_ctx: Context | None) -> str | None:
@@ -466,6 +482,31 @@ def wait_for_stage(stage: Literal["processing", "analysis", "filling"] = "proces
     return _with_progress(out, always=bool(res.get("done")))
 
 
+@tool()
+def send_logs(note: str, hours: int = 72) -> dict:
+    """Send this PC's uapply-agent logs of the last `hours` (secrets masked; no prompts or document
+    text) to uApply's team, with `note` saying what went wrong. Only after the RCIC agreed: ask with
+    the question tool first. Returns a `reference` to give the RCIC."""
+    hours = max(1, min(int(hours), 14 * 24))
+    sid = ctx.folder.survey_id
+    status = None
+    if sid:
+        try:
+            status = ctx.api.agent_status(sid)
+        except ApiError:
+            logger.info("case status unavailable for the log bundle", exc_info=True)
+    bundle = diagnostics.build_bundle(ctx.settings, hours, note, case=ctx.folder.case or None, status=status)
+    try:
+        res = ctx.api.send_diagnostics(bundle, sid, note)
+    except ApiError as e:
+        if e.status == 404:
+            hint = f"the logs are in {diagnostics.where()}; the RCIC can send that folder to uApply support"
+            raise ToolError("LOGS_NOT_ACCEPTED", "this uApply backend cannot receive logs yet", hint) from e
+        raise
+    logger.info("sent %d bytes of logs (reference %s)", len(bundle), res.get("id"))
+    return ok(sent=True, reference=res.get("id"), size=len(bundle))
+
+
 @tool(requires="agent_api")
 def task_stats() -> dict:
     """Agent task counts by status for the case."""
@@ -644,7 +685,8 @@ _register_prompts()
 
 
 def main() -> None:
-    logging.basicConfig(level=os.environ.get("UAPPLY_LOG", "WARNING"), format="%(levelname)s %(name)s: %(message)s")
+    setup_logging("mcp", os.environ.get("UAPPLY_LOG", "WARNING"))
+    logger.info("uapply-agent %s MCP server starting in %s", __version__, ctx.folder.root)
     server.run(transport="stdio")
 
 

@@ -26,6 +26,7 @@ from .integrate import (
     next_step,
     run_setup,
 )
+from .logs import setup_logging
 from .runners import RunnerError, detect_runtimes, get_runner
 from .updater import maybe_delegate, resolve_target, running_sha
 
@@ -193,6 +194,26 @@ def cmd_chat(args, settings):
     return ExitCode.OK
 
 
+def cmd_logs(args, settings):
+    from . import diagnostics
+    from .logs import recent_files
+    if not args.send:
+        print(diagnostics.where())
+        for path in recent_files(args.hours)[:10]:
+            print(f"  {path.name}  {path.stat().st_size // 1024} KB")
+        return ExitCode.OK
+    folder = _folder(args)
+    if not args.yes:
+        answer = input(f"Send the uapply-agent logs of the last {args.hours} h to uApply? [y/N] ")
+        if answer.strip().lower() not in ("y", "yes"):
+            return ExitCode.OK
+    api = UApplyApi(settings)
+    bundle = diagnostics.build_bundle(settings, args.hours, args.note, case=folder.case or None)
+    res = api.send_diagnostics(bundle, folder.survey_id, args.note)
+    print(f"sent {len(bundle) // 1024} KB; reference {res.get('id')}")
+    return ExitCode.OK
+
+
 def cmd_clean(args, settings):
     print(f"removed {_folder(args).clean()} cached files")
     return ExitCode.OK
@@ -287,6 +308,11 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("contact")
     fetch.add_argument("--days", type=int, help="how far back (default: chat_default_days)")
     command("clean", cmd_clean, "remove cached files from the client folder", [folder])
+    c = command("logs", cmd_logs, "show where the agent's logs are, or send them to uApply with --send", [folder])
+    c.add_argument("--send", action="store_true", help="upload the recent logs to uApply's team")
+    c.add_argument("--note", default="", help="what went wrong")
+    c.add_argument("--hours", type=int, default=72, help="how far back (default 72)")
+    c.add_argument("--yes", action="store_true", help="do not ask for confirmation")
     c = command("acrobat", cmd_acrobat, "check Adobe Acrobat Pro auto-fill on this PC (Windows)")
     c.add_argument("--pdf", help="a blank IMM 5709 to test-fill (writes <name>_uapply_test.pdf next to it)")
     c.add_argument("--node", default="form1[0].Page1[0].PersonalDetails[0].Name[0].FamilyName[0]",
@@ -305,8 +331,11 @@ def main(argv: list[str] | None = None) -> int:
             pass
     args = build_parser().parse_args(argv)
     args.argv = list(argv) if argv is not None else sys.argv[1:]
-    logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
-                        format="%(levelname)s %(name)s: %(message)s")
+    if args.fn is cmd_mcp:
+        setup_logging("mcp", os.environ.get("UAPPLY_LOG", "WARNING"))
+    else:
+        setup_logging("cli", logging.INFO if args.verbose else logging.WARNING)
+        logger.info("uapply-agent %s: %s", __version__, " ".join(args.argv[:1]) or "-")
     try:
         return int(args.fn(args, Settings.load()))
     except KeyboardInterrupt:
