@@ -90,11 +90,37 @@ def _mode(mcp_ctx: Context | None) -> str:
     return runner_mode(ctx.settings.task_runner, _client_name(mcp_ctx))
 
 
-def _with_progress(out: dict) -> dict:
+def _with_progress(out: dict, always: bool = False) -> dict:
+    """Add `progress`, or `progress_unchanged: true` when it equals the last one sent: every token a
+    polling tool returns is re-read on each later turn of the conversation."""
     try:
-        out["progress"] = cases.progress(ctx.api.survey(ctx.survey_id))
+        p = cases.progress(ctx.api.survey(ctx.survey_id))
     except ApiError:
         logger.debug("progress unavailable", exc_info=True)
+        return out
+    return _progress_block(out, p, always)
+
+
+def _progress_block(out: dict, p: dict, always: bool = False) -> dict:
+    sid = ctx.survey_id
+    if not always and ctx.last_progress.get(sid) == p:
+        out["progress_unchanged"] = True
+    else:
+        out["progress"] = p
+    ctx.last_progress[sid] = p
+    return out
+
+
+# Already in case_status; `stages` carries the statuses.
+WAIT_DROP = {"survey_id", "name", "llm_mode", "family_survey_ids", "analyzing_status", "automation_status"}
+
+
+def _compact_status(res: dict) -> dict:
+    """The backend's wait/status answer without identity fields, empty lists and zero counts."""
+    out = {k: v for k, v in res.items() if k not in WAIT_DROP and v not in ([], {}, None)}
+    for k in ("documents", "agent_tasks"):
+        if isinstance(out.get(k), dict):
+            out[k] = {status: n for status, n in out[k].items() if n}
     return out
 
 
@@ -262,7 +288,7 @@ def start_analysis() -> dict:
         raise ToolError("PROCESSING_NOT_DONE", "documents are still being processed or not started",
                         "start_processing, then loop run_tasks / wait_for_stage('processing') until done")
     r = ctx.api.start_analysis(ctx.survey_id)
-    return ok(started=True, message=r.get("message") if isinstance(r, dict) else None, progress=p)
+    return _progress_block(ok(started=True, message=r.get("message") if isinstance(r, dict) else None), p, always=True)
 
 
 @tool(requires="agent_api")
@@ -315,7 +341,8 @@ def run_tasks(max_tasks: int | None = None, workers: int = 2, kinds: list[str] |
     subagent; spawn one `uapply:task-runner` per entry (prompt: the entry's `prompt`, and its `model` as
     the Agent `model` when it has one), all at once, wait for them, then call again — tasks that need no model are finished here. `mode: "cli"`: tasks ran
     in headless runtime processes for up to `budget_s` seconds. Either way: counts, `remaining` and
-    per-document `progress`; call again while `remaining` > 0, one progress line to the RCIC between calls."""
+    per-document `progress` (or `progress_unchanged: true`); call again while `remaining` > 0, one progress
+    line to the RCIC between calls."""
     s = ctx.settings
     if _mode(mcp_ctx) == "session":
         rnd = SessionRunner(ctx.api, ctx.folder, force_ocr=s.force_ocr,
@@ -368,7 +395,7 @@ def wait_for_stage(stage: Literal["processing", "analysis", "filling"] = "proces
             raise
         # A proxy in front of uApply cut the long poll short: not done yet, same as a timeout.
         res = {**ctx.api.agent_status(ctx.survey_id), "done": False, "stage": stage}
-    out = ok(**res)
+    out = ok(**_compact_status(res))
     # Older backends do not send tasks_queued; their status still carries the counts.
     queued = int(res.get("tasks_queued") or (res.get("agent_tasks") or {}).get("queued") or 0)
     out["tasks_queued"] = queued
@@ -376,7 +403,7 @@ def wait_for_stage(stage: Literal["processing", "analysis", "filling"] = "proces
         out["next"] = f"call run_tasks now: {queued} task(s) are queued and the case needs this machine"
     elif not res.get("done") and res.get("documents_waiting_on_agent"):
         out["next"] = "documents are still waiting on this machine: call run_tasks, then wait again"
-    return _with_progress(out)
+    return _with_progress(out, always=bool(res.get("done")))
 
 
 @tool(requires="agent_api")

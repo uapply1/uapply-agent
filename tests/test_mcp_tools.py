@@ -370,7 +370,7 @@ def test_wait_for_stage_treats_a_gateway_timeout_as_not_done(bound, monkeypatch)
         raise ApiError(504, "<html><title>504 Gateway Time-out</title></html>")
     monkeypatch.setattr(bound, "agent_wait", gateway_timeout, raising=False)
     monkeypatch.setattr(bound, "agent_status", lambda sid: {"documents": {"analyzing": 9}}, raising=False)
-    monkeypatch.setattr(m, "_with_progress", lambda out: out)
+    monkeypatch.setattr(m, "_with_progress", lambda out, **kw: out)
     out = m.wait_for_stage("processing")
     assert out["ok"] and out["done"] is False and out["documents"] == {"analyzing": 9}
 
@@ -379,7 +379,7 @@ def test_wait_for_stage_sends_the_orchestrator_to_run_tasks_when_tasks_are_queue
     m.init_case("s-1")
     monkeypatch.setattr(bound, "agent_wait", lambda sid, stage, t: {"done": False, "stage": stage, "tasks_queued": 3,
                                                                     "documents_waiting_on_agent": ["d1"]}, raising=False)
-    monkeypatch.setattr(m, "_with_progress", lambda out: out)
+    monkeypatch.setattr(m, "_with_progress", lambda out, **kw: out)
     out = m.wait_for_stage("processing")
     assert out["tasks_queued"] == 3 and out["next"].startswith("call run_tasks now")
 
@@ -389,7 +389,7 @@ def test_wait_for_stage_reads_queued_tasks_from_an_older_backend(bound, monkeypa
     monkeypatch.setattr(bound, "agent_wait", lambda sid, stage, t: {"done": False, "stage": stage,
                                                                     "agent_tasks": {"queued": 2, "leased": 0}},
                         raising=False)
-    monkeypatch.setattr(m, "_with_progress", lambda out: out)
+    monkeypatch.setattr(m, "_with_progress", lambda out, **kw: out)
     assert m.wait_for_stage("processing")["tasks_queued"] == 2
 
 
@@ -397,6 +397,36 @@ def test_wait_for_stage_done_has_no_next(bound, monkeypatch):
     m.init_case("s-1")
     monkeypatch.setattr(bound, "agent_wait", lambda sid, stage, t: {"done": True, "stage": stage, "tasks_queued": 0,
                                                                     "documents_waiting_on_agent": []}, raising=False)
-    monkeypatch.setattr(m, "_with_progress", lambda out: out)
+    monkeypatch.setattr(m, "_with_progress", lambda out, **kw: out)
     out = m.wait_for_stage("processing")
     assert out["done"] and out["tasks_queued"] == 0 and "next" not in out
+
+
+def test_progress_is_sent_only_when_it_changed_and_always_when_a_stage_is_done(bound, monkeypatch):
+    bound.docs = [{"id": "a", "file_name": "passport.pdf", "status": "analyzing", "old_doc_id": None}]
+    waits = iter([{"done": False, "stage": "processing", "tasks_queued": 0},
+                  {"done": False, "stage": "processing", "tasks_queued": 0},
+                  {"done": True, "stage": "processing", "tasks_queued": 0}])
+    monkeypatch.setattr(bound, "agent_wait", lambda sid, stage, t: next(waits), raising=False)
+    first = m.wait_for_stage("processing")
+    assert first["progress"]["in_progress"] == ["passport.pdf"] and "progress_unchanged" not in first
+    second = m.wait_for_stage("processing")
+    assert second["progress_unchanged"] is True and "progress" not in second
+    assert "progress" in m.wait_for_stage("processing")                     # done: always the full block
+    bound.docs[0]["status"] = "completed"
+    monkeypatch.setattr(bound, "agent_wait", lambda sid, stage, t: {"done": False, "stage": stage}, raising=False)
+    assert m.wait_for_stage("processing")["progress"]["documents_finished"] == 1
+
+
+def test_wait_for_stage_drops_identity_fields_empty_lists_and_zero_counts(bound, monkeypatch):
+    res = {"survey_id": "s-1", "name": "Tianyi Li", "llm_mode": "local_agent", "family_survey_ids": ["s-1"],
+           "analyzing_status": "analyzing", "automation_status": "none", "done": False, "stage": "analysis",
+           "tasks_queued": 0, "documents": {"uploaded": 1, "started": 0, "completed": 15},
+           "documents_waiting_on_agent": [], "agent_tasks": {"queued": 0, "accepted": 100}, "failures": [],
+           "stages": {"processing": "done", "analysis": "running"}}
+    monkeypatch.setattr(bound, "agent_wait", lambda sid, stage, t: res, raising=False)
+    monkeypatch.setattr(m, "_with_progress", lambda out, **kw: out)
+    out = m.wait_for_stage("analysis")
+    assert out == {"ok": True, "done": False, "stage": "analysis", "tasks_queued": 0,
+                   "documents": {"uploaded": 1, "completed": 15}, "agent_tasks": {"accepted": 100},
+                   "stages": {"processing": "done", "analysis": "running"}}

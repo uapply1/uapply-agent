@@ -92,6 +92,8 @@ Always:
   reported, then call `run_tasks` again. Each subagent runs on this session's
   login; you never read a brief or a document yourself. With `mode: cli`,
   `run_tasks` returns within about 90 s having run the tasks itself.
+  `progress` comes only when it changed (and always when a stage is done);
+  `progress_unchanged: true` means the last one still holds.
   After every round, print one progress line from the `progress` field before
   the next call, e.g. "Processing 4/7 documents · running: passport & sp.pdf,
   LOA · 3 tasks done this round". Name failed documents as soon as they appear.

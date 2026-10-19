@@ -46,6 +46,7 @@ class ServerContext:
     settings: Settings
     folder: WorkingFolder
     _api: UApplyApi | None = field(default=None, repr=False)
+    last_progress: dict = field(default_factory=dict, repr=False)   # survey id → last progress sent
 
     @classmethod
     def from_environment(cls, folder: Path | str) -> ServerContext:
