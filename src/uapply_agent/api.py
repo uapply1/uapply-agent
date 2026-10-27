@@ -301,6 +301,10 @@ class UApplyApi:
     def agent_status(self, survey_id: str) -> dict:
         return self._req("GET", f"{AGENT_PREFIX}surveys/{survey_id}/status/")
 
+    def classification_spec(self, survey_id: str) -> dict:
+        """The document type classification rules the web upload also runs (404 on an older backend)."""
+        return self._req("GET", f"{AGENT_PREFIX}surveys/{survey_id}/classification/")
+
     def agent_wait(self, survey_id: str, stage: str, timeout_s: int) -> dict:
         return self._req("GET", f"{AGENT_PREFIX}surveys/{survey_id}/wait/",
                          params={"stage": stage, "timeout": timeout_s}, timeout=timeout_s + 30)

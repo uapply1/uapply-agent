@@ -3,21 +3,39 @@ from pathlib import Path
 
 from test_extract_content import make_pdf
 from uapply_agent import identify
+from uapply_agent.api import ApiError
 from uapply_agent.config import Settings
 from uapply_agent.runners.base import Runner, RunResult
 
 
 class Api:
+    """An older backend: no classification endpoint, so the bundled rules apply."""
     def survey_document_types(self, survey_id):
         return [{"id": "t-pass", "name": "Passport", "file_name": "passport", "description": "Passport bio page"}]
 
     def agent_survey_type(self):
         return {"id": "t-survey", "name": "Agent Survey"}
 
+    def classification_spec(self, survey_id):
+        raise ApiError(404, "<html>not found</html>")
 
-def server(use_server, folder, task_runner="session"):
+
+SPEC = {"version": 1, "system_prompt": "Backend rules for each file.",
+        "file_schema": {**identify.FILE_SCHEMA, "properties": {**identify.FILE_SCHEMA["properties"],
+                                                               "extra": {"type": "string"}}},
+        "inputs": {"pages_per_pdf": 1, "dpi": 72, "text_max": 10},
+        "document_types": [{"id": "t-bank", "name": "Bank Statement", "category": "financial", "description": "Bank"},
+                           {"id": "t-survey", "name": "Agent Survey", "category": "other", "generic": True}]}
+
+
+class SpecApi(Api):
+    def classification_spec(self, survey_id):
+        return SPEC
+
+
+def server(use_server, folder, task_runner="session", api=None):
     from uapply_agent import mcp_server as m
-    use_server(folder, Api(), Settings(task_runner=task_runner))
+    use_server(folder, api or Api(), Settings(task_runner=task_runner))
     return m
 
 
@@ -97,8 +115,8 @@ def test_cli_mode_runs_the_runtime_with_the_page_images(use_server, case_folder,
 def test_a_new_identification_starts_from_an_empty_directory(case_folder):
     (case_folder.root / "a.jpg").write_bytes(b"\xff\xd8 a")
     (case_folder.root / "b.jpg").write_bytes(b"\xff\xd8 b")
-    identify.prepare(case_folder, ["a.jpg", "b.jpg"], [])
-    prep = identify.prepare(case_folder, ["b.jpg"], [])
+    identify.prepare(case_folder, ["a.jpg", "b.jpg"], identify.local_spec([]))
+    prep = identify.prepare(case_folder, ["b.jpg"], identify.local_spec([]))
     assert [p.name for p in (case_folder.cache / identify.TASK_ID).iterdir()] == ["f01.jpg"]
     assert prep["files"] == ["b.jpg"]
 
@@ -108,3 +126,34 @@ def test_task_runner_may_submit_identifications():
     head = playbook.plugin_files("1.0.0")["agents/task-runner.md"].split("---")[1]
     assert "mcp__uapply__submit_identification" in head
     assert "Never Read a client's" in playbook.instructions()
+
+
+def test_the_backend_rules_drive_the_brief(use_server, case_folder):
+    folder_files(case_folder)
+    m = server(use_server, case_folder, api=SpecApi())
+    out = m.identify_files()
+    text = Path(out["prompt"].removeprefix("Task brief: ")).read_text(encoding="utf-8")
+    assert "Backend rules for each file." in text and identify.BATCH_RULES.splitlines()[0] in text
+    assert "1. `passport & sp.pdf` → `f01_p1.png` (pages 1-1 of 3)" in text      # pages_per_pdf from the spec
+    assert '"t-bank"' in text and '"t-pass"' not in text
+    st = identify.state(case_folder)
+    assert "extra" in st["schema"]["properties"]["files"]["items"]["properties"]
+
+
+def test_low_confidence_or_no_type_is_left_to_the_rcic(use_server, case_folder):
+    folder_files(case_folder)
+    m = server(use_server, case_folder)
+    m.identify_files()
+    result = answer(["photo.jpg", "passport & sp.pdf"])
+    result["files"][0]["confidence"] = "low"
+    assert m.submit_identification(result)["accepted"] is True
+    files = m.identified_files()["identified"]["files"]
+    assert [f["accepted"] for f in files] == [False, True]
+
+
+def test_accept_rule_matches_the_backend():
+    types = [{"id": "t-pass"}]
+    assert identify.accepted({"document_type_id": "t-pass", "confidence": "medium"}, types)
+    assert not identify.accepted({"document_type_id": "t-pass", "confidence": "low"}, types)
+    assert not identify.accepted({"document_type_id": None, "confidence": "high"}, types)
+    assert not identify.accepted({"document_type_id": "t-other", "confidence": "high"}, types)

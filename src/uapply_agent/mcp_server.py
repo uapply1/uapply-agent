@@ -252,18 +252,21 @@ def identify_files(paths: list[str] | None = None, mcp_ctx: Context | None = Non
     with a document type (when a case is bound), the holder and key facts per file, plus the
     applicant's identity. Default: every file not uploaded yet (at most 20 per call). In session mode
     the result carries `prompt`: spawn `Agent(subagent_type="uapply:task-runner", prompt=<prompt>)`,
-    wait for it, then call `identified_files`. In cli mode `identified` is filled here."""
+    wait for it, then call `identified_files`. In cli mode `identified` is filled here. A file with
+    `accepted: false` (no type, or low confidence) is the RCIC's call: ask which type to use."""
     from . import identify
     if paths is None:
         paths = [f.path for f in ctx.folder.scan(include_manifested=False)]
     if not paths:
         raise ToolError("NO_FILES", "no files to identify: every file in the folder is uploaded")
-    types = uploads.document_types(ctx.api, ctx.folder.survey_id) if ctx.folder.survey_id else []
-    prep = identify.prepare(ctx.folder, paths, types)
+    spec = _classification_spec()
+    types = spec["document_types"]
+    prep = identify.prepare(ctx.folder, paths, spec)
     if not prep["files"]:
         return ok(files=0, skipped=prep["skipped"])
-    identify.save_state(ctx.folder, prep["files"], types)
     task = prep["task"]
+    schema = task["payload"]["output_schema"]
+    identify.save_state(ctx.folder, prep["files"], types, schema)
     if _mode(mcp_ctx) == "session":
         brief = briefs.write_brief(ctx.folder, task, prep["images"], prep["text_files"], submit_lines=[
             "Call the `submit_identification` tool with your JSON object as `result`.",
@@ -274,12 +277,26 @@ def identify_files(paths: list[str] | None = None, mcp_ctx: Context | None = Non
     s = ctx.settings
     rr = get_runner(s.runtime, s.model, s).run(
         system_prompt=task["payload"]["system_prompt"], user_prompt=task["payload"]["user_prompt"],
-        schema=identify.SCHEMA, images=prep["images"], text_files=prep["text_files"],
+        schema=schema, images=prep["images"], text_files=prep["text_files"],
         cwd=ctx.folder.cache / identify.TASK_ID, timeout_s=s.task_timeout_s)
-    if err := identify.check(rr.output, prep["files"], types):
+    if err := identify.check(rr.output, prep["files"], types, schema):
         raise ToolError("IDENTIFY_FAILED", f"the runtime's answer is unusable: {err}")
-    identify.save(ctx.folder, rr.output)
+    identify.save(ctx.folder, identify.mark_accepted(rr.output, types))
     return ok(files=len(prep["files"]), skipped=prep["skipped"], identified=rr.output)
+
+
+def _classification_spec() -> dict:
+    """The backend's classification rules, or the bundled copy (older backend, or no case bound)."""
+    from . import identify
+    survey_id = ctx.folder.survey_id
+    if not survey_id:
+        return identify.local_spec([])
+    try:
+        return ctx.api.classification_spec(survey_id)
+    except ApiError as e:
+        if e.status != 404:
+            raise
+    return identify.local_spec(uploads.document_types(ctx.api, survey_id))
 
 
 @tool()
@@ -289,9 +306,9 @@ def submit_identification(result: dict) -> dict:
     st = identify.state(ctx.folder)
     if not st:
         raise ToolError("NO_IDENTIFY_TASK", "identify_files has not prepared a brief in this folder")
-    if err := identify.check(result, st["files"], st["document_types"]):
+    if err := identify.check(result, st["files"], st["document_types"], st.get("schema", identify.SCHEMA)):
         return ok(accepted=False, feedback=f"the result is unusable ({err}); fix it and submit once more")
-    identify.save(ctx.folder, result)
+    identify.save(ctx.folder, identify.mark_accepted(result, st["document_types"]))
     return ok(accepted=True)
 
 
