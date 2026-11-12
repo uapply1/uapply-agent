@@ -93,7 +93,8 @@ def test_plugin_generated_from_playbook(tmp_path):
         body = (root / "commands" / f"{name}.md").read_text()
         assert body.startswith("---\ndescription: ") and playbook.prompt(name) in body
     it.install_claude_plugin(tmp_path)  # idempotent
-    assert sorted(p.name for p in (root / "commands").iterdir()) == ["intake-from-chat.md", "run.md", "status.md"]
+    assert sorted(p.name for p in (root / "commands").iterdir()) == ["intake-from-chat.md", "run.md", "status.md",
+                                                                     "studio-template.md"]
 
 
 def test_record_runtimes_saves_absolute_paths(tmp_path, monkeypatch):

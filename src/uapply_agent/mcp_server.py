@@ -16,7 +16,7 @@ from typing import Literal
 
 from mcp.server.mcpserver import Context, MCPServer
 
-from . import __version__, briefs, cases, diagnostics, playbook, uploads
+from . import __version__, briefs, cases, diagnostics, playbook, studio_templates, uploads
 from .acrobat import detect as detect_acrobat
 from .api import NO_AGENT_API_HINT, ApiError
 from .autofill import AutoFiller
@@ -685,6 +685,65 @@ def chat_upload(path: str | None = None) -> dict:
 
 
 # ---------- prompts (the /uapply:* commands) ----------
+
+# ---- Content Studio templates (uApply Community) ----
+
+def _package(folder: str) -> bytes:
+    try:
+        return studio_templates.zip_package(ctx.folder.resolve(folder))
+    except (ValueError, OSError) as e:
+        raise ToolError("BAD_PACKAGE", str(e),
+                        "give the package folder (with template.json) inside the working folder") from e
+
+
+def _checks(out: dict) -> dict:
+    return {"errors": out.get("errors", []), "warnings": out.get("warnings", [])}
+
+
+@tool()
+def studio_template_guide() -> dict:
+    """The current package rules from uApply Community, the slot shapes the RCIC's templates must match,
+    icon names, content types and an example package. Read before drawing a template."""
+    g = ctx.community.template_guide()
+    return ok(guide=g.get("markdown", ""), slots=g.get("slots", {}), icons=g.get("icons", []),
+              content_types=g.get("content_types", []), example=g.get("example", {}), limit=g.get("limit"),
+              community=ctx.settings.community_url)
+
+
+@tool()
+def studio_template_check(folder: str) -> dict:
+    """Check a template package folder with uApply Community's validator. Stores nothing."""
+    out = ctx.community.template_check(_package(folder))
+    return ok(passed=out["ok"], **_checks(out))
+
+
+@tool()
+def studio_template_upload(folder: str) -> dict:
+    """Upload a checked package as a draft of the RCIC's own template (a package with the same id adds its next
+    revision). Only the RCIC can pick it once published."""
+    out = ctx.community.template_upload(_package(folder))
+    if not out["ok"]:
+        return ok(uploaded=False, **_checks(out))
+    return ok(uploaded=True, slug=out["slug"], name=out.get("name"), revision=out.get("uploaded_revision"),
+              status=out.get("status"), preview_url=out.get("preview_url"), **_checks(out))
+
+
+@tool()
+def studio_template_publish(slug: str, revision: int | None = None) -> dict:
+    """Turn the RCIC's template on (publish a revision, default the newest). Only after the RCIC agreed."""
+    out = ctx.community.template_publish(slug, revision)
+    return ok(slug=out["slug"], name=out.get("name"), status=out.get("status"), revision=out.get("published_revision"),
+              content_types=out.get("content_types", []), preview_url=out.get("preview_url"))
+
+
+@tool()
+def my_studio_templates() -> dict:
+    """The RCIC's own studio templates on uApply Community."""
+    out = ctx.community.my_templates()
+    rows = [{k: t.get(k) for k in ("slug", "id", "name", "status", "content_types", "published_revision",
+                                   "latest_revision", "preview_url")} for t in out.get("results", [])]
+    return ok(templates=rows, limit=out.get("limit"))
+
 
 def _prompt(name: str):
     def render() -> str:

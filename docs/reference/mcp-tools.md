@@ -26,7 +26,7 @@ confirm_documents"). Codes are UPPER_SNAKE:
 | `NO_CASE` | the tool needs a bound case and the folder has none |
 | `AGENT_API_UNAVAILABLE` | the tool needs the backend's local-agent API (`/api/ai-parse/agent/`) and the backend does not serve it |
 | `HTTP_<status>` | the backend answered with an error, e.g. `HTTP_401` (hint: `uapply-agent login`) |
-| tool-specific | e.g. `CONFIRMATION_REQUIRED`, `CASE_EXISTS`, `BAD_APPLICATION_TYPE`, `UNKNOWN_TYPE`, `BAD_CATEGORY`, `BAD_MODE`, `BAD_PAGES`, `NO_FILE`, `NO_FOLDER`, `UNSUPPORTED`, `PROCESSING_NOT_DONE`, `ANALYSIS_NOT_DONE`, `CHAT_DISABLED` |
+| tool-specific | e.g. `CONFIRMATION_REQUIRED`, `CASE_EXISTS`, `BAD_APPLICATION_TYPE`, `UNKNOWN_TYPE`, `BAD_CATEGORY`, `BAD_MODE`, `BAD_PACKAGE`, `BAD_PAGES`, `NO_FILE`, `NO_FOLDER`, `UNSUPPORTED`, `PROCESSING_NOT_DONE`, `ANALYSIS_NOT_DONE`, `CHAT_DISABLED` |
 | chat source | `NOT_INSTALLED`, `NOT_LOGGED_IN`, `UNSUPPORTED_PLATFORM`, `CLI_ERROR` (from the AnyChat CLI) |
 | other | any unexpected exception, reported as its class name in upper case with a short message |
 
@@ -107,6 +107,20 @@ Optional, through the AnyChat CLI; see
 | `chat_find_contact` | `name` | `candidates`: `display_name`, `kind` (`friend` \| `group`); raw chat ids are not returned |
 | `chat_fetch` | `contact`, `days?` (default: setting `chat_default_days`, 180) | saves the transcript under `.uapply/chat/` and files it on the case unless `chat_upload` is off. Intake hints: in session mode the result carries `intake_brief` (spawn the task-runner with it, then call `intake_hints`); in cli mode `intake` is derived here with the headless runtime. Returns `transcript` (`source`, `contact`, `from`, `to`, `path`, `messages`, `chars`), `intake` (hints or `null`), `intake_brief` (session mode), `upload` (the filed document, `"queued"` when no case is bound yet, or `"disabled"`), `usage`, and `intake_error` when the hint call failed. Raw WeChat ids in the result are replaced with `[id]`; message bodies are not returned |
 | `chat_upload` | `path?` | files one fetched transcript (`document_id`, `pdf`, `already_filed`) or, without `path`, every queued one (`uploads`) on the bound case as an Agent Survey PDF |
+
+### Content Studio templates
+
+On uApply Community (setting `community_url`, env `UAPPLY_COMMUNITY_URL`; `community_firm` / `UAPPLY_COMMUNITY_FIRM`
+picks the firm), with the same login: uApply and Community share one Auth0 application. Used by
+`/uapply:studio-template`; no case needed. A template made here is private: only the RCIC who uploaded it can pick it.
+
+| Tool | Input | Output |
+|---|---|---|
+| `studio_template_guide` | none | `guide` (the package rules, markdown), `slots` (slot shapes in use among the templates the RCIC can pick: `kind`, group `fields`, `template`), `icons`, `content_types`, `example` (an example package's files), `limit`, `community` |
+| `studio_template_check` | `folder` (package folder inside the working folder) | `passed`, `errors`, `warnings` from Community's validator; stores nothing. `BAD_PACKAGE` when the folder has no `template.json`, is outside the working folder or zips to more than 25 MB |
+| `studio_template_upload` | `folder` | `uploaded`, `errors`, `warnings`; when uploaded `slug`, `name`, `revision`, `status` (`draft`) and `preview_url`. The same manifest id adds the RCIC's next revision |
+| `studio_template_publish` | `slug`, `revision?` (default newest) | turns the template on for the RCIC: `slug`, `name`, `status`, `revision`, `content_types`, `preview_url` |
+| `my_studio_templates` | none | `templates`: `slug`, `id`, `name`, `status`, `content_types`, `published_revision`, `latest_revision`, `preview_url`; `limit` |
 
 ## Task runner (session mode)
 

@@ -27,6 +27,7 @@ ENV_OVERRIDES = {
     "model": "UAPPLY_MODEL", "light_model": "UAPPLY_LIGHT_MODEL", "team_id": "UAPPLY_TEAM_ID", "chat_source": "UAPPLY_CHAT_SOURCE",
     "anychat_bin": "ANYCHAT_BIN", "codex_bin": "UAPPLY_CODEX_BIN",
     "force_ocr": "UAPPLY_FORCE_OCR", "task_runner": "UAPPLY_TASK_RUNNER",
+    "community_url": "UAPPLY_COMMUNITY_URL", "community_firm": "UAPPLY_COMMUNITY_FIRM",
 }
 TRUE_WORDS = ("1", "true", "yes", "on")
 RETIRED_KEYS = {"extra", "claude_bin"}   # written by older versions; ignored
@@ -59,6 +60,9 @@ class Settings:
     chat_default_days: int = 180
     chat_upload: bool = True       # file transcripts on the case (False: local hints only)
     chat_max_chars: int = 200_000  # transcript cap for the local intake call
+    # uApply Community (studio templates); it shares uApply's Auth0 application, so the same login works.
+    community_url: str = "https://community.uapply.io"
+    community_firm: str = ""       # firm slug sent as X-Firm; empty = the RCIC's first firm
 
     @classmethod
     def keys(cls) -> list[str]:
@@ -93,6 +97,7 @@ class Settings:
         if s.runtime == "claude-code":   # retired: the Claude Code CLI never runs tasks
             s.runtime = "auto"
         s.backend_url = s.backend_url.rstrip("/")
+        s.community_url = s.community_url.rstrip("/")
         return s
 
     @property

@@ -25,7 +25,11 @@ Asking the RCIC:
   type and its rationale) in the question or its option descriptions, not in a
   message before it.
 
-Always:
+Content Studio templates (`/uapply:studio-template`, the `studio_template_*`
+tools) are not case work: no case, no `case_status`, no client files. Follow
+that prompt only.
+
+Always (case work):
 - Call `case_status` first and trust it over `.uapply/case.json` and over your
   memory of earlier turns.
 - If `whoami` or `case_status` reports `agent_api: false`, the backend has no
@@ -192,3 +196,36 @@ case name and mode, documents by status, documents waiting on the agent, open
 agent tasks, failures.
 Once the analysis is done, call `final_report(download=false)` instead and show
 its `report_markdown`.
+
+## prompt: studio-template
+
+Design a Content Studio image template from the RCIC's brief and add it to
+uApply Community as their own template, in one turn, asking with the question
+tool and continuing. Only the RCIC who makes it can pick it in the studio.
+
+1. Call `studio_template_guide` and follow its `guide` exactly: files, manifest
+   fields, SVG marks and checks. Reuse the slot names in `slots` with the same
+   kind and fields; use only icon names from `icons`. `example` is a complete
+   package to learn from, not to copy.
+2. If the RCIC gave no brief, ask what it is for (content type, what it shows,
+   colours or mood). Reference images set the style only: never copy another
+   company's layout, text, logos, illustrations or photos of people.
+3. Pick a new id (lowercase, `_`; `my_templates` shows the RCIC's ids, and
+   reusing one adds that template's next revision). Write the package in
+   `studio-templates/<id>/` in the working folder: `template.json`,
+   `portrait.svg`, `square.svg` and `samples.json` with three fills (short,
+   longest the limits allow, Chinese).
+4. `studio_template_check` the folder. Fix every error and run it again until
+   it passes; fix warnings that matter.
+5. `studio_template_upload` the folder (a draft) and give the RCIC the
+   `preview_url` in one line: it draws every sample on their own brand.
+6. Ask one question: "Turn it on for me" (first) or "Change something" (they
+   say what). Publish with `studio_template_publish` only on "Turn it on for
+   me"; otherwise change the package, check, upload the next revision and ask
+   again.
+7. End with the template's name, its content types and where to find it
+   (Content studio → My templates, and the Template box of their pieces).
+
+If a tool answers HTTP_401, ask the RCIC to run `uapply-agent login`; HTTP_403
+means only the firm's owner or an RCIC can add templates.
+
