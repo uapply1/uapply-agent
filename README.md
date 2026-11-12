@@ -25,7 +25,7 @@ signs in to or runs the Claude Code CLI (`claude`) on its own: no second
 Claude sign-in and no headless `claude -p`. Codex users need the `codex` CLI (setup also finds the one bundled with
 the Codex desktop app); the app and CLI share one login. Setup writes the
 commands as Codex skills in `~/.agents/skills`: type `$uapply-run`,
-`$uapply-status` or `$uapply-intake-from-chat`.
+`$uapply-status`, `$uapply-intake-from-chat` or `$uapply-studio-template`.
 
 macOS / Linux (Terminal):
 
@@ -81,8 +81,8 @@ PyPI name once published, or a local checkout).
    approval policy "never"). The absolute path matters: GUI apps start with a
    minimal `PATH`. It then writes a small Claude Code plugin to
    `~/.claude/skills/uapply/` (generated from the same playbook prompts) so
-   that `/uapply:run`, `/uapply:status` and `/uapply:intake-from-chat` are
-   plain slash commands.
+   that `/uapply:run`, `/uapply:status`, `/uapply:intake-from-chat` and
+   `/uapply:studio-template` are plain slash commands.
 3. `uapply-agent login`: Auth0 Device Code flow against production
    (`https://api.uapply.io`); the token goes to the OS keychain, or a `0600`
    file under `~/.config/uapply-agent/` when no keychain exists. A refresh
@@ -138,10 +138,12 @@ running program's files); versions live in `~/.local/share/uapply-agent/versions
 | `chat_default_days` | `180` | how far back `chat_fetch` reads |
 | `chat_upload` | `true` | file fetched transcripts on the case; `false` keeps them in the client folder (hints only) |
 | `chat_max_chars` | `200000` | transcript length sent to the intake call (the most recent part is kept) |
+| `community_url` | `https://community.uapply.io` | uApply Community, for `/uapply:studio-template` (same login as uApply) |
+| `community_firm` | empty | firm slug for Community when the RCIC belongs to several; empty = their first firm |
 
 Environment overrides: `UAPPLY_BACKEND_URL`, `UAPPLY_APP_URL`, `UAPPLY_RUNTIME`,
 `UAPPLY_MODEL`, `UAPPLY_TEAM_ID`, `UAPPLY_FORCE_OCR`, `UAPPLY_CHAT_SOURCE`,
-`UAPPLY_CODEX_BIN`, `ANYCHAT_BIN`; `UAPPLY_TOKEN` overrides
+`UAPPLY_CODEX_BIN`, `ANYCHAT_BIN`, `UAPPLY_COMMUNITY_URL`, `UAPPLY_COMMUNITY_FIRM`; `UAPPLY_TOKEN` overrides
 the stored access token and `UAPPLY_FOLDER` the client folder.
 
 ### Uninstall
@@ -226,7 +228,9 @@ Exit codes:
 Interactive, from Claude Code or Codex: `cd` into the client folder, start the
 runtime, and use `/uapply:run`, `/uapply:status` or `/uapply:intake-from-chat`
 (in Codex: `$uapply-run`, `$uapply-status`, `$uapply-intake-from-chat`).
-The MCP server exposes 24 tools, among them `case_status`, `scan_folder`,
+`/uapply:studio-template` (any folder) designs a Content Studio image template from
+a brief, checks it with uApply Community and adds it there as the RCIC's own template.
+The MCP server exposes 37 tools, among them `case_status`, `scan_folder`,
 `sync_documents`, `start_processing`, `run_tasks`, `wait_for_stage`,
 `confirm_documents`, `autofill_forms`, `final_report`, `chat_fetch` and
 `create_case` ([docs/reference/mcp-tools.md](docs/reference/mcp-tools.md)). `run_tasks`

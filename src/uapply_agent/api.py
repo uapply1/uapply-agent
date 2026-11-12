@@ -30,7 +30,12 @@ NO_AGENT_API_HINT = ("this uApply backend does not offer the local-agent API; th
 class ApiError(RuntimeError):
     def __init__(self, status: int, body: Any, hint: str = ""):
         self.status, self.body, self.hint = status, body, hint
-        msg = body.get("message") if isinstance(body, dict) else str(body)[:300]
+        msg = str(body)[:300]
+        if isinstance(body, dict):
+            # uApply answers {"message"} or {"error": "text"}; Community answers {"error": {"message"}}; DRF {"detail"}.
+            err = body.get("error")
+            nested = err.get("message") if isinstance(err, dict) else err
+            msg = body.get("message") or nested or body.get("detail") or msg
         super().__init__(f"HTTP {status}: {msg}")
 
 
@@ -334,3 +339,47 @@ class UApplyApi:
 
     def task_stats(self, survey_id: str) -> dict:
         return self._req("GET", f"{AGENT_PREFIX}tasks/stats/", params={"survey": survey_id})["stats"]
+
+
+MY_TEMPLATES = "/api/v1/console/studio/my-templates/"
+
+
+class CommunityApi(UApplyApi):
+    """uApply Community: the RCIC's own Content Studio templates. Same login and token refresh as uApply
+    (one Auth0 application), another base URL; `community_firm` picks the firm when the RCIC has several."""
+
+    def __init__(self, settings: Settings | None = None, token: str | None = None, timeout: float = 90.0):
+        super().__init__(settings, token, timeout)
+        self._client.base_url = self.settings.community_url
+        if self.settings.community_firm:
+            self._client.headers["X-Firm"] = self.settings.community_firm
+
+    def template_guide(self) -> dict:
+        return self._req("GET", f"{MY_TEMPLATES}guide/")
+
+    def my_templates(self) -> dict:
+        return self._req("GET", MY_TEMPLATES)
+
+    def template_check(self, package: bytes) -> dict:
+        """The server's checks without storing anything: {ok, errors, warnings}."""
+        return self._send(package, check=True)
+
+    def template_upload(self, package: bytes) -> dict:
+        """Store the package as the next revision of the RCIC's template with its id (a draft). On problems:
+        {ok: false, errors, warnings}; else the template with `uploaded_revision` and `preview_url`."""
+        return self._send(package, check=False)
+
+    def template_publish(self, slug: str, revision: int | None = None) -> dict:
+        return self._req("POST", f"{MY_TEMPLATES}{slug}/publish/", json={"revision": revision} if revision else {})
+
+    def _send(self, package: bytes, check: bool) -> dict:
+        try:
+            out = self._req("POST", MY_TEMPLATES, params={"check": "1"} if check else None,
+                            files={"file": ("template.zip", package, "application/zip")})
+        except ApiError as e:
+            if e.status == 400 and isinstance(e.body, dict) and isinstance(e.body.get("checks"), dict):
+                checks = e.body["checks"]
+                return {"ok": False, "errors": checks.get("errors", []), "warnings": checks.get("warnings", [])}
+            raise
+        checks = out.get("checks") or {}
+        return {**out, "ok": True, "errors": checks.get("errors", []), "warnings": checks.get("warnings", [])}

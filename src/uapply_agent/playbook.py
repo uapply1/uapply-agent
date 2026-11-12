@@ -14,6 +14,8 @@ PROMPTS = {
     "run": "Run the uApply case in this folder end to end (upload, local tasks, analysis, forms, report)",
     "status": "Summarise the uApply case status",
     "intake-from-chat": "Set up a uApply case from the client's chat history (AnyChat)",
+    "studio-template": "Design a Content Studio image template from a brief and add it to uApply Community "
+                       "for yourself",
 }
 
 

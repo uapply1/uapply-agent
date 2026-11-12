@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .api import UApplyApi
+from .api import CommunityApi, UApplyApi
 from .config import Settings
 from .folder import WorkingFolder
 
@@ -46,6 +46,7 @@ class ServerContext:
     settings: Settings
     folder: WorkingFolder
     _api: UApplyApi | None = field(default=None, repr=False)
+    _community: CommunityApi | None = field(default=None, repr=False)
     last_progress: dict = field(default_factory=dict, repr=False)   # survey id → last progress sent
 
     @classmethod
@@ -57,6 +58,12 @@ class ServerContext:
         if self._api is None:
             self._api = UApplyApi(self.settings)
         return self._api
+
+    @property
+    def community(self) -> CommunityApi:
+        if self._community is None:
+            self._community = CommunityApi(self.settings)
+        return self._community
 
     @property
     def survey_id(self) -> str:
