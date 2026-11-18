@@ -11,7 +11,9 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
+import uuid
 from pathlib import Path
 
 import httpx
@@ -28,6 +30,7 @@ DELEGATED = "UAPPLY_AGENT_DELEGATED"      # set in the child so it does not chec
 CHECK_CACHE_S = 300
 READY, INSTALLING = ".ready", ".installing"   # markers in versions/<sha>/
 INSTALL_GRACE_S = 900                          # an install older than this is assumed to have died
+TRASH = ".trash-"                              # old versions renamed aside, then deleted
 _WIN = sys.platform.startswith("win")
 
 
@@ -105,9 +108,10 @@ def installing(sha: str) -> bool:
     """An install of that version was started recently (by this or another session)."""
     marker = versions_dir() / sha / INSTALLING
     try:
-        return time.time() - marker.stat().st_mtime < INSTALL_GRACE_S
+        age = time.time() - marker.stat().st_mtime
     except OSError:
         return False
+    return 0 <= age < INSTALL_GRACE_S   # a future mtime (clock moved back) must not protect it forever
 
 
 def find_uv() -> str | None:
@@ -139,16 +143,56 @@ def start_install(sha: str) -> subprocess.Popen | None:
                                 stdin=subprocess.DEVNULL, stdout=log, stderr=log, env=env, **detach)
 
 
-def prune(keep: set[str], max_versions: int = 3) -> None:
-    """Drop old versions (best effort: a version still running stays locked on Windows)."""
+def _empty_trash() -> None:
+    """Delete versions already moved aside by prune(); what stays locked is retried on a later start."""
     try:
-        dirs = sorted((d for d in versions_dir().iterdir() if d.is_dir()), key=lambda d: d.stat().st_mtime,
-                      reverse=True)
+        trash = [d for d in versions_dir().iterdir() if d.name.startswith(TRASH)]
     except OSError:
         return
+    for d in trash:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def prune(keep: set[str], max_versions: int = 3, background: bool = False) -> threading.Thread | None:
+    """Drop old versions: keep the newest `max_versions`, anything in `keep`, and installs in progress.
+
+    Each old version is first renamed to `.trash-*` (atomic), so an interrupted deletion never leaves a
+    half-deleted directory under a commit name that `ready()` could accept. The trash is then deleted,
+    in a daemon thread when `background` (the caller must not wait), else before returning.
+    Best effort: on Windows a version still running is locked, its rename fails and it stays."""
+    try:
+        dirs = sorted((d for d in versions_dir().iterdir() if d.is_dir() and not d.name.startswith(".")),
+                      key=lambda d: d.stat().st_mtime, reverse=True)
+    except OSError:
+        dirs = []
     for d in dirs[max_versions:]:
-        if d.name not in keep:
-            shutil.rmtree(d, ignore_errors=True)
+        if d.name in keep or installing(d.name):
+            continue
+        try:
+            d.rename(d.with_name(f"{TRASH}{d.name}-{uuid.uuid4().hex[:8]}"))
+        except OSError as e:
+            logger.info("could not remove old version %s: %s", d.name, e)
+    if not background:
+        _empty_trash()
+        return None
+    t = threading.Thread(target=_empty_trash, name="uapply-prune", daemon=True)
+    t.start()
+    return t
+
+
+def cached_latest_sha() -> str | None:
+    """The last latest commit seen, however old: no network, so cleanup works offline."""
+    try:
+        return json.loads((data_dir() / "latest.json").read_text(encoding="utf-8"))["sha"] or None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def cleanup(settings=None) -> threading.Thread | None:
+    """Remove old versions at every start (including `mcp`, which never waits for an update).
+    Returns at once; the deletion runs in a daemon thread."""
+    keep = {s for s in (running_sha(settings), cached_latest_sha()) if s}
+    return prune(keep, background=True)
 
 
 def resolve_target(settings=None, wait_s: float = 25.0, say=None) -> tuple[Path | None, str]:
@@ -186,6 +230,7 @@ def resolve_target(settings=None, wait_s: float = 25.0, say=None) -> tuple[Path 
 def maybe_delegate(argv: list[str], settings=None, wait_s: float = 25.0) -> None:
     """Called at the start of long-lived commands. Returns to run the current version, or hands the
     process to the newer one and exits with its code. Nothing is written to stdout (MCP protocol)."""
+    cleanup(settings)   # every start, before the early returns: `mcp` never reaches the waited-for prune
     if (os.environ.get(DELEGATED) or os.environ.get("UAPPLY_NO_UPDATE")
             or getattr(settings, "auto_update", True) is False):
         return
