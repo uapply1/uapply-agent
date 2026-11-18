@@ -207,7 +207,10 @@ def init_case(survey_id: str, llm_mode: Literal["local_agent", "server"] = "loca
 
 @tool()
 def scan_folder(include_manifested: bool = False) -> dict:
-    """Files in the working folder with hash, kind, applicant hint and whether they were already uploaded."""
+    """Files in the working folder with hash, kind, applicant hint and `status`: `new`; `modified`
+    (overwritten since upload: `document_id` is the stale copy still on the case); `duplicate` (same
+    content as `duplicate_of` in the same applicant folder, recorded on sync without a second upload);
+    `uploaded` and `renamed` (`previous_path`) are hidden unless include_manifested."""
     return ok(files=[f.as_dict() for f in ctx.folder.scan(include_manifested)])
 
 
@@ -256,7 +259,7 @@ def identify_files(paths: list[str] | None = None, mcp_ctx: Context | None = Non
     `accepted: false` (no type, or low confidence) is the RCIC's call: ask which type to use."""
     from . import identify
     if paths is None:
-        paths = [f.path for f in ctx.folder.scan(include_manifested=False)]
+        paths = [f.path for f in ctx.folder.scan(include_manifested=False) if f.status != "duplicate"]
     if not paths:
         raise ToolError("NO_FILES", "no files to identify: every file in the folder is uploaded")
     spec = _classification_spec()
@@ -331,15 +334,19 @@ def list_document_types(query: str = "") -> dict:
 
 @tool(requires="case")
 def sync_documents(document_type_id: str, document_category: str = "", paths: list[str] | None = None,
-                   applicant: str = "principal", archive_name: str = "") -> dict:
+                   applicant: str = "principal", archive_name: str = "", include_modified: bool = False) -> dict:
     """Upload folder files under one document type; files already uploaded are skipped, and a file
-    already on the case (same type, name and size) is recorded instead of uploaded again.
+    already on the case (same type, name and size) is recorded instead of uploaded again. A file
+    overwritten since its upload is listed under `modified` with the stale `document_id` and not
+    uploaded: tell the RCIC to remove the old copy in uApply, then sync with include_modified=true
+    (the old id is kept in the manifest's `superseded`). Identical files in the same applicant folder
+    upload once and are listed under `duplicates`; renamed files keep their record (`renamed`).
     document_category defaults to the type's category from list_document_types; otherwise one of
     identity, school, financial, spouse, parent, child, language, employment, proof_of_capability,
     immigration, inviter, education, other. archive_name defaults to the type's own archive (the
     dashboard's default folder, named after the type); set it only to file into another folder."""
     return ok(**uploads.sync(ctx.api, ctx.folder, ctx.survey_id, document_type_id, document_category,
-                             paths, applicant, archive_name))
+                             paths, applicant, archive_name, include_modified))
 
 
 @tool(requires="case")

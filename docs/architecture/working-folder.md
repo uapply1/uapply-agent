@@ -21,7 +21,7 @@ server's current state.
 └── .uapply/                       # created when the folder is bound to a case
     ├── .gitignore                 # ignores everything under .uapply/
     ├── case.json                  # survey id, name, LLM mode, dependents
-    ├── manifest.json              # sha256 → {path, document_id, applicant, uploaded_at, uploaded_path}
+    ├── manifest.json              # path → {sha256, document_id, applicant, uploaded_at, uploaded_path, superseded?}
     ├── autofill.json              # auto-fill progress between autofill_forms calls
     ├── chat/                      # chat transcripts, their PDFs, intake hints (optional)
     ├── cache/                     # task inputs, rendered pages, converted HEICs, preview/ PNGs
@@ -62,20 +62,37 @@ principal and every dependent listed here.
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "files": {
-    "3a7f…e1": {"path": "passport_zhang_wei.pdf", "document_id": "…", "applicant": "principal",
-                "uploaded_at": "…", "uploaded_path": null},
-    "9c02…b4": {"path": "IMG_2041.HEIC", "document_id": "…", "applicant": "principal",
-                "uploaded_at": "…", "uploaded_path": ".uapply/cache/IMG_2041.jpg"}
+    "passport_zhang_wei.pdf": {"sha256": "3a7f…e1", "document_id": "…", "applicant": "principal",
+                               "uploaded_at": "…", "uploaded_path": null, "superseded": ["…"]},
+    "IMG_2041.HEIC": {"sha256": "9c02…b4", "document_id": "…", "applicant": "principal",
+                      "uploaded_at": "…", "uploaded_path": ".uapply/cache/IMG_2041.jpg"}
   }
 }
 ```
 
 Rules:
 
-- Keyed by **sha256 of the original file**, not the path. Renaming a file does
-  not re-upload it; editing it does (the new hash is a new file).
+- Keyed by **relative path**; each entry keeps the sha256 of the original file
+  as uploaded. A schema 1 manifest (keyed by sha256) is upgraded on read and
+  saved as schema 2 on the next write.
+- `scan_folder` gives every file a `status`:
+  - `uploaded`: same path, same content.
+  - `modified`: same path, new content (the RCIC saved a corrected scan over
+    the file). `sync_documents` does not upload it: it lists it under
+    `modified` with the stale `document_id`, which stays on the case. Once the
+    RCIC removes the old copy in uApply, `include_modified=true` uploads the
+    new version and keeps the old id in `superseded`.
+  - `renamed`: the recorded path is gone and the same content is at a new
+    path (`previous_path`). The record moves with the file; nothing is
+    uploaded.
+  - `duplicate`: the same content as `duplicate_of` in the same first-level
+    folder. Each applicant folder needs its own copy, so identical files in
+    different applicant folders upload separately; within one folder the
+    content uploads once and the other copies are recorded against that
+    document. Files at the folder root form their own group.
+  - `new`: anything else.
 - `uploaded_path` is set when the uploaded file differs from the original
   (HEIC converted to JPEG, a chat transcript's PDF).
 - Before uploading, `sync_documents` also checks the case's documents: one of

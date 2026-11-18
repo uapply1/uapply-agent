@@ -231,7 +231,7 @@ def test_chat_fetch_without_case_queues_then_create_case_uploads(tools):
     assert api.uploads[0][1:3] == ("other", "dt-agent-survey") and api.uploads[0][3].endswith(".pdf")
     assert ChatStore(m.ctx.folder).pending_uploads() == []
     # the PDF is in the manifest under .uapply/chat
-    assert any(v["path"].startswith(".uapply/chat/") for v in m.ctx.folder.manifest["files"].values())
+    assert any(p.startswith(".uapply/chat/") for p in m.ctx.folder.manifest["files"])
     # a second create_case is refused because the folder is bound
     assert m.create_case("X", "at-study", confirmation="确认创建")["error"]["code"] == "CASE_EXISTS"
 

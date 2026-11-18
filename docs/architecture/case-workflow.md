@@ -53,7 +53,8 @@ when binding an existing case.
 **Agent**
 
 1. `scan_folder()` lists supported files (PDF, images including HEIC, Office
-   files) with sha256 and whether they were uploaded before; dot-folders,
+   files) with sha256 and a `status` (`new`, `modified`, `duplicate`, and with
+   `include_manifested` also `uploaded` and `renamed`); dot-folders,
    dotfiles and Office lock files are ignored.
 2. For each new file whose type is not obvious from its name,
    `preview_document` renders page 1 locally and the model picks a type from
@@ -64,8 +65,12 @@ when binding an existing case.
 3. `sync_documents(document_type_id, paths, applicant?)` per type: skips files
    already in the manifest, records a case document with the same type, name
    and size instead of uploading again, converts HEIC to JPEG, calls
-   `bulk_upload` one file at a time and records `sha256 → document_id` in
-   `manifest.json`.
+   `bulk_upload` one file at a time and records `path → {sha256, document_id}`
+   in `manifest.json`. Renamed files keep their record; identical copies in
+   one applicant folder upload once. A file overwritten since its upload is
+   listed under `modified` and not uploaded: [RCIC] removes the stale copy in
+   uApply, then `sync_documents(..., include_modified=true)` uploads the new
+   version.
 
 **Backend**: `POST /api/survey/documents/bulk_upload/`. For agent cases an
 upload starts nothing.

@@ -93,9 +93,50 @@ def test_heic_is_converted_locally_and_recorded(bound, monkeypatch, tmp_path):
     out = m.sync_documents(document_type_id="dt-pass", paths=["IMG_1.HEIC"])
     assert out["uploaded"] == 1 and out["failed"] == []
     assert bound.uploads[-1][2] == "IMG_1.jpg"
-    entry = next(v for v in m.ctx.folder.manifest["files"].values() if v["path"] == "IMG_1.HEIC")
+    entry = m.ctx.folder.manifest["files"]["IMG_1.HEIC"]
     assert entry["document_id"] == out["documents"][0]["document_id"]
     assert entry["uploaded_path"].endswith("IMG_1.jpg")
+
+
+def test_overwritten_upload_is_reported_and_only_uploaded_on_request(bound):
+    root = m.ctx.folder.root
+    first = m.sync_documents("dt-pass", paths=["passport.pdf"])
+    old_id = first["documents"][0]["document_id"]
+    (root / "passport.pdf").write_bytes(b"%PDF-1.4 sharper scan")
+    held = m.sync_documents("dt-pass", paths=["passport.pdf"])
+    assert held["uploaded"] == 0 and held["modified"][0]["document_id"] == old_id
+    assert len(bound.uploads) == 1
+    again = m.sync_documents("dt-pass", paths=["passport.pdf"], include_modified=True)
+    assert again["uploaded"] == 1 and again["documents"][0]["superseded"] == old_id
+    entry = m.ctx.folder.manifest["files"]["passport.pdf"]
+    assert entry["superseded"] == [old_id] and entry["document_id"] == again["documents"][0]["document_id"]
+    assert m.sync_documents("dt-pass", paths=["passport.pdf"])["skipped"] == ["passport.pdf"]
+
+
+def test_identical_content_uploads_once_per_applicant_folder(bound):
+    root = m.ctx.folder.root
+    cert = b"%PDF-1.4 marriage certificate"
+    (root / "marriage.pdf").write_bytes(cert)
+    (root / "spouse" / "marriage.pdf").write_bytes(cert)
+    (root / "spouse" / "forms").mkdir()
+    (root / "spouse" / "forms" / "marriage.pdf").write_bytes(cert)
+    out = m.sync_documents("dt-pass", paths=["marriage.pdf", "spouse/marriage.pdf", "spouse/forms/marriage.pdf"])
+    assert out["uploaded"] == 2                                  # principal's copy and the spouse's copy
+    assert [d["path"] for d in out["duplicates"]] == ["spouse/marriage.pdf"]
+    ids = {d["path"]: d["document_id"] for d in out["documents"]}
+    assert out["duplicates"][0]["document_id"] == ids["spouse/forms/marriage.pdf"]
+    assert ids["marriage.pdf"] != ids["spouse/forms/marriage.pdf"]
+
+
+def test_renamed_upload_keeps_its_record(bound):
+    root = m.ctx.folder.root
+    first = m.sync_documents("dt-pass", paths=["passport.pdf"])
+    (root / "passport.pdf").rename(root / "zhang_passport.pdf")
+    out = m.sync_documents("dt-pass")
+    assert out["renamed"] == [{"path": "zhang_passport.pdf", "previous_path": "passport.pdf",
+                               "document_id": first["documents"][0]["document_id"]}]
+    assert [u[2] for u in bound.uploads] == ["passport.pdf", "passport.pdf"]   # the spouse's file only
+    assert "passport.pdf" not in m.ctx.folder.manifest["files"]
 
 
 def test_bad_category_is_refused(bound):

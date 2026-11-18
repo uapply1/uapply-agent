@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 STATE_DIR = ".uapply"
 OUTPUT_DIR = "uApply output"   # what the agent saves for the RCIC (final package, report); never uploaded
 IGNORED_PREFIXES = (".", "~$")
+MANIFEST_SCHEMA = 2
 
 
 @dataclass
@@ -25,8 +26,14 @@ class ScannedFile:
     sha256: str
     kind: str          # pdf | image | office
     applicant_hint: str | None
-    manifested: bool
+    manifested: bool                  # already on the case under this path (uploaded or renamed)
     document_id: str | None = None
+    # uploaded: same path, same content. modified: same path, new content (document_id is the stale
+    # copy on the case). renamed: an uploaded file moved here (previous_path is gone). duplicate: the
+    # same content as another file of the same applicant folder (duplicate_of). new: anything else.
+    status: str = "new"
+    previous_path: str | None = None
+    duplicate_of: str | None = None
 
     def as_dict(self) -> dict:
         return self.__dict__.copy()
@@ -74,7 +81,17 @@ class WorkingFolder:
 
     @property
     def manifest(self) -> dict:
-        return self.read_state("manifest.json", {"schema": 1, "files": {}})
+        """Uploaded files keyed by relative path; each entry keeps the sha256 it was uploaded with.
+        Schema 1 manifests (keyed by sha256) are upgraded on read and saved as schema 2 on the next write."""
+        m = self.read_state("manifest.json", {"schema": MANIFEST_SCHEMA, "files": {}})
+        if m.get("schema") != MANIFEST_SCHEMA:
+            files = {}
+            for digest, entry in (m.get("files") or {}).items():
+                if isinstance(entry, dict) and entry.get("path"):
+                    rest = {k: v for k, v in entry.items() if k != "path"}
+                    files[entry["path"]] = {"sha256": digest, **rest}
+            m = {"schema": MANIFEST_SCHEMA, "files": files}
+        return m
 
     def save_manifest(self, manifest: dict) -> None:
         self.write_state("manifest.json", manifest)
@@ -117,30 +134,79 @@ class WorkingFolder:
     def applicant_hint(self, rel: Path) -> str | None:
         return rel.parts[0] if len(rel.parts) > 1 else None
 
+    @staticmethod
+    def content_group(path: str) -> str:
+        """Identical content counts as one document only within the same first-level folder (one
+        applicant); files at the folder root form their own group."""
+        parts = path.split("/")
+        return parts[0] if len(parts) > 1 else ""
+
     def scan(self, include_manifested: bool = True) -> list[ScannedFile]:
         files = self.manifest["files"]
-        out = []
+        rows = []
         for p in sorted(self.iter_files()):
             rel = p.relative_to(self.root)
-            digest = sha256_of(p)
-            entry = files.get(digest)
-            if entry and not include_manifested:
+            rows.append((rel, p, sha256_of(p)))
+        present = {rel.as_posix() for rel, _, _ in rows}
+        # Recorded paths that are gone, by content: a file with that content elsewhere was renamed.
+        gone: dict[str, list[str]] = {}
+        for path in sorted(files):
+            if path not in present and files[path].get("sha256"):
+                gone.setdefault(files[path]["sha256"], []).append(path)
+        # The first path holding each (applicant folder, content): already uploaded paths win.
+        first: dict[tuple[str, str], str] = {}
+        for rel, _, digest in rows:
+            path = rel.as_posix()
+            if files.get(path, {}).get("sha256") == digest:
+                first.setdefault((self.content_group(path), digest), path)
+
+        out = []
+        for rel, p, digest in rows:
+            path = rel.as_posix()
+            key = (self.content_group(path), digest)
+            entry = files.get(path)
+            previous = None
+            if entry and entry.get("sha256") == digest:
+                status, doc_id = "uploaded", entry.get("document_id")
+            elif entry:
+                status, doc_id = "modified", entry.get("document_id")
+            elif gone.get(digest):
+                previous = gone[digest].pop(0)
+                status, doc_id = "renamed", files[previous].get("document_id")
+            elif first.get(key, path) != path:
+                status, doc_id = "duplicate", files.get(first[key], {}).get("document_id")
+            else:
+                status, doc_id = "new", None
+            first.setdefault(key, path)
+            manifested = status in ("uploaded", "renamed")
+            if manifested and not include_manifested:
                 continue
+            dup_of = first[key] if first[key] != path else None
             out.append(ScannedFile(
-                path=rel.as_posix(), size=p.stat().st_size, sha256=digest, kind=kind_of(p),
-                applicant_hint=self.applicant_hint(rel), manifested=bool(entry),
-                document_id=entry.get("document_id") if entry else None,
+                path=path, size=p.stat().st_size, sha256=digest, kind=kind_of(p),
+                applicant_hint=self.applicant_hint(rel), manifested=manifested, document_id=doc_id,
+                status=status, previous_path=previous, duplicate_of=dup_of,
             ))
         return out
 
-    def record_upload(self, sha256: str, path: str, document_id: str, applicant: str = "principal",
-                      uploaded_path: str | None = None) -> None:
+    def record_upload(self, path: str, sha256: str, document_id: str, applicant: str = "principal",
+                      uploaded_path: str | None = None, superseded: list[str] | None = None) -> None:
         m = self.manifest
-        m["files"][sha256] = {
-            "path": path, "document_id": document_id, "applicant": applicant,
+        entry = {
+            "sha256": sha256, "document_id": document_id, "applicant": applicant,
             "uploaded_at": now_iso(), "uploaded_path": uploaded_path,
         }
+        if superseded:
+            entry["superseded"] = superseded
+        m["files"][path] = entry
         self.save_manifest(m)
+
+    def move_record(self, old_path: str, new_path: str) -> None:
+        """A renamed file keeps its upload record (and document id) under its new path."""
+        m = self.manifest
+        if old_path in m["files"]:
+            m["files"][new_path] = m["files"].pop(old_path)
+            self.save_manifest(m)
 
     def resolve(self, rel: str) -> Path:
         """A path inside the folder, or ValueError. Symlinks out of the folder are refused."""

@@ -67,8 +67,14 @@ def already_on_server(local: Path, size: int, document_type_id: str, server_docs
 
 
 def sync(api: UApplyApi, folder: WorkingFolder, survey_id: str, document_type_id: str, document_category: str = "",
-         paths: list[str] | None = None, applicant: str = "principal", archive_name: str = "") -> dict:
-    """Upload the folder's unmanifested files (or `paths`) under one document type."""
+         paths: list[str] | None = None, applicant: str = "principal", archive_name: str = "",
+         include_modified: bool = False) -> dict:
+    """Upload the folder's new files (or `paths`) under one document type.
+
+    A file overwritten in place (same path, new content) is not uploaded unless `include_modified`:
+    it is reported under `modified` with the stale document's id, which stays on the case. A renamed
+    file keeps its record. Identical content within one applicant folder is uploaded once; the other
+    copies are recorded against that document and reported under `duplicates`."""
     dtype = _resolve_type(api, survey_id, document_type_id)
     category = document_category or dtype.get("category") or "other"
     if category not in DOCUMENT_CATEGORIES:
@@ -79,21 +85,49 @@ def sync(api: UApplyApi, folder: WorkingFolder, survey_id: str, document_type_id
     unknown = [p for p in (paths or []) if p not in known]
     chosen = [f for f in scanned if not paths or f.path in paths]
     uploaded, failed, matched = [], [{"path": p, "reason": "not a supported file in the folder"} for p in unknown], []
+    modified, renamed, duplicates = [], [], []
     server_docs: list | None = None
-    claimed = {e.get("document_id") for e in folder.manifest.get("files", {}).values()}
+    records = folder.manifest.get("files", {})
+    claimed = {e.get("document_id") for e in records.values()}
+    for e in records.values():
+        claimed.update(e.get("superseded") or [])
+    # (applicant folder, content) -> (path, document id) of what is already on the case.
+    on_case = {(folder.content_group(f.path), f.sha256): (f.path, f.document_id)
+               for f in reversed(scanned) if f.status == "uploaded" and f.document_id}
+    for f in chosen:
+        if f.status == "renamed":
+            folder.move_record(f.previous_path, f.path)
+            renamed.append({"path": f.path, "previous_path": f.previous_path, "document_id": f.document_id})
+            on_case.setdefault((folder.content_group(f.path), f.sha256), (f.path, f.document_id))
     # One request per file: the response maps to that file with no name matching, so HEIC conversions
     # and duplicate names in different subfolders cannot mix up document ids.
-    for f in (f for f in chosen if not f.manifested):
+    for f in (f for f in chosen if f.status in ("new", "duplicate", "modified")):
+        key = (folder.content_group(f.path), f.sha256)
+        if f.status == "modified" and not include_modified:
+            modified.append({"path": f.path, "document_id": f.document_id,
+                             "note": "overwritten since upload; the old copy is still on the case"})
+            continue
+        if key in on_case:
+            first_path, doc_id = on_case[key]
+            folder.record_upload(f.path, f.sha256, doc_id, applicant)
+            duplicates.append({"path": f.path, "duplicate_of": first_path, "document_id": doc_id})
+            continue
         try:
             local = folder.resolve(f.path)
             if server_docs is None:
                 server_docs = [d for d in api.documents(survey_id) if not d.get("old_doc_id")]
-            existing = already_on_server(local, f.size, document_type_id, server_docs, claimed)
+            superseded = None
+            if f.status == "modified":
+                superseded = [f.document_id, *(records.get(f.path, {}).get("superseded") or [])]
+                existing = None             # never match the stale copy's name and size
+            else:
+                existing = already_on_server(local, f.size, document_type_id, server_docs, claimed)
             if existing:
                 # e.g. the upload went through but the local record was lost: record it, do not duplicate
                 claimed.add(existing["id"])
-                folder.record_upload(f.sha256, f.path, existing["id"], applicant)
+                folder.record_upload(f.path, f.sha256, existing["id"], applicant)
                 matched.append({"path": f.path, "document_id": existing["id"]})
+                on_case[key] = (f.path, existing["id"])
                 continue
             send = heic_to_jpeg(local, folder.cache) if local.suffix.lower() in HEIC_EXTENSIONS else local
             docs = api.bulk_upload(survey_id, category, document_type_id, [send], archive_name=archive)
@@ -101,10 +135,17 @@ def sync(api: UApplyApi, folder: WorkingFolder, survey_id: str, document_type_id
             if not doc:
                 failed.append({"path": f.path, "reason": "empty upload response"})
                 continue
-            folder.record_upload(f.sha256, f.path, doc["id"], applicant,
-                                 uploaded_path=str(send.relative_to(folder.root)) if send != local else None)
-            uploaded.append({"path": f.path, "document_id": doc["id"], "file_name": doc.get("file_name")})
+            folder.record_upload(f.path, f.sha256, doc["id"], applicant,
+                                 uploaded_path=str(send.relative_to(folder.root)) if send != local else None,
+                                 superseded=superseded)
+            on_case[key] = (f.path, doc["id"])
+            row = {"path": f.path, "document_id": doc["id"], "file_name": doc.get("file_name")}
+            if superseded:
+                row["superseded"] = superseded[0]
+            uploaded.append(row)
         except (ApiError, OSError, ValueError) as e:
             failed.append({"path": f.path, "reason": str(e)[:300]})
-    return {"uploaded": len(uploaded), "documents": uploaded, "skipped": [f.path for f in chosen if f.manifested],
-            "failed": failed, "already_on_server": matched}
+    return {"uploaded": len(uploaded), "documents": uploaded,
+            "skipped": [f.path for f in chosen if f.status == "uploaded"],
+            "failed": failed, "already_on_server": matched,
+            "modified": modified, "renamed": renamed, "duplicates": duplicates}

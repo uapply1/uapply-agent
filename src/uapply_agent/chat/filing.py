@@ -37,7 +37,7 @@ def upload_transcript(api: UApplyApi, folder: WorkingFolder, md_path: Path) -> d
     if not doc:
         raise ChatError("UPLOAD_FAILED", "empty upload response for the transcript PDF")
     rel_pdf = str(pdf.relative_to(folder.root))
-    folder.record_upload(sha256_of(pdf), rel_pdf, doc["id"], "principal", uploaded_path=rel_pdf)
+    folder.record_upload(rel_pdf, sha256_of(pdf), doc["id"], "principal", uploaded_path=rel_pdf)
     store.mark_uploaded(md_path, doc["id"], md_sha, rel_pdf)
     store.clear_pending(md_path)
     return {"document_id": doc["id"], "pdf": rel_pdf}

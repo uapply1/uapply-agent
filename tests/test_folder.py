@@ -31,15 +31,54 @@ def test_scan_lists_supported_files_with_hints(tmp_path):
 def test_manifest_round_trip_and_rename(tmp_path):
     f = make_folder(tmp_path)
     digest = sha256_of(tmp_path / "passport.pdf")
-    f.record_upload(digest, "passport.pdf", "doc-1")
-    assert f.manifest["files"][digest]["document_id"] == "doc-1"
+    f.record_upload("passport.pdf", digest, "doc-1")
+    assert f.manifest["schema"] == 2
+    assert f.manifest["files"]["passport.pdf"] == {**f.manifest["files"]["passport.pdf"], "sha256": digest,
+                                                   "document_id": "doc-1"}
     assert (f.state / ".gitignore").exists()
-    # Renaming does not create a new upload; the hash is the identity.
+    # Renaming does not create a new upload: the record follows the content to the new path.
     (tmp_path / "passport.pdf").rename(tmp_path / "zhang_wei_passport.pdf")
     scanned = {x.path: x for x in f.scan(include_manifested=True)}
-    assert scanned["zhang_wei_passport.pdf"].manifested
-    assert scanned["zhang_wei_passport.pdf"].document_id == "doc-1"
+    moved = scanned["zhang_wei_passport.pdf"]
+    assert moved.manifested and moved.status == "renamed"
+    assert moved.previous_path == "passport.pdf" and moved.document_id == "doc-1"
     assert [x.path for x in f.scan(include_manifested=False)] == ["spouse/id.jpg"]
+    f.move_record("passport.pdf", "zhang_wei_passport.pdf")
+    assert {x.path: x.status for x in f.scan()}["zhang_wei_passport.pdf"] == "uploaded"
+
+
+def test_overwritten_file_is_modified_not_new(tmp_path):
+    f = make_folder(tmp_path)
+    f.record_upload("passport.pdf", sha256_of(tmp_path / "passport.pdf"), "doc-1")
+    (tmp_path / "passport.pdf").write_bytes(b"%PDF-1.4 sharper scan")
+    row = next(x for x in f.scan(include_manifested=False) if x.path == "passport.pdf")
+    assert row.status == "modified" and not row.manifested and row.document_id == "doc-1"
+
+
+def test_identical_content_is_a_duplicate_only_within_one_applicant_folder(tmp_path):
+    f = make_folder(tmp_path)
+    same = b"%PDF-1.4 marriage certificate"
+    for rel in ("marriage.pdf", "spouse/marriage.pdf", "spouse/copy/marriage.pdf"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_bytes(same)
+    rows = {x.path: x for x in f.scan()}
+    assert rows["marriage.pdf"].status == "new"                 # root files are their own group
+    assert rows["spouse/copy/marriage.pdf"].status == "new"     # first in sorted order within spouse/
+    assert rows["spouse/marriage.pdf"].status == "duplicate"
+    assert rows["spouse/marriage.pdf"].duplicate_of == "spouse/copy/marriage.pdf"
+    assert rows["marriage.pdf"].duplicate_of is None
+
+
+def test_schema_1_manifest_is_upgraded_on_read(tmp_path):
+    f = make_folder(tmp_path)
+    digest = sha256_of(tmp_path / "passport.pdf")
+    f.write_state("manifest.json", {"schema": 1, "files": {digest: {
+        "path": "passport.pdf", "document_id": "doc-1", "applicant": "principal",
+        "uploaded_at": "2026-01-01T00:00:00Z", "uploaded_path": None}}})
+    m = f.manifest
+    assert m["schema"] == 2 and m["files"]["passport.pdf"]["sha256"] == digest
+    assert "path" not in m["files"]["passport.pdf"]
+    assert {x.path: x.status for x in f.scan()}["passport.pdf"] == "uploaded"
 
 
 def test_case_json_and_family_ids(tmp_path):
@@ -77,9 +116,9 @@ def test_state_files_are_utf8_whatever_the_system_code_page(tmp_path):
         "from pathlib import Path; from uapply_agent.folder import WorkingFolder\n"
         f"f = WorkingFolder(Path({str(tmp_path)!r}))\n"
         f"f.init_case('s-1', 'https://api', 'local_agent', name='{name}')\n"
-        f"f.record_upload('abc', '{shot}', 'doc-1')\n"
+        f"f.record_upload('{shot}', 'abc', 'doc-1')\n"
         "g = WorkingFolder(Path(f.root))\n"
-        f"print(g.case['name'] == '{name}', g.manifest['files']['abc']['path'] == '{shot}')\n", encoding="ascii")
+        f"print(g.case['name'] == '{name}', g.manifest['files']['{shot}']['sha256'] == 'abc')\n", encoding="ascii")
     env = {**os.environ, "LC_ALL": "C", "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0"}
     out = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True, encoding="utf-8")
     assert out.stdout.strip() == "True True", out.stderr[-500:]
@@ -91,10 +130,10 @@ def test_truncated_state_file_is_set_aside_not_fatal(tmp_path):
     f = WorkingFolder(tmp_path)
     f.state.mkdir()
     (f.state / "manifest.json").write_bytes(b"")          # what the old build left after a failed write
-    assert f.manifest == {"schema": 1, "files": {}}
+    assert f.manifest == {"schema": 2, "files": {}}
     assert any(p.name.startswith("manifest.json.corrupt-") for p in f.state.iterdir())
-    f.record_upload("abc", "a.pdf", "doc-1")
-    assert WorkingFolder(tmp_path).manifest["files"]["abc"]["document_id"] == "doc-1"
+    f.record_upload("a.pdf", "abc", "doc-1")
+    assert WorkingFolder(tmp_path).manifest["files"]["a.pdf"]["document_id"] == "doc-1"
 
 
 def test_state_file_in_a_legacy_code_page_is_still_read(tmp_path, monkeypatch):

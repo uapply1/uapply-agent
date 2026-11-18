@@ -68,7 +68,7 @@ not a model that fabricates the phrase.
 | Classification outputs restricted to the allowed values in the task | backend |
 | OCR results must cover every page of the document | backend |
 | Evidence quotes checked verbatim against the text the server holds, for tasks that require evidence | backend |
-| Uploads deduplicated: the manifest is keyed by the file's sha256, and a case document with the same type, name and size is recorded instead of uploaded again | `uploads.py`, `folder.py` |
+| Uploads deduplicated: the manifest is keyed by path with each file's sha256; identical content uploads once per applicant folder, renames keep their record, a file overwritten since upload is reported as `modified` and uploaded only with `include_modified`, and a case document with the same type, name and size is recorded instead of uploaded again | `uploads.py`, `folder.py` |
 | *Planned:* `sha256` stored on `Document` and an `Idempotency-Key` on mutations; `resolve` with `expected_updated_at` so an RCIC edit is never silently overwritten | backend |
 
 ## Prompt injection

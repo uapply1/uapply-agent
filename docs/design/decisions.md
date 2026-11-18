@@ -142,7 +142,11 @@ keyed by it.
 **Why.** Makes re-runs, retries after network failure, renamed files and
 multi-machine use all idempotent with one mechanism.
 
-**Status.** The agent's manifest is keyed by sha256. The backend does not store
+**Status.** The agent's manifest was keyed by sha256 until schema 2, which keys
+it by path and keeps the sha256 per entry: with the hash as the only key, a
+corrected scan saved over an uploaded file looked like a new document and was
+uploaded beside the stale copy, and identical files in two applicant folders
+collapsed into one entry. Renames are still matched by hash. The backend does not store
 the hash yet; instead `sync_documents` records a case document with the same
 type, name and size rather than uploading the file again.
 

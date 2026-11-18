@@ -9,7 +9,8 @@ rules:
 - **Small outputs.** Counts, ids, paths and summaries. Task prompts, task
   inputs and chat message bodies never enter the conversation.
 - **Safe to repeat.** Uploads skip files already recorded in the manifest or
-  already on the case; `create_case` refuses a folder that already has a case.
+  already on the case, and never upload a file overwritten since its upload
+  unless asked (`include_modified`); `create_case` refuses a folder that already has a case.
 - **Folder-relative paths.** File paths are relative to the working folder;
   paths that resolve outside it are refused. Only `set_folder` takes an
   absolute path.
@@ -49,13 +50,13 @@ local-agent API (`AGENT_API_UNAVAILABLE` otherwise).
 
 | Tool | Input | Output |
 |---|---|---|
-| `scan_folder` | `include_manifested?` (default `false`) | `files`: `path`, `size`, `sha256`, `kind` (`pdf` \| `image` \| `office`), `applicant_hint` (first subfolder), `manifested`, `document_id` |
+| `scan_folder` | `include_manifested?` (default `false`) | `files`: `path`, `size`, `sha256`, `kind` (`pdf` \| `image` \| `office`), `applicant_hint` (first subfolder), `manifested`, `document_id`, `status` (`new` \| `modified` \| `duplicate` \| `uploaded` \| `renamed`), `previous_path` (renamed), `duplicate_of` (same content earlier in the same applicant folder). `uploaded` and `renamed` files are listed only with `include_manifested` |
 | `identify_files` | `paths?` (default: every file not uploaded yet; at most 20 per call) | has a helper read each file's first pages (2 for a PDF; Word/Excel as text) and report per file `path`, `document_type_id` (from the case's types, `null` before a case is bound), `document_type`, `holder`, `key_facts`, `confidence`, plus `applicant` identity and `notes`. Session mode: returns `prompt` for a `uapply:task-runner` subagent, then call `identified_files`. Cli mode: returns `identified`. Page images never enter the conversation |
 | `submit_identification` | `result` (the JSON object) | for the task-runner: checks every file has an entry and every type id is the case's, then stores it; `accepted` with `feedback` when not |
 | `identified_files` | — | the stored identification; `NOT_IDENTIFIED` before the subagent submitted it |
 | `preview_document` | `path`, `pages?` (`"1"` or a range such as `"1-3"`, at most 3 pages; default `"1"`) | PDF: `kind`, `page_count`, `pages`, `images` (PNG paths under `.uapply/cache/preview/`). Image: `kind`, `images` (HEIC converted to JPEG). Rendered locally; nothing is uploaded |
 | `list_document_types` | `query?` | `document_types` the case accepts: `id`, `name`, `file_name`, `category`, `requirement`, `can_process`, `description` (what belongs under the type, from the case checklist); the generic Agent Survey row (`generic: true`, `use_for`) is for filled IMM forms only |
-| `sync_documents` | `document_type_id`, `document_category?` (default: the type's category), `paths?` (default: every file not yet uploaded), `applicant?` (default `principal`), `archive_name?` (default: the type's own archive) | `uploaded` (count), `documents` (`path`, `document_id`, `file_name`), `skipped` (already uploaded), `already_on_server` (a case document of the same type, name and size, recorded instead of uploaded again), `failed` (`path`, `reason`) |
+| `sync_documents` | `document_type_id`, `document_category?` (default: the type's category), `paths?` (default: every file not yet uploaded), `applicant?` (default `principal`), `archive_name?` (default: the type's own archive), `include_modified?` (default `false`) | `uploaded` (count), `documents` (`path`, `document_id`, `file_name`, `superseded` when it replaces a modified file), `skipped` (already uploaded), `modified` (`path`, stale `document_id`: overwritten since upload, not uploaded unless `include_modified`), `renamed` (`path`, `previous_path`, `document_id`: record moved, not uploaded), `duplicates` (`path`, `duplicate_of`, `document_id`: same content in the same applicant folder, recorded without a second upload), `already_on_server` (a case document of the same type, name and size, recorded instead of uploaded again), `failed` (`path`, `reason`) |
 | `list_documents` | none | `documents`: `id`, `file_name`, `status`, `document_type_id`, `page_of` (parent document of a page), `error` |
 
 ### Pipeline
